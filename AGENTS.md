@@ -10,7 +10,7 @@ npx vitest run src/__tests__/config.test.ts  # single test file
 npx tsc --noEmit       # typecheck only
 ```
 
-Run order before committing: `tsc --noEmit` → `npm test`
+Run order before committing: `tsc --noEmit` → `npm test` → 检查 README 是否需要同步更新
 
 ## Architecture
 
