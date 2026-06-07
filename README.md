@@ -231,15 +231,6 @@ node --import tsx src/index.ts --config ./my-agents/
 node --import tsx src/index.ts --port 8080
 ```
 
-## Docker
-
-```bash
-docker build -t open-agent-runtime .
-docker run -p 3000:3000 \
-  -e ANTHROPIC_API_KEY=... \
-  open-agent-runtime
-```
-
 ## Examples
 
 | Directory | Description |
