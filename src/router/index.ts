@@ -18,7 +18,7 @@ export function createApp(config: RuntimeConfig, registry: AgentRegistry, metric
   const agentRouter = createAgentRouter(registry, metrics)
   const sessionRouter = createSessionRouter()
 
-  app.route("/v1/health", healthRouter)
+  app.route("/v1", healthRouter)
   app.route("/v1/agents", agentRouter)
   app.route("/v1/sessions", sessionRouter)
 
