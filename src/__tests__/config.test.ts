@@ -1,0 +1,234 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { resolve, join } from "node:path"
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import {
+  RuntimeConfigSchema,
+  resolveSystemPrompt,
+  loadYamlConfig,
+  findConfigDir,
+  discoverConfig,
+  type AgentDefinition,
+} from "../config.js"
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>()
+  return {
+    ...actual,
+    existsSync: vi.fn(actual.existsSync),
+    readFileSync: vi.fn(actual.readFileSync),
+  }
+})
+
+const TMP = resolve(import.meta.dirname, "__tmp_config_test__")
+
+beforeEach(() => {
+  mkdirSync(TMP, { recursive: true })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  rmSync(TMP, { recursive: true, force: true })
+})
+
+function tmpFile(name: string, content: string) {
+  const p = join(TMP, name)
+  writeFileSync(p, content, "utf-8")
+  return p
+}
+
+describe("RuntimeConfigSchema", () => {
+  it("accepts a valid full config with all fields", () => {
+    const config = {
+      server: { host: "127.0.0.1", port: 4000 },
+      cors: { origins: ["http://localhost:3000"] },
+      logging: { level: "debug" as const },
+      agents: [
+        {
+          id: "agent-1",
+          name: "Test Agent",
+          model: "gpt-4o",
+          systemPrompt: "You are helpful.",
+          maxTurns: 20,
+          allowedTools: ["tool-a"],
+          disallowedTools: ["tool-b"],
+          skills: ["skill-1"],
+          mcpServers: {
+            myMcp: { transport: "stdio" as const, command: "node", args: ["server.js"] },
+          },
+          permissionMode: "auto" as const,
+        },
+      ],
+    }
+    const result = RuntimeConfigSchema.parse(config)
+    expect(result.agents[0].id).toBe("agent-1")
+    expect(result.server.port).toBe(4000)
+    expect(result.cors?.origins).toEqual(["http://localhost:3000"])
+    expect(result.logging?.level).toBe("debug")
+  })
+
+  it("accepts a minimal config with only agents", () => {
+    const config = {
+      agents: [{ id: "minimal" }],
+    }
+    const result = RuntimeConfigSchema.parse(config)
+    expect(result.agents).toHaveLength(1)
+    expect(result.agents[0].model).toBe("claude-sonnet-4-6")
+    expect(result.agents[0].maxTurns).toBe(10)
+    expect(result.server.host).toBe("0.0.0.0")
+    expect(result.server.port).toBe(3000)
+    expect(result.cors).toBeUndefined()
+    expect(result.logging).toBeUndefined()
+  })
+
+  it("provides correct defaults", () => {
+    const result = RuntimeConfigSchema.parse({
+      agents: [{ id: "defaults-test" }],
+    })
+    expect(result.server).toEqual({ host: "0.0.0.0", port: 3000 })
+    expect(result.agents[0].maxTurns).toBe(10)
+    expect(result.agents[0].model).toBe("claude-sonnet-4-6")
+  })
+
+  it("rejects empty agents array", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({ agents: [] }),
+    ).toThrow()
+  })
+
+  it("rejects config without agents", () => {
+    expect(() => RuntimeConfigSchema.parse({})).toThrow()
+  })
+
+  it("rejects agent with both systemPrompt and systemPromptFile", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "conflict",
+            systemPrompt: "hello",
+            systemPromptFile: "prompt.md",
+          },
+        ],
+      }),
+    ).toThrow(/mutually exclusive/)
+  })
+})
+
+describe("resolveSystemPrompt", () => {
+  it("returns inline systemPrompt", () => {
+    const agent: AgentDefinition = {
+      id: "a",
+      model: "claude-sonnet-4-6",
+      maxTurns: 10,
+      systemPrompt: "Be helpful.",
+    }
+    expect(resolveSystemPrompt(agent, "/some/dir")).toBe("Be helpful.")
+  })
+
+  it("reads systemPromptFile from configDir", () => {
+    const filePath = tmpFile("prompt.md", "# You are a coder\nWrite clean code.")
+    const agent: AgentDefinition = {
+      id: "b",
+      model: "claude-sonnet-4-6",
+      maxTurns: 10,
+      systemPromptFile: "prompt.md",
+    }
+    expect(resolveSystemPrompt(agent, TMP)).toBe("# You are a coder\nWrite clean code.")
+  })
+
+  it("returns undefined when neither systemPrompt nor systemPromptFile is set", () => {
+    const agent: AgentDefinition = {
+      id: "c",
+      model: "claude-sonnet-4-6",
+      maxTurns: 10,
+    }
+    expect(resolveSystemPrompt(agent, TMP)).toBeUndefined()
+  })
+})
+
+describe("loadYamlConfig", () => {
+  it("loads a valid YAML config file", () => {
+    const path = tmpFile("agents.yaml", `
+server:
+  host: 0.0.0.0
+  port: 8080
+agents:
+  - id: yaml-agent
+    model: gpt-4o
+    systemPrompt: Hello from YAML
+`)
+    const config = loadYamlConfig(path)
+    expect(config.agents[0].id).toBe("yaml-agent")
+    expect(config.server.port).toBe(8080)
+  })
+
+  it("throws for missing file", () => {
+    expect(() => loadYamlConfig("/nonexistent/path/agents.yaml")).toThrow(
+      /Config file not found/,
+    )
+  })
+
+  it("throws for malformed YAML parsed to invalid config", () => {
+    const path = tmpFile("bad.yaml", `
+agents: []
+`)
+    expect(() => loadYamlConfig(path)).toThrow()
+  })
+
+  it("throws for YAML with empty agents array", () => {
+    const path = tmpFile("empty-agents.yaml", `
+agents: []
+`)
+    expect(() => loadYamlConfig(path)).toThrow()
+  })
+})
+
+describe("findConfigDir", () => {
+  it("returns resolved explicit path", () => {
+    const result = findConfigDir("/my/custom/dir")
+    expect(result).toBe(resolve("/my/custom/dir"))
+  })
+
+  it("returns cwd when agents.yaml exists in cwd", () => {
+    const mockedExists = vi.mocked(existsSync)
+    const cwd = process.cwd()
+    mockedExists.mockImplementation((p: string) => {
+      if (typeof p === "string" && p === resolve(cwd, "agents.yaml")) return true
+      return false
+    })
+    expect(findConfigDir()).toBe(cwd)
+  })
+
+  it("returns cwd when agent.config.ts exists in cwd", () => {
+    const mockedExists = vi.mocked(existsSync)
+    const cwd = process.cwd()
+    mockedExists.mockImplementation((p: string) => {
+      if (typeof p === "string" && p === resolve(cwd, "agent.config.ts")) return true
+      return false
+    })
+    expect(findConfigDir()).toBe(cwd)
+  })
+
+  it("throws when no config found anywhere", () => {
+    const mockedExists = vi.mocked(existsSync)
+    mockedExists.mockReturnValue(false)
+    expect(() => findConfigDir()).toThrow(/No config found/)
+  })
+})
+
+describe("discoverConfig", () => {
+  it("loads config from agents.yaml", () => {
+    tmpFile("agents.yaml", `
+agents:
+  - id: discovered
+    systemPrompt: hi
+`)
+    const config = discoverConfig(TMP)
+    expect(config.agents[0].id).toBe("discovered")
+  })
+
+  it("throws for agent.config.ts (Phase 1)", () => {
+    tmpFile("agent.config.ts", `export default {}`)
+    expect(() => discoverConfig(TMP)).toThrow(/not yet supported/)
+  })
+})
