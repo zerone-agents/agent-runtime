@@ -217,18 +217,25 @@ describe("findConfigDir", () => {
 })
 
 describe("discoverConfig", () => {
-  it("loads config from agents.yaml", () => {
+  it("loads config from agents.yaml", async () => {
     tmpFile("agents.yaml", `
 agents:
   - id: discovered
     systemPrompt: hi
 `)
-    const config = discoverConfig(TMP)
+    const config = await discoverConfig(TMP)
     expect(config.agents[0].id).toBe("discovered")
   })
 
-  it("throws for agent.config.ts (Phase 1)", () => {
-    tmpFile("agent.config.ts", `export default {}`)
-    expect(() => discoverConfig(TMP)).toThrow(/not yet supported/)
+  it("loads config from agent.config.ts", async () => {
+    tmpFile("agent.config.ts", `
+export default {
+  server: { port: 4000 },
+  agents: [{ id: "ts-agent", systemPrompt: "hello from ts" }],
+}
+`)
+    const config = await discoverConfig(TMP)
+    expect(config.agents[0].id).toBe("ts-agent")
+    expect(config.server.port).toBe(4000)
   })
 })

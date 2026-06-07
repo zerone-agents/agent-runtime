@@ -13,6 +13,7 @@ export {
   discoverConfig,
   findConfigDir,
   loadYamlConfig,
+  defineConfig,
   resolveSystemPrompt,
   RuntimeConfigSchema,
   type RuntimeConfig,
@@ -30,7 +31,7 @@ if (process.argv[1] && (process.argv[1].includes("open-agent-runtime") || proces
     })
 
     const configDir = findConfigDir(values.config as string | undefined)
-    const config = discoverConfig(configDir)
+    const config = await discoverConfig(configDir)
 
     if (values.port) {
       config.server.port = parseInt(values.port as string, 10)

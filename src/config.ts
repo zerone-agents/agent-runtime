@@ -82,12 +82,32 @@ export function findConfigDir(explicitPath?: string): string {
   throw new Error("No config found. Create agents.yaml or agent.config.ts in current directory or ~/.openagent/")
 }
 
-export function discoverConfig(configDir: string): RuntimeConfig {
+export function defineConfig(config: RuntimeConfig): RuntimeConfig {
+  return config
+}
+
+export function discoverConfig(configDir: string): Promise<RuntimeConfig> {
   const tsPath = resolve(configDir, "agent.config.ts")
   if (existsSync(tsPath)) {
-    throw new Error("agent.config.ts programmatic mode is not yet supported in Phase 1. Use agents.yaml.")
+    return loadTsConfig(tsPath)
   }
 
   const yamlPath = resolve(configDir, "agents.yaml")
-  return loadYamlConfig(yamlPath)
+  return Promise.resolve(loadYamlConfig(yamlPath))
+}
+
+async function loadTsConfig(path: string): Promise<RuntimeConfig> {
+  try {
+    // @ts-ignore
+    await import("tsx/esm")
+  } catch {}
+
+  const fileUrl = path.startsWith("/") ? `file://${path}` : `file:///${path}`
+  const mod = await import(`${fileUrl}?t=${Date.now()}`)
+
+  const config = mod.default ?? mod.config
+  if (!config) {
+    throw new Error(`agent.config.ts must export a config object (export default defineConfig({...}))`)
+  }
+  return RuntimeConfigSchema.parse(config)
 }
