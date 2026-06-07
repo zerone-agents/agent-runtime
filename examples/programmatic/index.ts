@@ -97,11 +97,11 @@ function createAnalystAgent(): Agent {
     model: "claude-sonnet-4-6",
     systemPrompt: [
       "你是一个金融分析助手。",
-      "你可以查询股票价格、搜索新闻、读写文件。",
+      "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
       "回答要简洁，关键数据用列表呈现。",
     ].join("\n"),
     maxTurns: 10,
-    allowedTools: ["WebSearch", "Read", "Glob", "Grep"],
+    tools: [stockTool, "WebSearch", "Read", "Glob", "Grep"],
     hooks: createLoggingHooks("analyst"),
   })
 }
@@ -111,11 +111,11 @@ function createOpsAgent(): Agent {
     model: "claude-sonnet-4-6",
     systemPrompt: [
       "你是一个运维助手。",
-      "你可以执行命令、读写文件、编辑代码。",
+      "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
       "执行危险操作前先确认。",
     ].join("\n"),
     maxTurns: 15,
-    allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+    tools: [noteTool, "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
     permissionMode: "acceptEdits",
     hooks: createLoggingHooks("ops"),
   })
