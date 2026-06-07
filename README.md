@@ -238,6 +238,7 @@ node --import tsx src/index.ts --port 8080
 | `examples/simple/` | Single agent with YAML config |
 | `examples/complex/` | Multiple specialized agents (researcher, coder, writer) |
 | `examples/code-driven/` | TypeScript config with custom tools (`agent.config.ts`) |
+| `examples/programmatic/` | Full SDK+Runtime programmatic: custom tools, hooks, multi-agent, custom routes |
 
 ## Architecture
 
