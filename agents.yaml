@@ -1,0 +1,6 @@
+agents:
+  - id: "general"
+    name: "通用助手"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "你是一个通用 AI 助手。"
+    maxTurns: 10
