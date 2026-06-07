@@ -192,7 +192,7 @@ describe("findConfigDir", () => {
   it("returns cwd when agents.yaml exists in cwd", () => {
     const mockedExists = vi.mocked(existsSync)
     const cwd = process.cwd()
-    mockedExists.mockImplementation((p: string) => {
+    mockedExists.mockImplementation((p: any) => {
       if (typeof p === "string" && p === resolve(cwd, "agents.yaml")) return true
       return false
     })
@@ -202,7 +202,7 @@ describe("findConfigDir", () => {
   it("returns cwd when agent.config.ts exists in cwd", () => {
     const mockedExists = vi.mocked(existsSync)
     const cwd = process.cwd()
-    mockedExists.mockImplementation((p: string) => {
+    mockedExists.mockImplementation((p: any) => {
       if (typeof p === "string" && p === resolve(cwd, "agent.config.ts")) return true
       return false
     })

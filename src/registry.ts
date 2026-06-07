@@ -14,6 +14,11 @@ export class AgentRegistry {
   private agents = new Map<string, Agent>()
   private statuses = new Map<string, "ready" | "unavailable">()
 
+  register(id: string, agent: Agent): void {
+    this.agents.set(id, agent)
+    this.statuses.set(id, "ready")
+  }
+
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
     for (const def of config.agents) {
       try {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { MetricsCollector } from "../metrics"
+import { MetricsCollector } from "../metrics.js"
 
 describe("MetricsCollector", () => {
   describe("initial state", () => {

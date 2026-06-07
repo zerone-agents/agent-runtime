@@ -29,8 +29,8 @@ describe("Session Router", () => {
   describe("GET /v1/sessions", () => {
     it("returns sessions list", async () => {
       const sessions = [
-        { id: "s1", createdAt: "2025-01-01" },
-        { id: "s2", createdAt: "2025-01-02" },
+        { id: "s1", cwd: "/tmp", model: "test", provider: "test", createdAt: "2025-01-01", updatedAt: "2025-01-01", messageCount: 1 },
+        { id: "s2", cwd: "/tmp", model: "test", provider: "test", createdAt: "2025-01-02", updatedAt: "2025-01-02", messageCount: 2 },
       ]
       vi.mocked(listSessions).mockResolvedValue(sessions)
       const app = createApp()
@@ -45,8 +45,8 @@ describe("Session Router", () => {
 
   describe("GET /v1/sessions/:sessionId", () => {
     it("returns session detail with messages", async () => {
-      const info = { id: "s1", createdAt: "2025-01-01" }
-      const messages = [{ role: "user", content: "hello" }]
+      const info = { id: "s1", cwd: "/tmp", model: "test", provider: "test", createdAt: "2025-01-01", updatedAt: "2025-01-01", messageCount: 1 }
+      const messages = [{ role: "user" as const, content: "hello" }]
       vi.mocked(getSessionInfo).mockResolvedValue(info)
       vi.mocked(getSessionMessages).mockResolvedValue(messages)
       const app = createApp()
