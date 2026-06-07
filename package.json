@@ -4,6 +4,15 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "bin": {
     "open-agent": "./dist/index.js"
   },
@@ -11,6 +20,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node --import tsx src/index.ts",
+    "prepublishOnly": "npm run build",
     "test": "vitest"
   },
   "engines": {
