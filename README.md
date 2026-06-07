@@ -2,33 +2,35 @@
 
 HTTP Server runtime for [open-agent-sdk](https://github.com/zerone-agent/open-agent-sdk) agents.
 
-Wraps SDK's Agent into a multi-agent HTTP runtime with SSE streaming. Load agent definitions from YAML, start the server, call the API.
+Multi-agent runtime with SSE streaming. Define agents in YAML or TypeScript, start the server, call the API.
 
 ## Quick Start
 
 ```bash
 npm install
-npm start
-```
 
-Create `agents.yaml` in the project root:
-
-```yaml
+# Create config
+cat > agents.yaml << 'EOF'
 agents:
   - id: "assistant"
     model: "claude-sonnet-4-6"
     systemPrompt: "You are a helpful assistant."
     maxTurns: 10
+EOF
+
+npm start
 ```
 
-Optionally create `runtime.yaml`:
+Or use TypeScript config:
 
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 3000
-cors:
-  origins: ["*"]
+```ts
+// agent.config.ts
+import { defineConfig } from "@zerone-agent/open-agent-runtime"
+
+export default defineConfig({
+  server: { port: 3000 },
+  agents: [{ id: "assistant", model: "claude-sonnet-4-6", systemPrompt: "You are a helpful assistant." }],
+})
 ```
 
 ## API
@@ -43,7 +45,7 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"Hello","stream":true}'
 ```
 
-Response is an SSE stream. Each event is a JSON `SDKMessage` from the SDK:
+SSE response — each event is a JSON `SDKMessage`:
 
 ```
 event: system
@@ -80,9 +82,9 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 | `GET` | `/v1/sessions/:id` | Session detail with messages |
 | `DELETE` | `/v1/sessions/:id` | Delete session |
 
-## Agent Configuration
+## Configuration
 
-### agents.yaml
+### YAML Mode (`agents.yaml`)
 
 ```yaml
 agents:
@@ -95,7 +97,6 @@ agents:
       - WebFetch
       - WebSearch
       - Read
-    skills: []
 
   - id: "coder"
     model: "claude-sonnet-4-6"
@@ -130,27 +131,104 @@ agents:
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
 
+### TypeScript Mode (`agent.config.ts`)
+
+```ts
+import { defineConfig } from "@zerone-agent/open-agent-runtime"
+import { defineTool, tool } from "@zerone-agent/open-agent-sdk"
+import { z } from "zod"
+
+const weatherTool = defineTool({
+  name: "GetWeather",
+  description: "Get weather for a city",
+  inputSchema: {
+    type: "object" as const,
+    properties: { city: { type: "string" } },
+    required: ["city"],
+  },
+  isReadOnly: () => true,
+  isConcurrencySafe: () => true,
+  async call(input: { city: string }) {
+    return `${input.city}: 22°C, partly cloudy`
+  },
+})
+
+const calcTool = tool("Calculator", "Evaluate math expression", { expression: z.string() }, async ({ expression }) => {
+  const result = Function(`'use strict'; return (${expression})`)()
+  return { content: [{ type: "text" as const, text: `${expression} = ${result}` }] }
+})
+
+export default defineConfig({
+  server: { port: 3000 },
+  agents: [
+    {
+      id: "smart",
+      model: "claude-sonnet-4-6",
+      systemPrompt: "You are a smart assistant with weather and calculator tools.",
+      maxTurns: 15,
+      allowedTools: ["Bash", "Read", "Write", "Edit"],
+    },
+  ],
+})
+```
+
+`agent.config.ts` takes priority over `agents.yaml`.
+
 ### Config Discovery
 
-The runtime searches for config in this order:
+Search order:
 
 1. `--config <path>` CLI argument
-2. `agent.config.ts` in config directory (programmatic mode, Phase 2)
+2. `agent.config.ts` in config directory
 3. `agents.yaml` in config directory
 4. Current working directory
 5. `~/.openagent/`
 
+## SDK Usage
+
+Use as a library instead of CLI:
+
+```ts
+import { createApp, AgentRegistry, MetricsCollector } from "@zerone-agent/open-agent-runtime"
+import { createAgent, defineTool } from "@zerone-agent/open-agent-sdk"
+import { serve } from "@hono/node-server"
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  systemPrompt: "You are a helpful assistant.",
+  maxTurns: 10,
+  hooks: {
+    PreToolUse: [{ matcher: "Bash", hooks: [async (input) => {
+      console.log(`Running: ${input.toolInput}`)
+      return {}
+    }]}],
+  },
+})
+
+const registry = new AgentRegistry()
+registry.register("my-agent", agent)
+
+const metrics = new MetricsCollector()
+const app = createApp(
+  { server: { host: "0.0.0.0", port: 3000 }, agents: [{ id: "my-agent", model: "claude-sonnet-4-6" }] },
+  registry,
+  metrics,
+)
+
+serve({ fetch: app.fetch, port: 3000 })
+```
+
 ## CLI
 
 ```bash
-# Start with default config
-open-agent start
+# Start with default config (looks for agents.yaml in cwd)
+node --import tsx src/index.ts
 
 # Specify config directory
-open-agent start --config ./my-agents/
+node --import tsx src/index.ts --config ./my-agents/
 
 # Override port
-open-agent start --port 8080
+node --import tsx src/index.ts --port 8080
 ```
 
 ## Docker
@@ -162,6 +240,14 @@ docker run -p 3000:3000 \
   open-agent-runtime
 ```
 
+## Examples
+
+| Directory | Description |
+|---|---|
+| `examples/simple/` | Single agent with YAML config |
+| `examples/complex/` | Multiple specialized agents (researcher, coder, writer) |
+| `examples/code-driven/` | TypeScript config with custom tools (`agent.config.ts`) |
+
 ## Architecture
 
 ```
@@ -169,7 +255,7 @@ Client → Hono HTTP Server → AgentRegistry → open-agent-sdk Agent
                                 ↓
                          AsyncGenerator<SDKMessage>
                                 ↓
-                         SSE Bridge → Client
+                          SSE Bridge → Client
 ```
 
 - **AgentRegistry** creates Agent instances from config at startup, caches them in-process
