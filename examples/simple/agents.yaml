@@ -1,0 +1,6 @@
+agents:
+  - id: "assistant"
+    name: "简单助手"
+    model: "claude-sonnet-4-6"
+    systemPromptFile: "./prompts/assistant.md"
+    maxTurns: 10

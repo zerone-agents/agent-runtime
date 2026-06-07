@@ -1,0 +1,40 @@
+agents:
+  - id: "researcher"
+    name: "研究助手"
+    model: "claude-sonnet-4-6"
+    systemPromptFile: "./prompts/researcher.md"
+    maxTurns: 15
+    allowedTools:
+      - WebFetch
+      - WebSearch
+      - Read
+      - Glob
+      - Grep
+      - AskUserQuestion
+
+  - id: "coder"
+    name: "编程助手"
+    model: "claude-sonnet-4-6"
+    systemPromptFile: "./prompts/coder.md"
+    maxTurns: 20
+    allowedTools:
+      - Bash
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+      - LSP
+      - TaskTool
+    permissionMode: "acceptEdits"
+
+  - id: "writer"
+    name: "写作助手"
+    model: "claude-sonnet-4-6"
+    systemPromptFile: "./prompts/writer.md"
+    maxTurns: 10
+    allowedTools:
+      - Read
+      - Write
+      - Edit
+      - WebSearch
