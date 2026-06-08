@@ -13,10 +13,12 @@ export interface AgentInfo {
 export class AgentRegistry {
   private agents = new Map<string, Agent>()
   private statuses = new Map<string, "ready" | "unavailable">()
+  private defs = new Map<string, AgentDefinition>()
 
-  register(id: string, agent: Agent): void {
+  register(id: string, agent: Agent, def?: AgentDefinition): void {
     this.agents.set(id, agent)
     this.statuses.set(id, "ready")
+    if (def) this.defs.set(id, def)
   }
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
@@ -36,6 +38,7 @@ export class AgentRegistry {
 
         this.agents.set(def.id, agent)
         this.statuses.set(def.id, "ready")
+        this.defs.set(def.id, def)
       } catch (err) {
         console.error(`Failed to create agent "${def.id}":`, err)
         this.statuses.set(def.id, "unavailable")
@@ -54,12 +57,13 @@ export class AgentRegistry {
   list(): AgentInfo[] {
     const result: AgentInfo[] = []
     for (const [id] of this.agents) {
+      const def = this.defs.get(id)
       result.push({
         id,
-        name: id,
-        model: "",
+        name: def?.name ?? def?.id ?? id,
+        model: def?.model ?? "",
         status: this.statuses.get(id) ?? "unavailable",
-        toolCount: 0,
+        toolCount: def?.allowedTools?.length ?? 0,
       })
     }
     return result

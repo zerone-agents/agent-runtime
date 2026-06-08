@@ -128,8 +128,8 @@ async function main() {
   const ops = createOpsAgent()
 
   const registry = new AgentRegistry()
-  registry.register("analyst", analyst)
-  registry.register("ops", ops)
+  registry.register("analyst", analyst, { id: "analyst", model: "claude-sonnet-4-6", maxTurns: 10 })
+  registry.register("ops", ops, { id: "ops", model: "claude-sonnet-4-6", maxTurns: 15 })
 
   const metrics = new MetricsCollector()
 

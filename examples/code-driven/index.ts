@@ -69,7 +69,7 @@ async function main() {
   })
 
   const registry = new AgentRegistry()
-  registry.register("smart", agent)
+  registry.register("smart", agent, { id: "smart", model: "claude-sonnet-4-6", maxTurns: 15 })
 
   const metrics = new MetricsCollector()
 
