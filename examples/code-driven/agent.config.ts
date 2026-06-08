@@ -10,6 +10,7 @@ export default defineConfig({
       systemPrompt: "你是一个智能助手，可以读写文件、执行命令、搜索网页。",
       maxTurns: 15,
       allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+      thinking: { type: "enabled", budgetTokens: 4000 },
     },
   ],
 })

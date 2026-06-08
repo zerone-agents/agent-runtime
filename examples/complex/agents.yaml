@@ -11,6 +11,9 @@ agents:
       - Glob
       - Grep
       - AskUserQuestion
+    thinking:
+      type: "enabled"
+      budgetTokens: 4000
 
   - id: "coder"
     name: "编程助手"
@@ -27,6 +30,9 @@ agents:
       - LSP
       - TaskTool
     permissionMode: "acceptEdits"
+    thinking:
+      type: "enabled"
+      budgetTokens: 4000
 
   - id: "writer"
     name: "写作助手"
@@ -38,3 +44,6 @@ agents:
       - Write
       - Edit
       - WebSearch
+    thinking:
+      type: "enabled"
+      budgetTokens: 4000

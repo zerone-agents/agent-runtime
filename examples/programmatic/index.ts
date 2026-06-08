@@ -102,6 +102,7 @@ function createAnalystAgent(): Agent {
     ].join("\n"),
     maxTurns: 10,
     tools: [stockTool, "WebSearch", "Read", "Glob", "Grep"],
+    thinking: { type: "enabled", budgetTokens: 4000 },
     hooks: createLoggingHooks("analyst"),
   })
 }
@@ -117,6 +118,7 @@ function createOpsAgent(): Agent {
     maxTurns: 15,
     tools: [sdkToolToToolDefinition(noteTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
     permissionMode: "acceptEdits",
+    thinking: { type: "enabled", budgetTokens: 4000 },
     hooks: createLoggingHooks("ops"),
   })
 }

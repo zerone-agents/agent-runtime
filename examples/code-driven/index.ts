@@ -43,6 +43,7 @@ async function main() {
     systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
     maxTurns: 15,
     tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+    thinking: { type: "enabled", budgetTokens: 4000 },
     hooks: {
       PreToolUse: [
         {
