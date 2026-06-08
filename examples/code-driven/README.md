@@ -51,12 +51,12 @@ curl http://localhost:3000/v1/agents
 # 测试自定义天气工具
 curl -N -X POST http://localhost:3000/v1/agents/smart/runs \
   -H "Content-Type: application/json" \
-  -d '{"message":"北京和上海今天天气怎么样？"}'
+  -d '{"message":"北京和上海今天天气怎么样？","stream":"block"}'
 
 # 测试自定义计算器工具
 curl -N -X POST http://localhost:3000/v1/agents/smart/runs \
   -H "Content-Type: application/json" \
-  -d '{"message":"帮我算一下 2^10 * 3"}'
+  -d '{"message":"帮我算一下 2^10 * 3","stream":"block"}'
 ```
 
 ## 关键点

@@ -20,7 +20,10 @@ export {
   type AgentDefinition,
 } from "./config.js"
 
-if (process.argv[1] && (process.argv[1].includes("open-agent-runtime") || process.argv[1].endsWith("dist/index.js") || process.argv[1].endsWith("src/index.ts"))) {
+const argv1 = process.argv[1] || ""
+const isMain = argv1.endsWith("src/index.ts") || argv1.endsWith("dist/index.js") || argv1.endsWith("open-agent-runtime")
+
+if (isMain) {
   async function main() {
     const { values } = parseArgs({
       options: {
