@@ -22,6 +22,11 @@ const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("http"), url: z.string(), headers: z.record(z.string()).optional() }),
 ])
 
+const ThinkingConfigSchema = z.object({
+  type: z.enum(["adaptive", "enabled", "disabled"]),
+  budgetTokens: z.number().optional(),
+})
+
 const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
@@ -34,6 +39,7 @@ const AgentDefinitionSchema = z.object({
   skills: z.array(z.string()).optional(),
   mcpServers: z.record(McpServerConfigSchema).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
+  thinking: ThinkingConfigSchema.optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },

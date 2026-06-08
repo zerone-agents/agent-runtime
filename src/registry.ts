@@ -37,6 +37,7 @@ export class AgentRegistry {
           permissionMode: def.permissionMode,
           allowedSkills: def.skills,
           mcpServers: def.mcpServers as any,
+          thinking: def.thinking as any,
         })
 
         this.agents.set(def.id, agent)

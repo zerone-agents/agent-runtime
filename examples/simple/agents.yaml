@@ -4,3 +4,6 @@ agents:
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/assistant.md"
     maxTurns: 10
+    thinking:
+      type: "enabled"
+      budgetTokens: 10000
