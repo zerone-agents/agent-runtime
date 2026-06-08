@@ -16,6 +16,7 @@ const weatherTool = defineTool({
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call(input: { city: string }) {
+    const cnToEn: Record<string, string> = { "北京": "beijing", "上海": "shanghai", "东京": "tokyo", "伦敦": "london", "纽约": "new york" }
     const temps: Record<string, { temp: number; desc: string }> = {
       beijing: { temp: 28, desc: "晴" },
       shanghai: { temp: 25, desc: "多云" },
@@ -23,7 +24,8 @@ const weatherTool = defineTool({
       london: { temp: 14, desc: "阴" },
       "new york": { temp: 18, desc: "晴转多云" },
     }
-    const w = temps[input.city.toLowerCase()] ?? { temp: 20, desc: "晴" }
+    const key = (cnToEn[input.city] ?? input.city).toLowerCase()
+    const w = temps[key] ?? { temp: 20, desc: "晴" }
     return `${input.city}：${w.temp}°C，${w.desc}`
   },
 })
