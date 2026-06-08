@@ -58,13 +58,14 @@ export class AgentRegistry {
   }
 
   list(): AgentInfo[] {
+    const envModel = process.env.OPENAGENT_MODEL
     const result: AgentInfo[] = []
     for (const [id] of this.agents) {
       const def = this.defs.get(id)
       result.push({
         id,
         name: def?.name ?? def?.id ?? id,
-        model: def?.model ?? "",
+        model: envModel ?? def?.model ?? "",
         status: this.statuses.get(id) ?? "unavailable",
         toolCount: def?.allowedTools?.length ?? 0,
       })
