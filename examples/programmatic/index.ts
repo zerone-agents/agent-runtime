@@ -92,9 +92,16 @@ function createLoggingHooks(label: string) {
 
 // ─── 创建 Agent ────────────────────────────────────────────
 
+const envOverrides = {
+  model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
+  apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
+  apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
+  baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
+}
+
 function createAnalystAgent(): Agent {
   return createAgent({
-    model: "claude-sonnet-4-6",
+    ...envOverrides,
     systemPrompt: [
       "你是一个金融分析助手。",
       "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
@@ -109,7 +116,7 @@ function createAnalystAgent(): Agent {
 
 function createOpsAgent(): Agent {
   return createAgent({
-    model: "claude-sonnet-4-6",
+    ...envOverrides,
     systemPrompt: [
       "你是一个运维助手。",
       "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
