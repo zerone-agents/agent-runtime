@@ -28,6 +28,24 @@ complex/
 | `coder` | 编程助手 | Bash, Read, Write, Edit, Glob, Grep, LSP, TaskTool | 编写/修改/调试代码 |
 | `writer` | 写作助手 | Read, Write, Edit, WebSearch | 撰写/编辑文本 |
 
+## 环境变量
+
+环境变量优先级高于配置文件：
+
+| 变量 | 说明 |
+|---|---|
+| `OPENAGENT_MODEL` | 模型名称（如 `claude-sonnet-4-6`、`kimi-k2.5`） |
+| `OPENAGENT_API_KEY` | API Key |
+| `OPENAGENT_BASE_URL` | API Base URL |
+| `OPENAGENT_API_TYPE` | API 类型（`anthropic-messages` / `openai-completions`） |
+
+```bash
+export OPENAGENT_API_KEY=sk-xxx
+export OPENAGENT_BASE_URL=https://xxx
+export OPENAGENT_MODEL=kimi-k2.5
+export OPENAGENT_API_TYPE=anthropic-messages
+```
+
 ## 测试
 
 ```bash

@@ -42,6 +42,24 @@ code-driven/
 | `registry.register()` | 手动注册 Agent |
 | `createApp()` | 组装 Hono 路由 |
 
+## 环境变量
+
+环境变量优先级高于配置文件（`agent.config.ts` 和 `index.ts` 均生效）：
+
+| 变量 | 说明 |
+|---|---|
+| `OPENAGENT_MODEL` | 模型名称（如 `claude-sonnet-4-6`、`kimi-k2.5`） |
+| `OPENAGENT_API_KEY` | API Key |
+| `OPENAGENT_BASE_URL` | API Base URL |
+| `OPENAGENT_API_TYPE` | API 类型（`anthropic-messages` / `openai-completions`） |
+
+```bash
+export OPENAGENT_API_KEY=sk-xxx
+export OPENAGENT_BASE_URL=https://xxx
+export OPENAGENT_MODEL=kimi-k2.5
+export OPENAGENT_API_TYPE=anthropic-messages
+```
+
 ## 测试
 
 ```bash
