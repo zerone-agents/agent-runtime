@@ -24,10 +24,15 @@ simple/
 # 查看已注册的 Agent
 curl http://localhost:3000/v1/agents
 
-# SSE 流式对话
+# SSE 流式对话（raw，逐 token）
 curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
   -d '{"message":"读一下 package.json 告诉我项目名和版本号"}'
+
+# SSE 流式对话（block，按完整消息分块）
+curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" \
+  -d '{"message":"读一下 package.json 告诉我项目名和版本号","stream":"block"}'
 
 # 阻塞式对话
 curl -X POST http://localhost:3000/v1/agents/assistant/runs \
