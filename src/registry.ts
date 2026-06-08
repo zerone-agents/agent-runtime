@@ -26,7 +26,10 @@ export class AgentRegistry {
       try {
         const systemPrompt = resolveSystemPrompt(def, configDir)
         const agent = createAgent({
-          model: def.model,
+          model: process.env.OPENAGENT_MODEL ?? def.model,
+          apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
+          apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
+          baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
           systemPrompt,
           allowedTools: def.allowedTools,
           disallowedTools: def.disallowedTools,
