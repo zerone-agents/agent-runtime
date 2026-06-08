@@ -1,5 +1,5 @@
 import { createApp, AgentRegistry, MetricsCollector } from "../../src/index.js"
-import { createAgent, defineTool, tool } from "@zerone-agent/open-agent-sdk"
+import { createAgent, defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
 
@@ -42,7 +42,7 @@ async function main() {
     model: "claude-sonnet-4-6",
     systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
     maxTurns: 15,
-    allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+    tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
     hooks: {
       PreToolUse: [
         {

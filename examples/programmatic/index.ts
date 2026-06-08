@@ -16,7 +16,7 @@ import { Hono } from "hono"
 import { serve } from "@hono/node-server"
 import { z } from "zod"
 
-import { createAgent, defineTool, tool, type Agent } from "@zerone-agent/open-agent-sdk"
+import { createAgent, defineTool, tool, sdkToolToToolDefinition, type Agent } from "@zerone-agent/open-agent-sdk"
 import {
   createApp,
   AgentRegistry,
@@ -115,7 +115,7 @@ function createOpsAgent(): Agent {
       "执行危险操作前先确认。",
     ].join("\n"),
     maxTurns: 15,
-    tools: [noteTool, "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+    tools: [sdkToolToToolDefinition(noteTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
     permissionMode: "acceptEdits",
     hooks: createLoggingHooks("ops"),
   })

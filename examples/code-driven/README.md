@@ -1,47 +1,46 @@
 # Code-Driven — 代码驱动示例
 
-用 TypeScript 代码定义 Agent 配置，支持自定义工具、Hook 等全部 SDK 能力。
+用 TypeScript 代码定义 Agent 配置，或直接用 SDK API 编程启动。
 
 ## 两种运行方式
 
-### 方式一：agent.config.ts（推荐）
+### 方式一：agent.config.ts（声明式配置）
 
 ```bash
 node --import tsx src/index.ts --config examples/code-driven
 ```
 
-Runtime 自动检测 `agent.config.ts` 并加载。配置文件中可以使用 SDK 的全部 API（`defineTool`、`tool`、`zod` 等）。
+Runtime 自动检测 `agent.config.ts` 并加载。适合纯配置场景（模型、提示词、工具白名单等）。
 
-### 方式二：直接运行脚本
+> **注意：** `agent.config.ts` 经过 Zod schema 验证，只接受可序列化字段。自定义 `ToolDefinition` 无法通过配置文件传递，需使用方式二。
+
+### 方式二：直接运行脚本（编程式，推荐用于自定义工具）
 
 ```bash
 npx tsx examples/code-driven/index.ts
 ```
 
-纯 SDK 编程模式，不依赖配置文件加载。适合需要完全控制 Agent 创建过程的场景。
+纯 SDK 编程模式，支持自定义工具、Hook 等全部能力。适合需要完全控制 Agent 创建过程的场景。
 
 ## 文件结构
 
 ```
 code-driven/
-├── agent.config.ts    # 声明式配置（defineConfig + 自定义工具）
-├── index.ts           # 编程式启动（直接调 SDK API）
+├── agent.config.ts    # 声明式配置（无自定义工具）
+├── index.ts           # 编程式启动（自定义工具 + Hook）
 ```
 
-## agent.config.ts 说明
+## index.ts 说明
 
-```ts
-import { defineConfig } from "@zerone-agent/open-agent-runtime"
-import { defineTool, tool } from "@zerone-agent/open-agent-sdk"
+展示了 SDK + Runtime 编程式用法：
 
-const weatherTool = defineTool({ ... })  // 自定义工具
-const calcTool = tool("Calculator", ...) // Zod 风格工具
-
-export default defineConfig({
-  server: { port: 3000 },
-  agents: [{ id: "smart", ... }],
-})
-```
+| 能力 | 说明 |
+|---|---|
+| `defineTool()` | JSON Schema 风格自定义工具（GetWeather） |
+| `tool()` + `sdkToolToToolDefinition()` | Zod 风格自定义工具（Calculator） |
+| `hooks` | PreToolUse / PostToolUse 日志 |
+| `registry.register()` | 手动注册 Agent |
+| `createApp()` | 组装 Hono 路由 |
 
 ## 测试
 
@@ -62,7 +61,7 @@ curl -N -X POST http://localhost:3000/v1/agents/smart/runs \
 
 ## 关键点
 
-- `agent.config.ts` 优先级高于 `agents.yaml`，适合需要自定义工具和复杂逻辑的场景
-- `defineConfig` 提供完整类型提示，IDE 会自动补全所有配置项
-- `index.ts` 展示了纯 SDK 模式：手动创建 Agent → `registry.register()` → `createApp()` → `serve()`
-- 自定义工具有两种定义方式：`defineTool()`（JSON Schema）和 `tool()`（Zod）
+- `agent.config.ts` 适合纯声明式配置（无自定义工具），优先级高于 `agents.yaml`
+- `index.ts` 展示完整 SDK 模式：`createAgent({ tools: [...] })` → `registry.register()` → `createApp()` → `serve()`
+- `tool()` 返回 `SdkMcpToolDefinition`，需用 `sdkToolToToolDefinition()` 转换后才能传入 `createAgent`
+- `defineTool()` 直接返回 `ToolDefinition`，无需转换
