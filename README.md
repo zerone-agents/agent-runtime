@@ -37,41 +37,14 @@ export default defineConfig({
 
 All routes prefixed with `/v1`.
 
-### Run Agent (SSE — coarse grained)
+### Run Agent (SSE — raw / default)
 
-`stream: true` (default). Emits complete messages only — system init, assistant turns, tool results, final result.
-
-```bash
-curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Hello","stream":true}'
-```
-
-```
-event: system
-data: {"type":"system","subtype":"init","session_id":"...","tools":[...],"model":"..."}
-
-event: assistant
-data: {"type":"assistant","message":{"role":"assistant","content":[...]}}
-
-event: tool_result
-data: {"type":"tool_result","result":{"tool_name":"Read","output":"..."}}
-
-event: result
-data: {"type":"result","subtype":"success","total_cost_usd":0.05,...}
-
-event: done
-data: {}
-```
-
-### Run Agent (SSE — raw / fine-grained)
-
-`stream: "raw"`. Enables `partial_message` events with token-level streaming — text deltas, thinking chunks, tool_use progress.
+`stream: true` (default). Token-level streaming — includes `partial_message` events with text deltas, thinking chunks, tool_use progress.
 
 ```bash
 curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
-  -d '{"message":"Hello","stream":"raw"}'
+  -d '{"message":"Hello"}'
 ```
 
 ```
@@ -98,6 +71,16 @@ data: {"type":"result","subtype":"success",...}
 
 event: done
 data: {}
+```
+
+### Run Agent (SSE — block)
+
+`stream: "block"`. Complete messages only — system init, assistant turns, tool results, final result. No `partial_message` events.
+
+```bash
+curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello","stream":"block"}'
 ```
 
 ### Run Agent (blocking)

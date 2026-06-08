@@ -204,7 +204,7 @@ describe("Agent Router", () => {
       })
       expect(res.status).toBe(200)
       expect(streamAgentResponse).toHaveBeenCalledOnce()
-      expect(agent.query).toHaveBeenCalledWith("hello", {})
+      expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true })
     })
   })
 })

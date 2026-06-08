@@ -44,14 +44,14 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
 
     const overrides: Record<string, any> = {}
     if (sessionId) overrides.sessionId = sessionId
-    if (stream === "raw") overrides.includePartialMessages = true
 
-    if (stream === "raw") {
+    if (stream === "block") {
       const agentStream = agent.query(message, overrides)
       return streamAgentResponse(c, agentStream)
     }
 
-    if (stream) {
+    if (stream === true || stream === "raw") {
+      overrides.includePartialMessages = true
       const agentStream = agent.query(message, overrides)
       return streamAgentResponse(c, agentStream)
     }
