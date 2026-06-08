@@ -39,7 +39,10 @@ const calcTool = tool("Calculator", "计算数学表达式", { expression: z.str
 
 async function main() {
   const agent = createAgent({
-    model: "claude-sonnet-4-6",
+    model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
+    apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
+    apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
+    baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
     systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
     maxTurns: 15,
     tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
