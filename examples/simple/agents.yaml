@@ -6,4 +6,4 @@ agents:
     maxTurns: 10
     thinking:
       type: "enabled"
-      budgetTokens: 10000
+      budgetTokens: 4000
