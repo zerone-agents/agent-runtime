@@ -175,8 +175,9 @@ const weatherTool = defineTool({
   },
 })
 
-const calcTool = tool("Calculator", "Evaluate math expression", { expression: z.string() }, async ({ expression }) => {
-  const result = Function(`'use strict'; return (${expression})`)()
+const calcTool = tool("Calculator", "Evaluate math expression (^ = power)", { expression: z.string() }, async ({ expression }) => {
+  const safe = expression.replace(/\^/g, "**")
+  const result = Function(`'use strict'; return (${safe})`)()
   return { content: [{ type: "text" as const, text: `${expression} = ${result}` }] }
 })
 

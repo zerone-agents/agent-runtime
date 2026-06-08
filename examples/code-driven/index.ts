@@ -28,9 +28,10 @@ const weatherTool = defineTool({
   },
 })
 
-const calcTool = tool("Calculator", "计算数学表达式", { expression: z.string() }, async ({ expression }) => {
+const calcTool = tool("Calculator", "计算数学表达式（支持 ^ 表示幂运算）", { expression: z.string() }, async ({ expression }) => {
   try {
-    const result = Function(`'use strict'; return (${expression})`)()
+    const safe = expression.replace(/\^/g, "**")
+    const result = Function(`'use strict'; return (${safe})`)()
     return { content: [{ type: "text" as const, text: `${expression} = ${result}` }] }
   } catch (e: any) {
     return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true }
