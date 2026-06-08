@@ -37,15 +37,15 @@ export default defineConfig({
 
 All routes prefixed with `/v1`.
 
-### Run Agent (SSE)
+### Run Agent (SSE — coarse grained)
+
+`stream: true` (default). Emits complete messages only — system init, assistant turns, tool results, final result.
 
 ```bash
 curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
   -d '{"message":"Hello","stream":true}'
 ```
-
-SSE response — each event is a JSON `SDKMessage`:
 
 ```
 event: system
@@ -54,8 +54,47 @@ data: {"type":"system","subtype":"init","session_id":"...","tools":[...],"model"
 event: assistant
 data: {"type":"assistant","message":{"role":"assistant","content":[...]}}
 
+event: tool_result
+data: {"type":"tool_result","result":{"tool_name":"Read","output":"..."}}
+
 event: result
 data: {"type":"result","subtype":"success","total_cost_usd":0.05,...}
+
+event: done
+data: {}
+```
+
+### Run Agent (SSE — raw / fine-grained)
+
+`stream: "raw"`. Enables `partial_message` events with token-level streaming — text deltas, thinking chunks, tool_use progress.
+
+```bash
+curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello","stream":"raw"}'
+```
+
+```
+event: system
+data: {"type":"system","subtype":"init",...}
+
+event: partial_message
+data: {"type":"partial_message","partial":{"type":"thinking","text":"Let me..."}}
+
+event: partial_message
+data: {"type":"partial_message","partial":{"type":"text","text":"Hello!"}}
+
+event: partial_message
+data: {"type":"partial_message","partial":{"type":"tool_use","tool_name":"Read",...}}
+
+event: assistant
+data: {"type":"assistant","message":{"role":"assistant","content":[...]}}
+
+event: tool_result
+data: {"type":"tool_result","result":{...}}
+
+event: result
+data: {"type":"result","subtype":"success",...}
 
 event: done
 data: {}
