@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
+import { fileURLToPath } from "node:url"
 import { discoverConfig, findConfigDir } from "./config.js"
 import { AgentRegistry } from "./registry.js"
 import { MetricsCollector } from "./metrics.js"
@@ -20,8 +21,12 @@ export {
   type AgentDefinition,
 } from "./config.js"
 
-const argv1 = process.argv[1] || ""
-const isMain = argv1.endsWith("src/index.ts") || argv1.endsWith("dist/index.js") || argv1.endsWith("open-agent-runtime")
+const __filename = fileURLToPath(import.meta.url)
+const argv1 = process.argv[1]
+const isMain = !!argv1 && (
+  __filename === fileURLToPath(new URL(argv1, "file:///")) ||
+  argv1.endsWith("open-agent-runtime")
+)
 
 if (isMain) {
   async function main() {
