@@ -2,7 +2,9 @@ agents:
   - id: "researcher"
     name: "研究助手"
     model: "claude-sonnet-4-6"
-    systemPromptFile: "./prompts/researcher.md"
+    systemPrompt: |
+      你是一个研究助手，擅长搜索信息、分析资料。
+      回答要有条理，关键信息用列表呈现。
     maxTurns: 15
     allowedTools:
       - WebFetch
@@ -18,7 +20,9 @@ agents:
   - id: "coder"
     name: "编程助手"
     model: "claude-sonnet-4-6"
-    systemPromptFile: "./prompts/coder.md"
+    systemPrompt: |
+      你是一个编程助手，擅长编写、修改、调试代码。
+      写出高质量的代码，并添加必要的注释。
     maxTurns: 20
     allowedTools:
       - Bash
@@ -37,7 +41,9 @@ agents:
   - id: "writer"
     name: "写作助手"
     model: "claude-sonnet-4-6"
-    systemPromptFile: "./prompts/writer.md"
+    systemPrompt: |
+      你是一个写作助手，擅长撰写和编辑各类文本。
+      文风自然流畅，表达清晰。
     maxTurns: 10
     allowedTools:
       - Read

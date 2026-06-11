@@ -12,11 +12,11 @@
 
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:3000}"
-AGENT="${AGENT:-chatbot}"
+BASE_URL="${TEST_BASE_URL:-http://localhost:3000}"
+AGENT_ID="${TEST_AGENT_ID:-chatbot}"
 
 echo "=== 第一轮：新会话（不传 sessionId）==="
-RESP1=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT/runs" \
+RESP1=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT_ID/runs" \
   -H "Content-Type: application/json" \
   -d '{"message":"我叫小明，请记住我的名字","stream":false}')
 echo "$RESP1" | jq .
@@ -25,14 +25,14 @@ echo ">>> 获得 sessionId: $SESSION_ID"
 echo ""
 
 echo "=== 第二轮：用 sessionId resume ==="
-RESP2=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT/runs" \
+RESP2=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT_ID/runs" \
   -H "Content-Type: application/json" \
   -d "{\"message\":\"我叫什么名字？\",\"stream\":false,\"sessionId\":\"$SESSION_ID\"}")
 echo "$RESP2" | jq .
 echo ""
 
 echo "=== 第三轮：继续同一会话 ==="
-RESP3=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT/runs" \
+RESP3=$(curl -s -X POST "$BASE_URL/v1/agents/$AGENT_ID/runs" \
   -H "Content-Type: application/json" \
   -d "{\"message\":\"我们之前聊了什么？\",\"stream\":false,\"sessionId\":\"$SESSION_ID\"}")
 echo "$RESP3" | jq .
