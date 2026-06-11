@@ -10,22 +10,24 @@ export interface AgentInfo {
   toolCount: number
 }
 
-export class AgentRegistry {
-  private agents = new Map<string, Agent>()
-  private statuses = new Map<string, "ready" | "unavailable">()
-  private defs = new Map<string, AgentDefinition>()
+type CreateOpts = Parameters<typeof createAgent>[0]
 
-  register(id: string, agent: Agent, def?: AgentDefinition): void {
-    this.agents.set(id, agent)
+export class AgentRegistry {
+  private defs = new Map<string, AgentDefinition>()
+  private createOpts = new Map<string, CreateOpts>()
+  private statuses = new Map<string, "ready" | "unavailable">()
+
+  register(id: string, def: AgentDefinition, opts: CreateOpts): void {
+    this.defs.set(id, def)
+    this.createOpts.set(id, opts)
     this.statuses.set(id, "ready")
-    if (def) this.defs.set(id, def)
   }
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
     for (const def of config.agents) {
       try {
         const systemPrompt = resolveSystemPrompt(def, configDir)
-        const agent = createAgent({
+        const opts: CreateOpts = {
           model: process.env.OPENAGENT_MODEL ?? def.model,
           apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
           apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
@@ -38,20 +40,26 @@ export class AgentRegistry {
           allowedSkills: def.skills,
           mcpServers: def.mcpServers as any,
           thinking: def.thinking as any,
-        })
+        }
 
-        this.agents.set(def.id, agent)
-        this.statuses.set(def.id, "ready")
         this.defs.set(def.id, def)
+        this.createOpts.set(def.id, opts)
+        this.statuses.set(def.id, "ready")
       } catch (err) {
-        console.error(`Failed to create agent "${def.id}":`, err)
+        console.error(`Failed to configure agent "${def.id}":`, err)
+        this.defs.set(def.id, def)
         this.statuses.set(def.id, "unavailable")
       }
     }
   }
 
-  get(agentId: string): Agent | undefined {
-    return this.agents.get(agentId)
+  create(agentId: string, sessionId?: string): Agent | undefined {
+    const opts = this.createOpts.get(agentId)
+    if (!opts) return undefined
+    if (this.statuses.get(agentId) !== "ready") return undefined
+
+    const merged = sessionId ? { ...opts, resume: sessionId } : opts
+    return createAgent(merged)
   }
 
   getStatus(agentId: string): "ready" | "unavailable" | "not_found" {
@@ -61,28 +69,23 @@ export class AgentRegistry {
   list(): AgentInfo[] {
     const envModel = process.env.OPENAGENT_MODEL
     const result: AgentInfo[] = []
-    for (const [id] of this.agents) {
-      const def = this.defs.get(id)
+    for (const [id, def] of this.defs) {
+      const status = this.statuses.get(id)
+      if (status !== "ready") continue
       result.push({
         id,
-        name: def?.name ?? def?.id ?? id,
-        model: envModel ?? def?.model ?? "",
-        status: this.statuses.get(id) ?? "unavailable",
-        toolCount: def?.allowedTools?.length ?? 0,
+        name: def.name ?? def.id,
+        model: envModel ?? def.model ?? "",
+        status: "ready",
+        toolCount: def.allowedTools?.length ?? 0,
       })
     }
     return result
   }
 
   async closeAll(): Promise<void> {
-    for (const [id, agent] of this.agents) {
-      try {
-        await agent.close()
-      } catch (err) {
-        console.error(`Error closing agent "${id}":`, err)
-      }
-    }
-    this.agents.clear()
+    this.defs.clear()
+    this.createOpts.clear()
     this.statuses.clear()
   }
 }

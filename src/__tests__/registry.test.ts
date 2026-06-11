@@ -20,7 +20,7 @@ function makeConfig(agents: any[]) {
   } as any
 }
 
-describe("AgentRegistry", () => {
+describe("AgentRegistry (factory)", () => {
   let registry: AgentRegistry
 
   beforeEach(() => {
@@ -29,13 +29,7 @@ describe("AgentRegistry", () => {
   })
 
   describe("loadFromConfig", () => {
-    it("creates agents from config, stores them, sets status to ready", async () => {
-      const mockAgent1 = { close: vi.fn().mockResolvedValue(undefined) }
-      const mockAgent2 = { close: vi.fn().mockResolvedValue(undefined) }
-      mockCreateAgent
-        .mockReturnValueOnce(mockAgent1 as any)
-        .mockReturnValueOnce(mockAgent2 as any)
-
+    it("stores definitions without creating agents", async () => {
       const config = makeConfig([
         { id: "agent-a", model: "gpt-4" },
         { id: "agent-b", model: "claude-3" },
@@ -43,91 +37,128 @@ describe("AgentRegistry", () => {
 
       await registry.loadFromConfig(config, "/tmp")
 
-      expect(mockCreateAgent).toHaveBeenCalledTimes(2)
-      expect(mockCreateAgent).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ model: "gpt-4", systemPrompt: "test-prompt" }),
-      )
-      expect(mockCreateAgent).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ model: "claude-3", systemPrompt: "test-prompt" }),
-      )
-      expect(registry.get("agent-a")).toBe(mockAgent1)
-      expect(registry.get("agent-b")).toBe(mockAgent2)
+      expect(mockCreateAgent).not.toHaveBeenCalled()
       expect(registry.getStatus("agent-a")).toBe("ready")
       expect(registry.getStatus("agent-b")).toBe("ready")
     })
 
-    it("handles creation failure gracefully, sets status to unavailable", async () => {
-      const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
-      mockCreateAgent
-        .mockImplementationOnce(() => {
-          throw new Error("creation failed")
-        })
-        .mockReturnValueOnce(mockAgent as any)
+    it("marks agent as unavailable when resolveSystemPrompt throws", async () => {
+      const { resolveSystemPrompt } = await import("../config.js")
+      vi.mocked(resolveSystemPrompt).mockImplementationOnce(() => {
+        throw new Error("file not found")
+      })
 
       const config = makeConfig([
-        { id: "bad-agent", model: "bad-model" },
-        { id: "good-agent", model: "good-model" },
+        { id: "bad-agent", model: "gpt-4" },
+        { id: "good-agent", model: "gpt-4" },
       ])
-
       await registry.loadFromConfig(config, "/tmp")
 
-      expect(registry.get("bad-agent")).toBeUndefined()
       expect(registry.getStatus("bad-agent")).toBe("unavailable")
-      expect(registry.get("good-agent")).toBe(mockAgent)
       expect(registry.getStatus("good-agent")).toBe("ready")
     })
   })
 
-  describe("get", () => {
-    it("returns agent by id", async () => {
+  describe("create", () => {
+    it("creates a new agent per call", async () => {
       const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
       mockCreateAgent.mockReturnValue(mockAgent as any)
 
       const config = makeConfig([{ id: "my-agent", model: "gpt-4" }])
       await registry.loadFromConfig(config, "/tmp")
 
-      expect(registry.get("my-agent")).toBe(mockAgent)
+      const agent = registry.create("my-agent")
+      expect(agent).toBe(mockAgent)
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gpt-4", systemPrompt: "test-prompt" }),
+      )
     })
 
-    it("returns undefined for unknown id", () => {
-      expect(registry.get("nonexistent")).toBeUndefined()
-    })
-  })
+    it("passes resume: sessionId when sessionId provided", async () => {
+      const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
+      mockCreateAgent.mockReturnValue(mockAgent as any)
 
-  describe("getStatus", () => {
-    it("returns ready for a loaded agent", async () => {
-      mockCreateAgent.mockReturnValue({ close: vi.fn() } as any)
-      const config = makeConfig([{ id: "a1", model: "gpt-4" }])
+      const config = makeConfig([{ id: "my-agent", model: "gpt-4" }])
       await registry.loadFromConfig(config, "/tmp")
 
-      expect(registry.getStatus("a1")).toBe("ready")
+      const agent = registry.create("my-agent", "sess-123")
+      expect(agent).toBe(mockAgent)
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ resume: "sess-123" }),
+      )
     })
 
-    it("returns unavailable for a failed agent", async () => {
-      mockCreateAgent.mockImplementation(() => {
+    it("does not pass resume when sessionId is undefined", async () => {
+      const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
+      mockCreateAgent.mockReturnValue(mockAgent as any)
+
+      const config = makeConfig([{ id: "my-agent", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      registry.create("my-agent")
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.resume).toBeUndefined()
+    })
+
+    it("returns undefined for unknown agent", () => {
+      const agent = registry.create("nonexistent")
+      expect(agent).toBeUndefined()
+    })
+
+    it("returns undefined for unavailable agent", async () => {
+      const { resolveSystemPrompt } = await import("../config.js")
+      vi.mocked(resolveSystemPrompt).mockImplementationOnce(() => {
         throw new Error("fail")
       })
-      const config = makeConfig([{ id: "a2", model: "gpt-4" }])
+
+      const config = makeConfig([{ id: "bad", model: "gpt-4" }])
       await registry.loadFromConfig(config, "/tmp")
 
-      expect(registry.getStatus("a2")).toBe("unavailable")
+      const agent = registry.create("bad")
+      expect(agent).toBeUndefined()
     })
 
-    it("returns not_found for unknown agent", () => {
-      expect(registry.getStatus("unknown")).toBe("not_found")
+    it("creates independent agents on each call", async () => {
+      const agent1 = { close: vi.fn().mockResolvedValue(undefined) }
+      const agent2 = { close: vi.fn().mockResolvedValue(undefined) }
+      mockCreateAgent
+        .mockReturnValueOnce(agent1 as any)
+        .mockReturnValueOnce(agent2 as any)
+
+      const config = makeConfig([{ id: "my-agent", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const a1 = registry.create("my-agent")
+      const a2 = registry.create("my-agent")
+      expect(a1).toBe(agent1)
+      expect(a2).toBe(agent2)
+      expect(mockCreateAgent).toHaveBeenCalledTimes(2)
     })
   })
 
   describe("list", () => {
-    it("returns AgentInfo array with correct ids and statuses", async () => {
-      mockCreateAgent
-        .mockReturnValueOnce({ close: vi.fn() } as any)
-        .mockImplementationOnce(() => {
-          throw new Error("fail")
-        })
-        .mockReturnValueOnce({ close: vi.fn() } as any)
+    it("returns AgentInfo based on definitions", async () => {
+      const config = makeConfig([
+        { id: "agent-1", name: "Agent One", model: "gpt-4", allowedTools: ["tool-a", "tool-b"] },
+        { id: "agent-2", name: "Agent Two", model: "claude-3" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const listed = registry.list()
+      expect(listed).toHaveLength(2)
+      expect(listed).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "agent-1", name: "Agent One", model: "gpt-4", toolCount: 2, status: "ready" }),
+          expect.objectContaining({ id: "agent-2", name: "Agent Two", model: "claude-3", toolCount: 0, status: "ready" }),
+        ]),
+      )
+    })
+
+    it("excludes unavailable agents from list", async () => {
+      const { resolveSystemPrompt } = await import("../config.js")
+      vi.mocked(resolveSystemPrompt).mockImplementationOnce(() => {
+        throw new Error("fail")
+      })
 
       const config = makeConfig([
         { id: "agent-1", model: "gpt-4" },
@@ -138,42 +169,40 @@ describe("AgentRegistry", () => {
 
       const listed = registry.list()
       expect(listed).toHaveLength(2)
-      expect(listed.map((a) => a.id).sort()).toEqual(["agent-1", "agent-3"])
-      for (const info of listed) {
-        expect(info.status).toBe("ready")
-        expect(info).toHaveProperty("name")
-        expect(info).toHaveProperty("model")
-        expect(info).toHaveProperty("toolCount")
-      }
+      expect(listed.map((a) => a.id).sort()).toEqual(["agent-2", "agent-3"])
+    })
+  })
+
+  describe("getStatus", () => {
+    it("returns ready for loaded agent", async () => {
+      const config = makeConfig([{ id: "a1", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+      expect(registry.getStatus("a1")).toBe("ready")
+    })
+
+    it("returns unavailable for failed agent", async () => {
+      const { resolveSystemPrompt } = await import("../config.js")
+      vi.mocked(resolveSystemPrompt).mockImplementationOnce(() => {
+        throw new Error("fail")
+      })
+      const config = makeConfig([{ id: "a2", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+      expect(registry.getStatus("a2")).toBe("unavailable")
+    })
+
+    it("returns not_found for unknown agent", () => {
+      expect(registry.getStatus("unknown")).toBe("not_found")
     })
   })
 
   describe("closeAll", () => {
-    it("calls close on all agents and clears maps", async () => {
-      const mockClose1 = vi.fn().mockResolvedValue(undefined)
-      const mockClose2 = vi.fn().mockResolvedValue(undefined)
-      mockCreateAgent
-        .mockReturnValueOnce({ close: mockClose1 } as any)
-        .mockReturnValueOnce({ close: mockClose2 } as any)
-
-      const config = makeConfig([
-        { id: "a1", model: "gpt-4" },
-        { id: "a2", model: "gpt-4" },
-      ])
+    it("is a no-op (no live instances)", async () => {
+      const config = makeConfig([{ id: "a1", model: "gpt-4" }])
       await registry.loadFromConfig(config, "/tmp")
-
-      expect(registry.get("a1")).toBeDefined()
-      expect(registry.getStatus("a1")).toBe("ready")
 
       await registry.closeAll()
 
-      expect(mockClose1).toHaveBeenCalledTimes(1)
-      expect(mockClose2).toHaveBeenCalledTimes(1)
-      expect(registry.get("a1")).toBeUndefined()
-      expect(registry.get("a2")).toBeUndefined()
-      expect(registry.getStatus("a1")).toBe("not_found")
-      expect(registry.getStatus("a2")).toBe("not_found")
-      expect(registry.list()).toEqual([])
+      expect(mockCreateAgent).not.toHaveBeenCalled()
     })
   })
 })
