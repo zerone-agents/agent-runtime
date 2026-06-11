@@ -2,9 +2,7 @@ agents:
   - id: "assistant"
     name: "简单助手"
     model: "claude-sonnet-4-6"
-    systemPrompt: |
-      你是一个通用助手，可以读写文件、执行命令、搜索信息。
-      回答要简洁实用。
+    systemPromptFile: "./prompts/assistant.md"
     maxTurns: 10
     thinking:
       type: "enabled"

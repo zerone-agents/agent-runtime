@@ -13,7 +13,11 @@ node --import tsx src/index.ts --config examples/complex
 ```
 complex/
 ├── runtime.yaml            # 服务器配置
-└── agents.yaml             # 3 个 Agent 定义（内联 systemPrompt）
+├── agents.yaml             # 3 个 Agent 定义
+└── prompts/
+    ├── researcher.md       # 研究助手提示词
+    ├── coder.md            # 编程助手提示词
+    └── writer.md           # 写作助手提示词
 ```
 
 ## Agent 说明
@@ -68,4 +72,4 @@ curl -N -X POST http://localhost:3000/v1/agents/writer/runs \
 
 - 多 Agent 通过 `allowedTools` 做工具隔离，每个 Agent 只能用指定的工具
 - `permissionMode: acceptEdits` 让编程助手自动执行文件编辑，无需人工确认
-- `systemPrompt` 内联在 yaml 中，也支持用 `systemPromptFile` 引用外部文件
+- 提示词全部使用外部 `.md` 文件，方便独立编辑和版本管理
