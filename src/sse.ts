@@ -5,6 +5,7 @@ import type { Context } from "hono"
 export function streamAgentResponse(
   c: Context,
   agentStream: AsyncGenerator<SDKMessage, void>,
+  onDone?: () => Promise<void> | void,
 ) {
   return streamSSE(c, async (stream) => {
     try {
@@ -21,6 +22,8 @@ export function streamAgentResponse(
         data: JSON.stringify({ error: err.message ?? "Unknown error" }),
       })
       await stream.writeSSE({ event: "done", data: "{}" })
+    } finally {
+      await onDone?.()
     }
   })
 }

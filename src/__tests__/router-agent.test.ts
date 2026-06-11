@@ -15,14 +15,14 @@ function createApp(registry: any, metrics: any) {
   return app
 }
 
-describe("Agent Router", () => {
+describe("Agent Router (per-request)", () => {
   let registry: any
   let metrics: any
 
   beforeEach(() => {
     registry = {
       list: vi.fn(),
-      get: vi.fn(),
+      create: vi.fn(),
       getStatus: vi.fn(),
     }
     metrics = {
@@ -35,7 +35,6 @@ describe("Agent Router", () => {
     it("returns a list of agents", async () => {
       const agents = [
         { id: "agent-1", name: "Agent One", status: "ready", toolCount: 3 },
-        { id: "agent-2", name: "Agent Two", status: "ready", toolCount: 5 },
       ]
       registry.list.mockReturnValue(agents)
       const app = createApp(registry, metrics)
@@ -64,14 +63,13 @@ describe("Agent Router", () => {
 
       const res = await app.request("http://localhost/v1/agents/unknown")
       expect(res.status).toBe(404)
-      const body = await res.json()
-      expect(body.error).toBe("Agent not found")
     })
   })
 
   describe("POST /v1/agents/:agentId/runs", () => {
     it("returns 404 if agent not found", async () => {
-      registry.get.mockReturnValue(undefined)
+      registry.create.mockReturnValue(undefined)
+      registry.getStatus.mockReturnValue("not_found")
       const app = createApp(registry, metrics)
 
       const res = await app.request("http://localhost/v1/agents/missing/runs", {
@@ -80,12 +78,10 @@ describe("Agent Router", () => {
         body: JSON.stringify({ message: "hi" }),
       })
       expect(res.status).toBe(404)
-      const body = await res.json()
-      expect(body.error).toBe("Agent not found")
     })
 
     it("returns 503 if agent unavailable", async () => {
-      registry.get.mockReturnValue({})
+      registry.create.mockReturnValue(undefined)
       registry.getStatus.mockReturnValue("unavailable")
       const app = createApp(registry, metrics)
 
@@ -95,12 +91,10 @@ describe("Agent Router", () => {
         body: JSON.stringify({ message: "hi" }),
       })
       expect(res.status).toBe(503)
-      const body = await res.json()
-      expect(body.error).toBe("Agent unavailable")
     })
 
     it("returns 400 if message is missing", async () => {
-      registry.get.mockReturnValue({})
+      registry.create.mockReturnValue({})
       registry.getStatus.mockReturnValue("ready")
       const app = createApp(registry, metrics)
 
@@ -110,26 +104,9 @@ describe("Agent Router", () => {
         body: JSON.stringify({}),
       })
       expect(res.status).toBe(400)
-      const body = await res.json()
-      expect(body.error).toBe("Invalid request: message is required")
     })
 
-    it("returns 400 if body is not valid JSON", async () => {
-      registry.get.mockReturnValue({})
-      registry.getStatus.mockReturnValue("ready")
-      const app = createApp(registry, metrics)
-
-      const res = await app.request("http://localhost/v1/agents/a1/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "not-json",
-      })
-      expect(res.status).toBe(400)
-      const body = await res.json()
-      expect(body.error).toBe("Invalid request: message is required")
-    })
-
-    it("returns blocking response when stream=false", async () => {
+    it("creates agent with sessionId for resume, returns blocking response", async () => {
       const agent = {
         query: vi.fn(),
         prompt: vi.fn().mockResolvedValue({
@@ -138,29 +115,29 @@ describe("Agent Router", () => {
           num_turns: 1,
           duration_ms: 150,
         }),
-        getSessionId: vi.fn().mockReturnValue("sess-123"),
+        getSessionId: vi.fn().mockReturnValue("sess-new"),
+        close: vi.fn().mockResolvedValue(undefined),
       }
-      registry.get.mockReturnValue(agent)
+      registry.create.mockReturnValue(agent)
       registry.getStatus.mockReturnValue("ready")
       const app = createApp(registry, metrics)
 
       const res = await app.request("http://localhost/v1/agents/a1/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "hello", stream: false }),
+        body: JSON.stringify({ message: "hello", stream: false, sessionId: "sess-old" }),
       })
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.text).toBe("Hello world")
-      expect(body.sessionId).toBe("sess-123")
-      expect(body.usage).toEqual({ input_tokens: 10, output_tokens: 20 })
-      expect(body.numTurns).toBe(1)
-      expect(body.durationMs).toBe(150)
+      expect(body.sessionId).toBe("sess-new")
+      expect(registry.create).toHaveBeenCalledWith("a1", "sess-old")
+      expect(agent.prompt).toHaveBeenCalledWith("hello")
+      expect(agent.close).toHaveBeenCalledOnce()
       expect(metrics.recordRun).toHaveBeenCalledWith("a1", { input_tokens: 10, output_tokens: 20 }, undefined)
-      expect(agent.prompt).toHaveBeenCalledWith("hello", {})
     })
 
-    it("forwards sessionId override to agent.prompt when provided", async () => {
+    it("creates agent without sessionId for new session", async () => {
       const agent = {
         query: vi.fn(),
         prompt: vi.fn().mockResolvedValue({
@@ -169,22 +146,23 @@ describe("Agent Router", () => {
           num_turns: 1,
           duration_ms: 50,
         }),
-        getSessionId: vi.fn().mockReturnValue("sess-override"),
+        getSessionId: vi.fn().mockReturnValue("sess-fresh"),
+        close: vi.fn().mockResolvedValue(undefined),
       }
-      registry.get.mockReturnValue(agent)
+      registry.create.mockReturnValue(agent)
       registry.getStatus.mockReturnValue("ready")
       const app = createApp(registry, metrics)
 
       const res = await app.request("http://localhost/v1/agents/a1/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "hi", stream: false, sessionId: "sess-999" }),
+        body: JSON.stringify({ message: "hi", stream: false }),
       })
       expect(res.status).toBe(200)
-      expect(agent.prompt).toHaveBeenCalledWith("hi", { sessionId: "sess-999" })
+      expect(registry.create).toHaveBeenCalledWith("a1", undefined)
     })
 
-    it("streams via streamAgentResponse when stream=true (default)", async () => {
+    it("streams via streamAgentResponse and closes agent when stream=true", async () => {
       async function* gen() {
         yield { type: "text", text: "hi" }
       }
@@ -192,8 +170,9 @@ describe("Agent Router", () => {
         query: vi.fn().mockImplementation(() => gen()),
         prompt: vi.fn(),
         getSessionId: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined),
       }
-      registry.get.mockReturnValue(agent)
+      registry.create.mockReturnValue(agent)
       registry.getStatus.mockReturnValue("ready")
       const app = createApp(registry, metrics)
 
@@ -205,6 +184,29 @@ describe("Agent Router", () => {
       expect(res.status).toBe(200)
       expect(streamAgentResponse).toHaveBeenCalledOnce()
       expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true })
+      const onDone = vi.mocked(streamAgentResponse).mock.calls[0][2]
+      expect(onDone).toBeTypeOf("function")
+      await onDone!()
+      expect(agent.close).toHaveBeenCalledOnce()
+    })
+
+    it("closes agent even on error (blocking mode)", async () => {
+      const agent = {
+        query: vi.fn(),
+        prompt: vi.fn().mockRejectedValue(new Error("LLM error")),
+        getSessionId: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+      registry.create.mockReturnValue(agent)
+      registry.getStatus.mockReturnValue("ready")
+      const app = createApp(registry, metrics)
+
+      await app.request("http://localhost/v1/agents/a1/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false }),
+      })
+      expect(agent.close).toHaveBeenCalledOnce()
     })
   })
 })

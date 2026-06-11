@@ -24,16 +24,6 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
 
   router.post("/:agentId/runs", async (c) => {
     const { agentId } = c.req.param()
-    const agent = registry.get(agentId)
-
-    if (!agent) {
-      return c.json({ error: "Agent not found" }, 404)
-    }
-
-    const status = registry.getStatus(agentId)
-    if (status === "unavailable") {
-      return c.json({ error: "Agent unavailable" }, 503)
-    }
 
     const body = await c.req.json().catch(() => null)
     if (!body?.message) {
@@ -42,30 +32,42 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
 
     const { message, sessionId, stream = true } = body
 
-    const overrides: Record<string, any> = {}
-    if (sessionId) overrides.sessionId = sessionId
+    const status = registry.getStatus(agentId)
+    if (status === "not_found") {
+      return c.json({ error: "Agent not found" }, 404)
+    }
+    if (status === "unavailable") {
+      return c.json({ error: "Agent unavailable" }, 503)
+    }
+
+    const agent = registry.create(agentId, sessionId)
+    if (!agent) {
+      return c.json({ error: "Agent not found" }, 404)
+    }
 
     if (stream === "block") {
-      const agentStream = agent.query(message, overrides)
-      return streamAgentResponse(c, agentStream)
+      const agentStream = agent.query(message)
+      return streamAgentResponse(c, agentStream, () => agent.close())
     }
 
     if (stream === true || stream === "raw") {
-      overrides.includePartialMessages = true
-      const agentStream = agent.query(message, overrides)
-      return streamAgentResponse(c, agentStream)
+      const agentStream = agent.query(message, { includePartialMessages: true })
+      return streamAgentResponse(c, agentStream, () => agent.close())
     }
 
-    const result = await agent.prompt(message, overrides)
-
-    metrics.recordRun(agentId, result.usage, undefined)
-    return c.json({
-      sessionId: agent.getSessionId(),
-      text: result.text,
-      usage: result.usage,
-      numTurns: result.num_turns,
-      durationMs: result.duration_ms,
-    })
+    try {
+      const result = await agent.prompt(message)
+      metrics.recordRun(agentId, result.usage, undefined)
+      return c.json({
+        sessionId: agent.getSessionId(),
+        text: result.text,
+        usage: result.usage,
+        numTurns: result.num_turns,
+        durationMs: result.duration_ms,
+      })
+    } finally {
+      await agent.close()
+    }
   })
 
   return router
