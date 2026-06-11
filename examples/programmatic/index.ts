@@ -4,7 +4,6 @@
  * 展示如何用代码驱动方式组合 SDK 和 Runtime 的全部能力：
  * - 自定义工具（defineTool + tool）
  * - Hook 系统（PreToolUse / PostToolUse）
- * - 动态 system prompt
  * - 多 Agent 注册 + 工具隔离
  * - Runtime createApp / AgentRegistry / MetricsCollector
  * - 自定义路由扩展
@@ -16,7 +15,7 @@ import { Hono } from "hono"
 import { serve } from "@hono/node-server"
 import { z } from "zod"
 
-import { createAgent, defineTool, tool, sdkToolToToolDefinition, type Agent } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
 import {
   createApp,
   AgentRegistry,
@@ -90,55 +89,50 @@ function createLoggingHooks(label: string) {
   }
 }
 
-// ─── 创建 Agent ────────────────────────────────────────────
-
-const envOverrides = {
-  model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
-  apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
-  apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
-  baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
-}
-
-function createAnalystAgent(): Agent {
-  return createAgent({
-    ...envOverrides,
-    systemPrompt: [
-      "你是一个金融分析助手。",
-      "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
-      "回答要简洁，关键数据用列表呈现。",
-    ].join("\n"),
-    maxTurns: 10,
-    tools: [stockTool, "WebSearch", "Read", "Glob", "Grep"],
-    thinking: { type: "enabled", budgetTokens: 4000 },
-    hooks: createLoggingHooks("analyst"),
-  })
-}
-
-function createOpsAgent(): Agent {
-  return createAgent({
-    ...envOverrides,
-    systemPrompt: [
-      "你是一个运维助手。",
-      "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
-      "执行危险操作前先确认。",
-    ].join("\n"),
-    maxTurns: 15,
-    tools: [sdkToolToToolDefinition(noteTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
-    permissionMode: "acceptEdits",
-    thinking: { type: "enabled", budgetTokens: 4000 },
-    hooks: createLoggingHooks("ops"),
-  })
-}
-
 // ─── 组装 Runtime ──────────────────────────────────────────
 
 async function main() {
-  const analyst = createAnalystAgent()
-  const ops = createOpsAgent()
+  const envOverrides = {
+    model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
+    apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
+    apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
+    baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
+  }
 
   const registry = new AgentRegistry()
-  registry.register("analyst", analyst, { id: "analyst", model: "claude-sonnet-4-6", maxTurns: 10 })
-  registry.register("ops", ops, { id: "ops", model: "claude-sonnet-4-6", maxTurns: 15 })
+  registry.register(
+    "analyst",
+    { id: "analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
+    {
+      ...envOverrides,
+      systemPrompt: [
+        "你是一个金融分析助手。",
+        "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
+        "回答要简洁，关键数据用列表呈现。",
+      ].join("\n"),
+      maxTurns: 10,
+      tools: [stockTool, "WebSearch", "Read", "Glob", "Grep"],
+      thinking: { type: "enabled", budgetTokens: 4000 },
+      hooks: createLoggingHooks("analyst"),
+    },
+  )
+  registry.register(
+    "ops",
+    { id: "ops", model: "claude-sonnet-4-6", maxTurns: 15 },
+    {
+      ...envOverrides,
+      systemPrompt: [
+        "你是一个运维助手。",
+        "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
+        "执行危险操作前先确认。",
+      ].join("\n"),
+      maxTurns: 15,
+      tools: [sdkToolToToolDefinition(noteTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+      permissionMode: "acceptEdits",
+      thinking: { type: "enabled", budgetTokens: 4000 },
+      hooks: createLoggingHooks("ops"),
+    },
+  )
 
   const metrics = new MetricsCollector()
 

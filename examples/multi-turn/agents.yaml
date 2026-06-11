@@ -1,0 +1,12 @@
+agents:
+  - id: "chatbot"
+    name: "聊天助手"
+    model: "claude-sonnet-4-6"
+    systemPrompt: |
+      你是一个友好的聊天助手。
+      请记住用户在对话中提到的所有信息，在后续对话中自然地引用。
+      回答要简洁自然。
+    maxTurns: 10
+    thinking:
+      type: "enabled"
+      budgetTokens: 4000

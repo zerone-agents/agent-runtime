@@ -208,5 +208,66 @@ describe("Agent Router (per-request)", () => {
       })
       expect(agent.close).toHaveBeenCalledOnce()
     })
+
+    it("first request returns sessionId, second request uses it to resume", async () => {
+      const firstSessionId = "sess-abc-123"
+
+      const agent1 = {
+        query: vi.fn(),
+        prompt: vi.fn().mockResolvedValue({
+          text: "Hello new user",
+          usage: { input_tokens: 10, output_tokens: 20 },
+          num_turns: 1,
+          duration_ms: 100,
+        }),
+        getSessionId: vi.fn().mockReturnValue(firstSessionId),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+
+      const agent2 = {
+        query: vi.fn(),
+        prompt: vi.fn().mockResolvedValue({
+          text: "Welcome back",
+          usage: { input_tokens: 15, output_tokens: 25 },
+          num_turns: 1,
+          duration_ms: 80,
+        }),
+        getSessionId: vi.fn().mockReturnValue(firstSessionId),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+
+      registry.getStatus.mockReturnValue("ready")
+      registry.create
+        .mockReturnValueOnce(agent1)
+        .mockReturnValueOnce(agent2)
+
+      const app = createApp(registry, metrics)
+
+      const res1 = await app.request("http://localhost/v1/agents/a1/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false }),
+      })
+      expect(res1.status).toBe(200)
+      const body1 = await res1.json()
+      expect(body1.text).toBe("Hello new user")
+      expect(body1.sessionId).toBe(firstSessionId)
+      expect(registry.create).toHaveBeenCalledWith("a1", undefined)
+      expect(agent1.close).toHaveBeenCalledOnce()
+
+      vi.mocked(registry.create).mockClear()
+
+      const res2 = await app.request("http://localhost/v1/agents/a1/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "continue our chat", stream: false, sessionId: firstSessionId }),
+      })
+      expect(res2.status).toBe(200)
+      const body2 = await res2.json()
+      expect(body2.text).toBe("Welcome back")
+      expect(body2.sessionId).toBe(firstSessionId)
+      expect(registry.create).toHaveBeenCalledWith("a1", firstSessionId)
+      expect(agent2.close).toHaveBeenCalledOnce()
+    })
   })
 })

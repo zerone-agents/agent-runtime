@@ -1,5 +1,5 @@
 import { createApp, AgentRegistry, MetricsCollector } from "../../src/index.js"
-import { createAgent, defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
 
@@ -41,42 +41,44 @@ const calcTool = tool("Calculator", "计算数学表达式（支持 ^ 表示幂�
 })
 
 async function main() {
-  const agent = createAgent({
-    model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
-    apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
-    apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
-    baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
-    systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
-    maxTurns: 15,
-    tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
-    thinking: { type: "enabled", budgetTokens: 4000 },
-    hooks: {
-      PreToolUse: [
-        {
-          matcher: "Bash",
-          hooks: [
-            async (input) => {
-              console.log(`[Hook] 即将执行 Bash: ${input.toolInput}`)
-              return {}
-            },
-          ],
-        },
-      ],
-      PostToolUse: [
-        {
-          hooks: [
-            async (input) => {
-              console.log(`[Hook] 工具执行完成: ${input.toolName}`)
-              return {}
-            },
-          ],
-        },
-      ],
-    },
-  })
-
   const registry = new AgentRegistry()
-  registry.register("smart", agent, { id: "smart", model: "claude-sonnet-4-6", maxTurns: 15 })
+  registry.register(
+    "smart",
+    { id: "smart", model: "claude-sonnet-4-6", maxTurns: 15 },
+    {
+      model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
+      apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
+      apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
+      baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
+      systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
+      maxTurns: 15,
+      tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+      thinking: { type: "enabled", budgetTokens: 4000 },
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              async (input) => {
+                console.log(`[Hook] 即将执行 Bash: ${input.toolInput}`)
+                return {}
+              },
+            ],
+          },
+        ],
+        PostToolUse: [
+          {
+            hooks: [
+              async (input) => {
+                console.log(`[Hook] 工具执行完成: ${input.toolName}`)
+                return {}
+              },
+            ],
+          },
+        ],
+      },
+    },
+  )
 
   const metrics = new MetricsCollector()
 
