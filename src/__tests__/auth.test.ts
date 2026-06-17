@@ -177,6 +177,22 @@ describe("createApp auth integration", () => {
     expect(res.status).toBe(401)
   })
 
+  it("OPTIONS /v1/agents preflight is not blocked by auth middleware when CORS enabled", async () => {
+    const config = { ...createTestConfig({ apiKey: "secret-key" }), cors: { origins: ["http://example.com"] } }
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+
+    const res = await app.request("http://localhost/v1/agents", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://example.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, x-api-key",
+      },
+    })
+    // CORS middleware runs before auth, so preflight should succeed
+    expect(res.status).toBe(204)
+  })
+
   it("Env var OPENAGENT_HTTP_API_KEY set, yaml auth.apiKey set → Env var wins", async () => {
     process.env.OPENAGENT_HTTP_API_KEY = "env-key"
     const config = createTestConfig({ apiKey: "yaml-key" })

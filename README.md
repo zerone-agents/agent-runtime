@@ -233,6 +233,26 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 
 The `/health` endpoint remains unauthenticated so load balancers and monitoring probes can use it without credentials.
 
+### 401 Response
+
+If a request to a protected route is missing or has an invalid `x-api-key`, the server returns:
+
+```json
+{
+  "error": "Unauthorized",
+  "reason": "missing x-api-key header"
+}
+```
+
+or, for an invalid key:
+
+```json
+{
+  "error": "Unauthorized",
+  "reason": "invalid api key"
+}
+```
+
 ## Config Discovery
 
 Search order:
