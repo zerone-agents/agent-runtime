@@ -1,16 +1,21 @@
 import { describe, it, expect, vi } from "vitest"
 import { Hono } from "hono"
-import { createHealthRouter } from "../router/health.js"
+import { createHealthRouter, createMetricsRouter } from "../router/health.js"
 
-function createApp(registry: any, metrics: any) {
+function createHealthApp(registry: any) {
   const app = new Hono()
-  const router = createHealthRouter(registry, metrics)
-  app.route("/v1", router)
+  app.route("/health", createHealthRouter(registry))
+  return app
+}
+
+function createMetricsApp(metrics: any) {
+  const app = new Hono()
+  app.route("/v1/metrics", createMetricsRouter(metrics))
   return app
 }
 
 describe("Health Router", () => {
-  describe("GET /v1/health", () => {
+  describe("GET /health", () => {
     it("returns ok when all agents are ready", async () => {
       const registry = {
         list: vi.fn().mockReturnValue([
@@ -18,10 +23,9 @@ describe("Health Router", () => {
           { id: "a2", status: "ready" },
         ]),
       }
-      const metrics = { getSnapshot: vi.fn() }
-      const app = createApp(registry, metrics)
+      const app = createHealthApp(registry)
 
-      const res = await app.request("http://localhost/v1/health")
+      const res = await app.request("http://localhost/health")
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.status).toBe("ok")
@@ -35,10 +39,9 @@ describe("Health Router", () => {
           { id: "a2", status: "unavailable" },
         ]),
       }
-      const metrics = { getSnapshot: vi.fn() }
-      const app = createApp(registry, metrics)
+      const app = createHealthApp(registry)
 
-      const res = await app.request("http://localhost/v1/health")
+      const res = await app.request("http://localhost/health")
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.status).toBe("degraded")
@@ -47,17 +50,18 @@ describe("Health Router", () => {
 
     it("returns ok when there are no agents", async () => {
       const registry = { list: vi.fn().mockReturnValue([]) }
-      const metrics = { getSnapshot: vi.fn() }
-      const app = createApp(registry, metrics)
+      const app = createHealthApp(registry)
 
-      const res = await app.request("http://localhost/v1/health")
+      const res = await app.request("http://localhost/health")
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.status).toBe("ok")
       expect(body.agents).toBe(0)
     })
   })
+})
 
+describe("Metrics Router", () => {
   describe("GET /v1/metrics", () => {
     it("returns the metrics snapshot", async () => {
       const snapshot = {
@@ -67,9 +71,8 @@ describe("Health Router", () => {
         agentMetrics: {},
         uptime: 9999,
       }
-      const registry = { list: vi.fn() }
       const metrics = { getSnapshot: vi.fn().mockReturnValue(snapshot) }
-      const app = createApp(registry, metrics)
+      const app = createMetricsApp(metrics)
 
       const res = await app.request("http://localhost/v1/metrics")
       expect(res.status).toBe(200)

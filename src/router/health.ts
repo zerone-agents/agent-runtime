@@ -2,10 +2,10 @@ import { Hono } from "hono"
 import type { AgentRegistry } from "../registry.js"
 import type { MetricsCollector } from "../metrics.js"
 
-export function createHealthRouter(registry: AgentRegistry, metrics: MetricsCollector) {
+export function createHealthRouter(registry: AgentRegistry) {
   const router = new Hono()
 
-  router.get("/health", (c) => {
+  router.get("/", (c) => {
     const agents = registry.list()
     const allReady = agents.every((a) => a.status === "ready")
     return c.json({
@@ -15,7 +15,13 @@ export function createHealthRouter(registry: AgentRegistry, metrics: MetricsColl
     })
   })
 
-  router.get("/metrics", (c) => {
+  return router
+}
+
+export function createMetricsRouter(metrics: MetricsCollector) {
+  const router = new Hono()
+
+  router.get("/", (c) => {
     return c.json(metrics.getSnapshot())
   })
 
