@@ -114,6 +114,38 @@ describe("RuntimeConfigSchema", () => {
   })
 })
 
+describe("AuthConfigSchema", () => {
+  it("accepts config with auth.apiKey", () => {
+    const result = RuntimeConfigSchema.parse({
+      agents: [{ id: "a1" }],
+      auth: { apiKey: "my-secret" },
+    })
+    expect(result.auth?.apiKey).toBe("my-secret")
+  })
+
+  it("accepts config without auth field", () => {
+    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a1" }] })
+    expect(result.auth).toBeUndefined()
+  })
+
+  it("accepts auth object with no apiKey (optional)", () => {
+    const result = RuntimeConfigSchema.parse({
+      agents: [{ id: "a1" }],
+      auth: {},
+    })
+    expect(result.auth).toEqual({})
+  })
+
+  it("rejects empty string apiKey", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [{ id: "a1" }],
+        auth: { apiKey: "" },
+      }),
+    ).toThrow()
+  })
+})
+
 describe("resolveSystemPrompt", () => {
   it("returns inline systemPrompt", () => {
     const agent: AgentDefinition = {

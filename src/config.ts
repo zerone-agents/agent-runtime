@@ -16,6 +16,10 @@ const LoggingConfigSchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"]).default("info"),
 })
 
+const AuthConfigSchema = z.object({
+  apiKey: z.string().min(1).optional(),
+})
+
 const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
   z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional() }),
@@ -49,6 +53,7 @@ export const RuntimeConfigSchema = z.object({
   server: ServerConfigSchema.default({}),
   cors: CorsConfigSchema.optional(),
   logging: LoggingConfigSchema.optional(),
+  auth: AuthConfigSchema.optional(),
   agents: z.array(AgentDefinitionSchema).min(1),
 })
 
