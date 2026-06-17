@@ -95,7 +95,7 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/v1/health` | Health check |
+| `GET` | `/health` | Health check (unauthenticated) |
 | `GET` | `/v1/metrics` | Token usage, request counts, costs |
 | `GET` | `/v1/agents` | List registered agents |
 | `GET` | `/v1/agents/:id` | Agent detail |
@@ -197,7 +197,43 @@ export default defineConfig({
 
 `agent.config.ts` takes priority over `agents.yaml`.
 
-### Config Discovery
+## Authentication
+
+Authentication is opt-in. When no API key is configured, all routes are open (convenient for local development).
+
+To enable authentication, set either the `OPENAGENT_HTTP_API_KEY` environment variable or the `auth.apiKey` field in your config. The environment variable takes priority.
+
+### YAML config
+
+```yaml
+auth:
+  apiKey: "your-secret-key"
+
+agents:
+  - id: "assistant"
+    model: "claude-sonnet-4-6"
+```
+
+### Environment variable
+
+```bash
+OPENAGENT_HTTP_API_KEY="your-secret-key" npm start
+```
+
+### Using the key
+
+Include the key in the `x-api-key` header for all `/v1/*` requests:
+
+```bash
+curl -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-secret-key" \
+  -d '{"message":"Hello"}'
+```
+
+The `/health` endpoint remains unauthenticated so load balancers and monitoring probes can use it without credentials.
+
+## Config Discovery
 
 Search order:
 

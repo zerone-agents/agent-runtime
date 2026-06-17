@@ -29,7 +29,8 @@ HTTP Server runtime wrapping `@zerone-agent/open-agent-sdk`. Single package, no 
 - `discoverConfig()` is async — it dynamically imports `agent.config.ts`
 - `AgentRegistry.register(id, agent)` exists for programmatic use; `loadFromConfig()` is the YAML path
 - Config priority: `agent.config.ts` > `agents.yaml` > cwd > `~/.openagent/`
-- Health router is mounted at `/v1` (not `/v1/health`) because its routes are `/health` and `/metrics`
+- Health router is mounted at `/health` (root, no auth). Metrics router is mounted at `/v1/metrics` (protected when auth is configured).
+- Auth is opt-in via `OPENAGENT_HTTP_API_KEY` env var or `auth.apiKey` in config. When absent, all routes are open.
 - `defineConfig` is exported for TS config users — provides `RuntimeConfig` type inference
 - The `bin` field points to `dist/index.js` — requires `npm run build` before publish
 - `prepublishOnly` runs build automatically
