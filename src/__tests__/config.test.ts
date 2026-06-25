@@ -112,6 +112,78 @@ describe("RuntimeConfigSchema", () => {
       }),
     ).toThrow(/mutually exclusive/)
   })
+
+  it("accepts agents with subagent definitions", () => {
+    const config = {
+      agents: [
+        {
+          id: "coordinator",
+          systemPrompt: "Delegate to subagents.",
+          allowedTools: ["Task"],
+          subagents: {
+            coder: {
+              description: "Coder subagent",
+              prompt: "You are a coder.",
+              tools: ["Read", "Write", "Edit"],
+              model: "claude-sonnet-4-6",
+              maxTurns: 30,
+            },
+            researcher: {
+              description: "Researcher subagent",
+              prompt: "You are a researcher.",
+              tools: ["WebSearch", "WebFetch"],
+              mcpServers: [{ name: "github", tools: ["search_issues"] }],
+              skills: ["research"],
+              maxTurns: 15,
+            },
+          },
+        },
+      ],
+    }
+    const result = RuntimeConfigSchema.parse(config)
+    const agent = result.agents[0]
+    expect(agent.subagents).toBeDefined()
+    expect(agent.subagents?.coder.description).toBe("Coder subagent")
+    expect(agent.subagents?.coder.maxTurns).toBe(30)
+    expect(agent.subagents?.researcher.mcpServers).toEqual([
+      { name: "github", tools: ["search_issues"] },
+    ])
+    expect(agent.subagents?.researcher.skills).toEqual(["research"])
+  })
+
+  it("rejects subagent definition missing required description", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "coordinator",
+            subagents: {
+              bad: {
+                prompt: "missing description",
+              },
+            },
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it("rejects subagent definition missing required prompt", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "coordinator",
+            subagents: {
+              bad: {
+                description: "missing prompt",
+              },
+            },
+          },
+        ],
+      }),
+    ).toThrow()
+  })
 })
 
 describe("AuthConfigSchema", () => {
@@ -192,6 +264,28 @@ agents:
     const config = loadYamlConfig(path)
     expect(config.agents[0].id).toBe("yaml-agent")
     expect(config.server.port).toBe(8080)
+  })
+
+  it("loads YAML config with subagent definitions", () => {
+    const path = tmpFile("agents-with-subagents.yaml", `
+agents:
+  - id: coordinator
+    systemPrompt: Delegate tasks.
+    allowedTools:
+      - Task
+    subagents:
+      coder:
+        description: Code writer
+        prompt: You write code.
+        tools:
+          - Read
+          - Write
+        maxTurns: 25
+`)
+    const config = loadYamlConfig(path)
+    expect(config.agents[0].id).toBe("coordinator")
+    expect(config.agents[0].subagents?.coder.description).toBe("Code writer")
+    expect(config.agents[0].subagents?.coder.maxTurns).toBe(25)
   })
 
   it("throws for missing file", () => {

@@ -150,8 +150,53 @@ agents:
 | `skills` | No | — | Skill names to enable |
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
+| `subagents` | No | — | Subagent definitions for the `Task` tool |
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
+
+### Subagents (YAML)
+
+Define subagents under an agent's `subagents` key. The parent agent can delegate work to them via the `Task` tool. Each subagent needs `description` and `prompt`; other fields are optional.
+
+```yaml
+agents:
+  - id: "coordinator"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "Delegate complex tasks to the appropriate subagent using the Task tool."
+    allowedTools:
+      - Task
+      - Read
+    subagents:
+      coder:
+        description: "Write and edit code"
+        prompt: "You are an expert programmer. Write clean, working code."
+        tools:
+          - Read
+          - Write
+          - Edit
+          - Bash
+        maxTurns: 30
+      researcher:
+        description: "Research topics on the web"
+        prompt: "You are a research assistant. Search and summarize information."
+        tools:
+          - WebSearch
+          - WebFetch
+        maxTurns: 15
+```
+
+**Subagent fields:**
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `description` | Yes | — | Short description shown to the parent agent |
+| `prompt` | Yes | — | System prompt for the subagent |
+| `tools` | No | all tools | Whitelist of tool names |
+| `disallowedTools` | No | — | Blacklist of tool names |
+| `model` | No | inherits parent | LLM model name |
+| `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
+| `skills` | No | — | Skill names to enable |
+| `maxTurns` | No | `10` | Max agentic loop turns |
 
 ### TypeScript Mode (`agent.config.ts`)
 

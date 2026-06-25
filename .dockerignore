@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+.vscode
+.idea
+coverage
+*.log
+*.md
+!README.md
+examples
+docs
+__tmp_config_test__
+.env
+.env.*
