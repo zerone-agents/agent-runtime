@@ -40,6 +40,7 @@ export class AgentRegistry {
           allowedSkills: def.skills,
           mcpServers: def.mcpServers as any,
           thinking: def.thinking as any,
+          agents: def.subagents as any,
         }
 
         this.defs.set(def.id, def)

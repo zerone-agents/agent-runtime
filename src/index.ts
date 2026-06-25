@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { discoverConfig, findConfigDir } from "./config.js"
 import { AgentRegistry } from "./registry.js"
 import { MetricsCollector } from "./metrics.js"
@@ -24,7 +24,8 @@ export {
 const __filename = fileURLToPath(import.meta.url)
 const argv1 = process.argv[1]
 const isMain = !!argv1 && (
-  __filename === fileURLToPath(new URL(argv1, "file:///")) ||
+  // NOTE: more idiomatic in Node 22+ is `import.meta.filename === argv1`
+  __filename === fileURLToPath(pathToFileURL(argv1)) ||
   argv1.endsWith("open-agent-runtime")
 )
 

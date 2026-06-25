@@ -1,6 +1,75 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+
+# 开启认证：取消下面两行注释并填入你的 key
+# auth:
+#   apiKey: "your-secret-key"
+
 agents:
   - id: "general"
     name: "通用助手"
     model: "claude-sonnet-4-6"
-    systemPrompt: "你是一个通用 AI 助手。"
+    systemPrompt: |
+      你是一个通用 AI 助手。你可以使用 Task 工具将复杂任务委派给专业的 subagent 完成。
+      可选 subagent：
+      - coder：擅长编写、修改代码
+      - researcher：擅长网络搜索与研究
+      - writer：擅长撰写文档
     maxTurns: 10
+    allowedTools:
+      - Task
+      - Read
+      - Write
+      - Edit
+      - Bash
+      - Glob
+      - Grep
+      - WebSearch
+      - WebFetch
+
+    subagents:
+      coder:
+        description: "编写和修改代码"
+        prompt: |
+          你是专业程序员。你的职责是编写、阅读、修改代码。请使用 Read、Write、Edit、Bash 等工具完成用户交代的开发任务。
+          注意：
+          - 保持代码简洁、可读
+          - 不要猜测用户意图，必要时先用 Read 查看相关文件
+          - 修改文件前先确认上下文
+        tools:
+          - Read
+          - Write
+          - Edit
+          - Bash
+          - Glob
+          - Grep
+        maxTurns: 30
+
+      researcher:
+        description: "网络搜索与研究"
+        prompt: |
+          你是研究员。你的职责是使用 WebSearch、WebFetch 等工具收集信息，并整理成清晰、准确的报告。
+          注意：
+          - 尽量使用权威来源
+          - 如果搜索结果不足，尝试不同关键词
+          - 最终输出要结构化，便于阅读
+        tools:
+          - WebSearch
+          - WebFetch
+          - Read
+        maxTurns: 15
+
+      writer:
+        description: "撰写技术文档"
+        prompt: |
+          你是技术文档写作者。根据给定的材料或要求，撰写清晰、结构化的文档。
+          注意：
+          - 使用 Markdown 格式
+          - 文档结构完整（标题、目录、示例、注意事项）
+          - 完成后可用 Write 工具将结果写入文件
+        tools:
+          - Read
+          - Write
+          - Edit
+        maxTurns: 20

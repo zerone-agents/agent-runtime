@@ -31,6 +31,22 @@ const ThinkingConfigSchema = z.object({
   budgetTokens: z.number().optional(),
 })
 
+const SubagentMcpServerConfigSchema = z.union([
+  z.string(),
+  z.object({ name: z.string(), tools: z.array(z.string()).optional() }),
+])
+
+const SubagentDefinitionSchema = z.object({
+  description: z.string(),
+  prompt: z.string(),
+  tools: z.array(z.string()).optional(),
+  disallowedTools: z.array(z.string()).optional(),
+  model: z.string().optional(),
+  mcpServers: z.array(SubagentMcpServerConfigSchema).optional(),
+  skills: z.array(z.string()).optional(),
+  maxTurns: z.number().optional(),
+})
+
 const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
@@ -44,6 +60,7 @@ const AgentDefinitionSchema = z.object({
   mcpServers: z.record(McpServerConfigSchema).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
   thinking: ThinkingConfigSchema.optional(),
+  subagents: z.record(SubagentDefinitionSchema).optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },
