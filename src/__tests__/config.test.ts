@@ -80,6 +80,38 @@ describe("RuntimeConfigSchema", () => {
     expect(result.logging).toBeUndefined()
   })
 
+  it("accepts skill loading configuration (settingSources + extra dirs)", () => {
+    const result = RuntimeConfigSchema.parse({
+      agents: [
+        {
+          id: "skill-agent",
+          skills: ["cbt"],
+          settingSources: ["user", "project", "local"],
+          extraUserSkillDirs: ["/mnt/shared/skills"],
+          extraProjectSkillDirs: ["/opt/project/skills"],
+        },
+      ],
+    })
+    const agent = result.agents[0]
+    expect(agent.skills).toEqual(["cbt"])
+    expect(agent.settingSources).toEqual(["user", "project", "local"])
+    expect(agent.extraUserSkillDirs).toEqual(["/mnt/shared/skills"])
+    expect(agent.extraProjectSkillDirs).toEqual(["/opt/project/skills"])
+  })
+
+  it("rejects invalid settingSources value", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "bad",
+            settingSources: ["global"],
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
   it("provides correct defaults", () => {
     const result = RuntimeConfigSchema.parse({
       agents: [{ id: "defaults-test" }],
