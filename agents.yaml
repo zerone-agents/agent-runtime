@@ -28,6 +28,25 @@ agents:
       - WebSearch
       - WebFetch
 
+    # ── Skill 加载配置 ──────────────────────────────────────────────
+    # 三种独立机制，可组合使用：
+    #
+    # 1) skills: 白名单。只有列出的 skill 才会被激活。
+    #    未定义或空数组时，SDK 只加载项目级 skill（<cwd>/.openagent/skills/）。
+    #    skills: ["CBT-skills"]
+    #
+    # 2) settingSources: 开启默认目录扫描。
+    #    - "user"    → ~/.openagent/skills/
+    #    - "project" → <cwd>/.openagent/skills/
+    #    - "local"   → <cwd>/.openagent.local/skills/（仅当前项目，不入库）
+    #    未配置时，SDK 默认仅扫描 project 级。
+    #    settingSources: ["user", "project"]
+    #
+    # 3) extraUserSkillDirs / extraProjectSkillDirs: 额外扫描目录。
+    #    在默认目录之后追加，方便从其他位置（如 NAS、共享挂载）加载。
+    #    extraUserSkillDirs:
+    #      - "/mnt/shared/skills"
+
     subagents:
       coder:
         description: "编写和修改代码"

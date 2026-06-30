@@ -147,7 +147,10 @@ agents:
 | `maxTurns` | No | `10` | Max agentic loop turns |
 | `allowedTools` | No | all tools | Whitelist of tool names |
 | `disallowedTools` | No | — | Blacklist of tool names |
-| `skills` | No | — | Skill names to enable |
+| `skills` | No | — | Skill names to enable (whitelist) |
+| `settingSources` | No | `["project"]` | Which skill dirs to scan: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (<cwd>/.openagent.local/skills/) |
+| `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
+| `extraProjectSkillDirs` | No | — | Additional project-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
