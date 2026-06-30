@@ -147,8 +147,8 @@ agents:
 | `maxTurns` | No | `10` | Max agentic loop turns |
 | `allowedTools` | No | all tools | Whitelist of tool names |
 | `disallowedTools` | No | — | Blacklist of tool names |
-| `skills` | No | — | Skill names to enable (whitelist) |
-| `settingSources` | No | `["project"]` | Which skill dirs to scan: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (<cwd>/.openagent.local/skills/) |
+| `skills` | No | — | Skill name whitelist (only takes effect after `settingSources` loads them) |
+| `settingSources` | No | — | Which skill dirs to scan. **Required** to load any skill: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (<cwd>/.openagent.local/skills/) |
 | `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
 | `extraProjectSkillDirs` | No | — | Additional project-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
@@ -156,6 +156,22 @@ agents:
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
+
+#### Skill loading order
+
+The SDK loads skills in two steps — **`settingSources` is the trigger, `skills` is just a filter**:
+
+1. **Scan & register** — if `settingSources` is omitted/empty, **no directory is scanned** and the registry stays empty.
+2. **Filter by whitelist** — `skills` then narrows down what was loaded in step 1.
+
+So `skills: ["CBT-skills"]` alone loads nothing. You must pair it with `settingSources`:
+
+```yaml
+agents:
+  - id: "my-agent"
+    settingSources: ["user"]      # scans ~/.openagent/skills/
+    skills: ["CBT-skills"]        # only activate CBT-skills from the scanned pool
+```
 
 ### Subagents (YAML)
 
