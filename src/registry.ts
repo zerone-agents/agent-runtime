@@ -2,6 +2,18 @@ import { createAgent, type Agent } from "@zerone-agent/open-agent-sdk"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 
+function convertMcpServers(
+  mcpServers: Record<string, any> | undefined,
+): Record<string, any> | undefined {
+  if (!mcpServers) return undefined
+  return Object.fromEntries(
+    Object.entries(mcpServers).map(([name, cfg]) => {
+      const { transport, ...rest } = cfg
+      return [name, { ...rest, type: transport }]
+    }),
+  )
+}
+
 export interface AgentInfo {
   id: string
   name: string
@@ -41,7 +53,7 @@ export class AgentRegistry {
           settingSources: def.settingSources,
           extraUserSkillDirs: def.extraUserSkillDirs,
           extraProjectSkillDirs: def.extraProjectSkillDirs,
-          mcpServers: def.mcpServers as any,
+          mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
           agents: def.subagents as any,
         }

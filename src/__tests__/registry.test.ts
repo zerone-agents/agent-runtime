@@ -74,6 +74,35 @@ describe("AgentRegistry (factory)", () => {
       )
     })
 
+    it("converts mcpServers transport field to type before passing to SDK", async () => {
+      mockCreateAgent.mockReturnValue({ close: vi.fn().mockResolvedValue(undefined) } as any)
+
+      const config = makeConfig([
+        {
+          id: "mcp-agent",
+          model: "gpt-4",
+          mcpServers: {
+            web: { transport: "http", url: "https://example.com/mcp", headers: { Authorization: "Bearer token" } },
+            local: { transport: "stdio", command: "node", args: ["server.js"] },
+          },
+        },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+
+      registry.create("mcp-agent")
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.mcpServers.web).toEqual({
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer token" },
+      })
+      expect(opts.mcpServers.local).toEqual({
+        type: "stdio",
+        command: "node",
+        args: ["server.js"],
+      })
+    })
+
     it("passes resume: sessionId when sessionId provided", async () => {
       const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
       mockCreateAgent.mockReturnValue(mockAgent as any)
