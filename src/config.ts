@@ -63,6 +63,7 @@ const AgentDefinitionSchema = z.object({
   mcpServers: z.record(McpServerConfigSchema).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
   thinking: ThinkingConfigSchema.optional(),
+  datasets: z.record(z.string()).optional(),
   subagents: z.record(SubagentDefinitionSchema).optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
@@ -80,13 +81,28 @@ export const RuntimeConfigSchema = z.object({
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
 
+export function formatDatasets(datasets: Record<string, string>): string {
+  const lines = Object.entries(datasets)
+    .map(([id, description]) => ` - ${id}: ${description}`)
+    .join("\n")
+  return `<datasets>\n${lines}\n</datasets>`
+}
+
 export function resolveSystemPrompt(agent: AgentDefinition, configDir: string): string | undefined {
-  if (agent.systemPrompt) return agent.systemPrompt
-  if (agent.systemPromptFile) {
+  let base: string | undefined
+  if (agent.systemPrompt) {
+    base = agent.systemPrompt
+  } else if (agent.systemPromptFile) {
     const filePath = resolve(configDir, agent.systemPromptFile)
-    return readFileSync(filePath, "utf-8")
+    base = readFileSync(filePath, "utf-8")
   }
-  return undefined
+
+  if (agent.datasets) {
+    const datasetsBlock = formatDatasets(agent.datasets)
+    return base ? `${base}\n\n${datasetsBlock}` : datasetsBlock
+  }
+
+  return base
 }
 
 export function loadYamlConfig(configPath: string): RuntimeConfig {
