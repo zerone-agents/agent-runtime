@@ -350,6 +350,20 @@ describe("resolveSystemPrompt", () => {
     }
     expect(resolveSystemPrompt(agent, "/tmp")).toBe("Be helpful.")
   })
+
+  it("appends datasets to systemPromptFile content", () => {
+    const filePath = tmpFile("prompt.md", "File prompt.")
+    const agent: AgentDefinition = {
+      id: "e",
+      model: "claude-sonnet-4-6",
+      maxTurns: 10,
+      systemPromptFile: "prompt.md",
+      datasets: { "dataset-1": "Primary dataset" },
+    }
+    expect(resolveSystemPrompt(agent, TMP)).toBe(
+      "File prompt.\n\n<datasets>\n - dataset-1: Primary dataset\n</datasets>",
+    )
+  })
 })
 
 describe("loadYamlConfig", () => {
