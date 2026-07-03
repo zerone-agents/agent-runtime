@@ -134,6 +134,8 @@ agents:
         transport: "stdio"
         command: "mcp-server-github"
         args: ["--owner", "myorg"]
+    datasets:
+      docs: "Internal knowledge base for the project"
 ```
 
 **Fields:**
@@ -154,6 +156,7 @@ agents:
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
+| `datasets` | No | — | Map of dataset-id to description, injected into the system prompt as a `<datasets>` block |
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
 
