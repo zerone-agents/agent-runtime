@@ -16,6 +16,7 @@ export {
   loadYamlConfig,
   defineConfig,
   resolveSystemPrompt,
+  formatDatasets,
   RuntimeConfigSchema,
   type RuntimeConfig,
   type AgentDefinition,
