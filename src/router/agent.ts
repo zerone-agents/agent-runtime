@@ -12,14 +12,11 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
 
   router.get("/:agentId", (c) => {
     const { agentId } = c.req.param()
-    const status = registry.getStatus(agentId)
-    if (status === "not_found") {
+    const detail = registry.getDetail(agentId)
+    if (!detail) {
       return c.json({ error: "Agent not found" }, 404)
     }
-    return c.json({
-      id: agentId,
-      status,
-    })
+    return c.json(detail)
   })
 
   router.post("/:agentId/runs", async (c) => {

@@ -24,6 +24,7 @@ describe("Agent Router (per-request)", () => {
       list: vi.fn(),
       create: vi.fn(),
       getStatus: vi.fn(),
+      getDetail: vi.fn(),
     }
     metrics = {
       recordRun: vi.fn(),
@@ -48,21 +49,32 @@ describe("Agent Router (per-request)", () => {
 
   describe("GET /v1/agents/:agentId", () => {
     it("returns agent detail when found", async () => {
-      registry.getStatus.mockReturnValue("ready")
+      const detail = {
+        id: "my-agent",
+        name: "My Agent",
+        model: "gpt-4",
+        status: "ready",
+        maxTurns: 10,
+        hasSystemPrompt: true,
+        allowedTools: ["Read"],
+      }
+      registry.getDetail.mockReturnValue(detail)
       const app = createApp(registry, metrics)
 
       const res = await app.request("http://localhost/v1/agents/my-agent")
       expect(res.status).toBe(200)
       const body = await res.json()
-      expect(body).toEqual({ id: "my-agent", status: "ready" })
+      expect(body).toEqual(detail)
     })
 
     it("returns 404 for unknown agent", async () => {
-      registry.getStatus.mockReturnValue("not_found")
+      registry.getDetail.mockReturnValue(null)
       const app = createApp(registry, metrics)
 
       const res = await app.request("http://localhost/v1/agents/unknown")
       expect(res.status).toBe(404)
+      const body = await res.json()
+      expect(body).toEqual({ error: "Agent not found" })
     })
   })
 
