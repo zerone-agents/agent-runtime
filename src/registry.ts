@@ -130,7 +130,7 @@ export class AgentRegistry {
     if (def.settingSources !== undefined) detail.settingSources = def.settingSources
     if (def.extraUserSkillDirs !== undefined) detail.extraUserSkillDirs = def.extraUserSkillDirs
     if (def.extraProjectSkillDirs !== undefined) detail.extraProjectSkillDirs = def.extraProjectSkillDirs
-    const mcp = sanitizeMcpServers(def.mcpServers as Record<string, any> | undefined)
+    const mcp = sanitizeMcpServers(def.mcpServers)
     if (mcp !== undefined) detail.mcpServers = mcp
     if (def.subagents !== undefined) {
       const sub: Record<string, { description: string }> = {}
@@ -167,8 +167,20 @@ export class AgentRegistry {
   }
 }
 
+type McpServerConfig = NonNullable<AgentDefinition["mcpServers"]>[string]
+
+/**
+ * Sanitize MCP server config for safe HTTP exposure.
+ *
+ * Policy: `env` and `headers` values are replaced with "***" (keys preserved).
+ * `command`, `args`, and `url` are returned as-is.
+ *
+ * Note: `args` and `url` may carry secrets in user-supplied forms (e.g.,
+ * `--token=xxx` in args, `?token=xxx` or `user:pass@host` in url). These are
+ * NOT redacted — callers must avoid logging them verbatim.
+ */
 function sanitizeMcpServers(
-  servers: Record<string, any> | undefined,
+  servers: Record<string, McpServerConfig> | undefined,
 ): Record<string, McpServerSummary> | undefined {
   if (!servers) return undefined
 
