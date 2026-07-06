@@ -52,7 +52,6 @@ describe("RuntimeConfigSchema", () => {
           maxTurns: 20,
           allowedTools: ["tool-a"],
           disallowedTools: ["tool-b"],
-          skills: ["skill-1"],
           mcpServers: {
             myMcp: { transport: "stdio" as const, command: "node", args: ["server.js"] },
           },
@@ -105,7 +104,6 @@ describe("RuntimeConfigSchema", () => {
       agents: [
         {
           id: "skill-agent",
-          skills: ["cbt"],
           settingSources: ["user", "project", "local"],
           extraUserSkillDirs: ["/mnt/shared/skills"],
           extraProjectSkillDirs: ["/opt/project/skills"],
@@ -113,7 +111,6 @@ describe("RuntimeConfigSchema", () => {
       ],
     })
     const agent = result.agents[0]
-    expect(agent.skills).toEqual(["cbt"])
     expect(agent.settingSources).toEqual(["user", "project", "local"])
     expect(agent.extraUserSkillDirs).toEqual(["/mnt/shared/skills"])
     expect(agent.extraProjectSkillDirs).toEqual(["/opt/project/skills"])
@@ -185,7 +182,6 @@ describe("RuntimeConfigSchema", () => {
               prompt: "You are a researcher.",
               tools: ["WebSearch", "WebFetch"],
               mcpServers: [{ name: "github", tools: ["search_issues"] }],
-              skills: ["research"],
               maxTurns: 15,
             },
           },
@@ -200,7 +196,6 @@ describe("RuntimeConfigSchema", () => {
     expect(agent.subagents?.researcher.mcpServers).toEqual([
       { name: "github", tools: ["search_issues"] },
     ])
-    expect(agent.subagents?.researcher.skills).toEqual(["research"])
   })
 
   it("rejects subagent definition missing required description", () => {

@@ -29,32 +29,23 @@ agents:
       - WebFetch
 
     # ── Skill 加载配置 ──────────────────────────────────────────────
-    # ⚠ 关键：必须先配 settingSources 触发文件系统扫描，skills 白名单
-    #    才有"东西"可过滤。SDK 内部两步走：
-    #      步骤 1：settingSources 决定扫描哪些目录，把 SKILL.md 注册到 registry
-    #      步骤 2：skills 白名单在 registry 上做过滤
-    #    没有 settingSources → 步骤 1 跳过 → registry 是空的 → 白名单失效。
+    # SKILL 完全基于文件系统：只要 settingSources 配了哪个目录，那个目录下的
+    # 所有 SKILL.md 都会被加载并暴露给 agent——没有白名单过滤。
     #
     # 1) settingSources（必需）：开启默认目录扫描。
     #    - "user"    → ~/.openagent/skills/
     #    - "project" → <cwd>/.openagent/skills/
-    #    - "local"   → <cwd>/.openagent.local/skills/（仅当前项目，不入库）
-    #    未配置时，SDK 完全不扫描任何目录。
+    #    - "local"   → SDK 类型里有但 loader 未实现，目前 no-op
+    #    未配置时，完全不扫描任何目录。
     #    settingSources: ["user", "project"]
     #
-    # 2) skills（可选）：白名单，限制 agent 实际能用哪些 skill。
-    #    未配置 → 所有已加载的 skill 都可用。
-    #    配置了 → 只有列表内的 skill 激活。
-    #    skills: ["CBT-skills"]
-    #
-    # 3) extraUserSkillDirs / extraProjectSkillDirs（可选）：额外扫描目录。
+    # 2) extraUserSkillDirs / extraProjectSkillDirs（可选）：额外扫描目录。
     #    在默认目录之后追加，方便从其他位置（如 NAS、共享挂载）加载。
     #    extraUserSkillDirs:
     #      - "/mnt/shared/skills"
     #
-    # 完整示例：扫描用户级目录，但只激活 CBT-skills
-    #   settingSources: ["user"]
-    #   skills: ["CBT-skills"]
+    # 完整示例：扫描用户级 + 项目级目录
+    #   settingSources: ["user", "project"]
 
     subagents:
       coder:

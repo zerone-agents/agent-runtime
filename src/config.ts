@@ -43,7 +43,6 @@ const SubagentDefinitionSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
   model: z.string().optional(),
   mcpServers: z.array(SubagentMcpServerConfigSchema).optional(),
-  skills: z.array(z.string()).optional(),
   maxTurns: z.number().optional(),
 })
 
@@ -56,7 +55,6 @@ const AgentDefinitionSchema = z.object({
   maxTurns: z.number().default(10),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
-  skills: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
   extraUserSkillDirs: z.array(z.string()).optional(),
   extraProjectSkillDirs: z.array(z.string()).optional(),
