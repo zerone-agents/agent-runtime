@@ -202,6 +202,192 @@ describe("AgentRegistry (factory)", () => {
     })
   })
 
+  describe("getDetail", () => {
+    it("returns null for unknown agent", () => {
+      expect(registry.getDetail("unknown")).toBeNull()
+    })
+
+    it("returns full detail for a fully-configured agent", async () => {
+      const config = makeConfig([{
+        id: "full-agent",
+        name: "Full Agent",
+        model: "claude-sonnet-4-6",
+        systemPrompt: "you are a bot",
+        maxTurns: 25,
+        permissionMode: "auto",
+        allowedTools: ["Read", "Write"],
+        disallowedTools: ["Bash"],
+        skills: ["cbt"],
+        settingSources: ["project"],
+        extraUserSkillDirs: ["/mnt/sk"],
+        extraProjectSkillDirs: ["./sk"],
+        datasets: { book1: "description" },
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("full-agent")!
+      expect(detail).toEqual({
+        id: "full-agent",
+        name: "Full Agent",
+        model: "claude-sonnet-4-6",
+        status: "ready",
+        maxTurns: 25,
+        hasSystemPrompt: true,
+        permissionMode: "auto",
+        allowedTools: ["Read", "Write"],
+        disallowedTools: ["Bash"],
+        skills: ["cbt"],
+        settingSources: ["project"],
+        extraUserSkillDirs: ["/mnt/sk"],
+        extraProjectSkillDirs: ["./sk"],
+        datasets: { book1: "description" },
+      })
+    })
+
+    it("omits unset fields for a minimally-configured agent", async () => {
+      const config = makeConfig([{ id: "min", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("min")!
+      expect(detail).toEqual({
+        id: "min",
+        name: "min",
+        model: "gpt-4",
+        status: "ready",
+        maxTurns: 10,
+        hasSystemPrompt: false,
+      })
+      // 未配置字段不在响应里
+      expect(detail.allowedTools).toBeUndefined()
+      expect(detail.mcpServers).toBeUndefined()
+      expect(detail.subagents).toBeUndefined()
+      expect(detail.permissionMode).toBeUndefined()
+    })
+
+    it("hasSystemPrompt is true when systemPromptFile is set (without reading the file)", async () => {
+      const config = makeConfig([{
+        id: "file-agent",
+        model: "gpt-4",
+        systemPromptFile: "/tmp/prompt.txt",
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("file-agent")!
+      expect(detail.hasSystemPrompt).toBe(true)
+    })
+
+    it("returns subagents with only { description }", async () => {
+      const config = makeConfig([{
+        id: "parent",
+        model: "gpt-4",
+        subagents: {
+          coder: {
+            description: "writes code",
+            prompt: "secret prompt",
+            tools: ["Read"],
+            model: "gpt-4",
+            skills: ["x"],
+          },
+          writer: { description: "writes docs" },
+        },
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("parent")!
+      expect(detail.subagents).toEqual({
+        coder: { description: "writes code" },
+        writer: { description: "writes docs" },
+      })
+    })
+
+    it("returns status='unavailable' detail for unavailable agent", async () => {
+      const { resolveSystemPrompt } = await import("../config.js")
+      vi.mocked(resolveSystemPrompt).mockImplementationOnce(() => {
+        throw new Error("fail")
+      })
+      const config = makeConfig([{ id: "broken", model: "gpt-4", allowedTools: ["Read"] }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("broken")!
+      expect(detail.status).toBe("unavailable")
+      expect(detail.allowedTools).toEqual(["Read"])
+    })
+
+    it("sanitizes MCP stdio env values (keeps command and args)", async () => {
+      const config = makeConfig([{
+        id: "stdio-agent",
+        model: "gpt-4",
+        mcpServers: {
+          local: {
+            transport: "stdio",
+            command: "npx",
+            args: ["-y", "some-server"],
+            env: { API_KEY: "secret-token", OTHER: "x" },
+          },
+        },
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("stdio-agent")!
+      expect(detail.mcpServers).toEqual({
+        local: {
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "some-server"],
+          env: { API_KEY: "***", OTHER: "***" },
+        },
+      })
+    })
+
+    it("sanitizes MCP sse headers (keeps url)", async () => {
+      const config = makeConfig([{
+        id: "sse-agent",
+        model: "gpt-4",
+        mcpServers: {
+          remote: {
+            transport: "sse",
+            url: "https://example.com/sse",
+            headers: { Authorization: "Bearer xxx" },
+          },
+        },
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("sse-agent")!
+      expect(detail.mcpServers).toEqual({
+        remote: {
+          transport: "sse",
+          url: "https://example.com/sse",
+          headers: { Authorization: "***" },
+        },
+      })
+    })
+
+    it("sanitizes MCP http headers (keeps url)", async () => {
+      const config = makeConfig([{
+        id: "http-agent",
+        model: "gpt-4",
+        mcpServers: {
+          api: {
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: { "X-API-Key": "abc" },
+          },
+        },
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("http-agent")!
+      expect(detail.mcpServers).toEqual({
+        api: {
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: { "X-API-Key": "***" },
+        },
+      })
+    })
+  })
+
   describe("getStatus", () => {
     it("returns ready for loaded agent", async () => {
       const config = makeConfig([{ id: "a1", model: "gpt-4" }])
