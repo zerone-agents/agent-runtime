@@ -149,8 +149,7 @@ agents:
 | `maxTurns` | No | `10` | Max agentic loop turns |
 | `allowedTools` | No | all tools | Whitelist of tool names |
 | `disallowedTools` | No | — | Blacklist of tool names |
-| `skills` | No | — | Skill name whitelist (only takes effect after `settingSources` loads them) |
-| `settingSources` | No | — | Which skill dirs to scan. **Required** to load any skill: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (<cwd>/.openagent.local/skills/) |
+| `settingSources` | No | — | Which skill dirs to scan: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (no-op). All scanned skills are exposed — no whitelist |
 | `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
 | `extraProjectSkillDirs` | No | — | Additional project-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
@@ -160,21 +159,24 @@ agents:
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
 
-#### Skill loading order
+#### Skill loading
 
-The SDK loads skills in two steps — **`settingSources` is the trigger, `skills` is just a filter**:
-
-1. **Scan & register** — if `settingSources` is omitted/empty, **no directory is scanned** and the registry stays empty.
-2. **Filter by whitelist** — `skills` then narrows down what was loaded in step 1.
-
-So `skills: ["CBT-skills"]` alone loads nothing. You must pair it with `settingSources`:
+Skills are **fully filesystem-driven** — there is no whitelist. Configure `settingSources` to choose which directories to scan; every `SKILL.md` discovered is exposed to the agent.
 
 ```yaml
 agents:
   - id: "my-agent"
-    settingSources: ["user"]      # scans ~/.openagent/skills/
-    skills: ["CBT-skills"]        # only activate CBT-skills from the scanned pool
+    settingSources: ["user", "project"]   # scans both ~/.openagent/skills/ and <cwd>/.openagent/skills/
 ```
+
+Scan order (later entries override earlier ones on name collisions):
+
+1. `~/.openagent/skills/`                    (when `settingSources` includes `user`)
+2. `extraUserSkillDirs[0]`, `[1]`, ...       (additional user-level dirs)
+3. `<cwd>/.openagent/skills/`                (when `settingSources` includes `project`)
+4. `extraProjectSkillDirs[0]`, `[1]`, ...    (additional project-level dirs)
+
+The runtime scans once at startup and caches the result per agent. The detail endpoint (`GET /v1/agents/:id`) surfaces the resolved list as `availableSkills` — useful for checking what's actually loaded. Restart the runtime to pick up filesystem changes.
 
 ### Subagents (YAML)
 
@@ -217,7 +219,6 @@ agents:
 | `disallowedTools` | No | — | Blacklist of tool names |
 | `model` | No | inherits parent | LLM model name |
 | `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
-| `skills` | No | — | Skill names to enable |
 | `maxTurns` | No | `10` | Max agentic loop turns |
 
 ### TypeScript Mode (`agent.config.ts`)

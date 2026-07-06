@@ -1,10 +1,10 @@
 # Agent Detail API
 
-`GET /v1/agents/:agentId` — 返回某个 agent 的**配置层**完整信息：模型、工具、MCP servers、技能、子代理、datasets 等。
+`GET /v1/agents/:agentId` — 返回某个 agent 的**配置层 + 运行时层**完整信息：模型、工具、MCP servers、实际扫描到的技能、子代理、datasets 等。
 
-用于运维 / 调试 / 控制台展示——让上游一眼看到"这个 agent 配了什么"，不必翻 `agents.yaml`。
+用于运维 / 调试 / 控制台展示——让上游一眼看到"这个 agent 配了什么、实际能用什么"。
 
-> 这是配置层信息，不是运行时层信息。比如 `skills` 字段是配置的技能白名单，不是 SDK 实际扫描到的技能文件列表。
+> **配置层 vs 运行时层**：`settingSources` 是配置（"扫哪里"），`availableSkills` 是运行时（"扫到了什么"）。后者由 runtime 在启动时根据前者扫描文件系统得出，反映真实可用的 SKILL.md 清单。
 
 ---
 
@@ -58,7 +58,7 @@ curl -H "x-api-key: your-secret-key" \
 
 未配置的字段（`allowedTools`、`mcpServers`、`subagents` 等）**不会出现在响应里**（不是 `null`）。
 
-#### 示例 2：心理咨询 Agent（完整配置）
+#### 示例 2：心理咨询 Agent（带技能扫描）
 
 请求：`GET /v1/agents/threapy-agent`
 
@@ -72,9 +72,28 @@ curl -H "x-api-key: your-secret-key" \
   "hasSystemPrompt": true,
   "permissionMode": "auto",
   "allowedTools": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Skill"],
-  "settingSources": ["project"]
+  "settingSources": ["user", "project"],
+  "availableSkills": [
+    {
+      "name": "CBT-skills",
+      "description": "认知行为疗法对话技能",
+      "source": "user",
+      "location": "/Users/zero/.openagent/skills/CBT-skills/SKILL.md"
+    },
+    {
+      "name": "reflection",
+      "description": "主动倾听与反馈",
+      "source": "project",
+      "location": "/app/.openagent/skills/reflection/SKILL.md"
+    }
+  ]
 }
 ```
+
+注意 `availableSkills` 是 runtime 启动时扫描文件系统得出的真实清单（不是配置）：
+- 同名 skill 后扫到的会覆盖先扫到的（project 覆盖 user）
+- `source` 标明来自哪一层级，便于排查"为什么这个 skill 没生效"
+- 没扫到任何 skill 时该字段不出现（保持"未配置字段不出现"约定）
 
 #### 示例 3：带 MCP servers（脱敏后）
 
@@ -172,13 +191,35 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 | `permissionMode` | string | 工具权限模式：`default` / `acceptEdits` / `bypassPermissions` / `plan` / `dontAsk` / `auto` |
 | `allowedTools` | string[] | 工具白名单 |
 | `disallowedTools` | string[] | 工具黑名单 |
-| `skills` | string[] | 技能白名单（仅在配了 `settingSources` 后才实际加载） |
-| `settingSources` | (`"user"` \| `"project"` \| `"local"`)[] | 技能扫描来源：`user`→`~/.openagent/skills/`，`project`→`<cwd>/.openagent/skills/`，`local`→`<cwd>/.openagent.local/skills/` |
+| `availableSkills` | `SkillSummary[]` | **运行时层**：runtime 启动时扫描文件系统得出的实际可用技能清单。仅在扫到 ≥1 个时出现。详见 [SkillSummary](#skillsummary-字段说明) |
+| `settingSources` | (`"user"` \| `"project"` \| `"local"`)[] | **配置层**：技能扫描来源：`user`→`~/.openagent/skills/`，`project`→`<cwd>/.openagent/skills/`，`local`→SDK 类型里有但 loader 未实现（no-op） |
 | `extraUserSkillDirs` | string[] | 额外用户级技能目录 |
 | `extraProjectSkillDirs` | string[] | 额外项目级技能目录 |
 | `mcpServers` | Record\<string, `McpServerSummary`\> | MCP servers，已脱敏，详见 [McpServerSummary](#mcpserversummary-字段说明) |
 | `subagents` | Record\<string, \{ `description`: string \}\> | 子代理，仅含 description，详见 [subagents](#subagents) |
 | `datasets` | Record\<string, string\> | 数据集 ID → 描述映射（运行时会被注入到 systemPrompt） |
+
+### Skill 模型说明
+
+技能**完全基于文件系统**——没有白名单配置。runtime 启动时按以下顺序扫描目录：
+
+1. `settingSources: ["user"]` → `~/.openagent/skills/` + `extraUserSkillDirs`
+2. `settingSources: ["project"]` → `<cwd>/.openagent/skills/` + `extraProjectSkillDirs`
+
+所有扫到的 SKILL.md 都会暴露给 agent，没有过滤。同名 skill 后扫到的覆盖先扫到的（project 覆盖 user）。扫描结果缓存在 `availableSkills` 字段，重启 runtime 才会刷新。
+
+---
+
+## `SkillSummary` 字段说明
+
+每个 `availableSkills` 数组元素的字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 技能名（取自 SKILL.md frontmatter 的 `name` 字段；未填则用所在目录名） |
+| `description` | string | 技能描述（取自 SKILL.md frontmatter 的 `description` 字段，必填） |
+| `source` | `"user"` \| `"project"` | 来源层级：`user` = `~/.openagent/skills/` 或 `extraUserSkillDirs`；`project` = `<cwd>/.openagent/skills/` 或 `extraProjectSkillDirs` |
+| `location` | string | SKILL.md 文件的绝对路径 |
 
 ---
 

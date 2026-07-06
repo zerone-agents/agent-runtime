@@ -1,6 +1,7 @@
 import { createAgent, type Agent } from "@zerone-agent/open-agent-sdk"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
+import { scanSkills, type SkillSummary } from "./skills.js"
 
 function convertMcpServers(
   mcpServers: Record<string, any> | undefined,
@@ -41,7 +42,7 @@ export interface AgentDetail {
   permissionMode?: string
   allowedTools?: string[]
   disallowedTools?: string[]
-  skills?: string[]
+  availableSkills?: SkillSummary[]
   settingSources?: string[]
   extraUserSkillDirs?: string[]
   extraProjectSkillDirs?: string[]
@@ -56,6 +57,7 @@ export class AgentRegistry {
   private defs = new Map<string, AgentDefinition>()
   private createOpts = new Map<string, CreateOpts>()
   private statuses = new Map<string, "ready" | "unavailable">()
+  private scannedSkills = new Map<string, SkillSummary[]>()
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
     this.defs.set(id, def)
@@ -67,6 +69,29 @@ export class AgentRegistry {
     for (const def of config.agents) {
       try {
         const systemPrompt = resolveSystemPrompt(def, configDir)
+
+        // Eagerly scan filesystem for available skills (per-agent view).
+        // SDK's skill registry is process-global and cannot distinguish
+        // multiple agents with different settingSources; we keep our own
+        // per-agent snapshot so the detail endpoint is accurate regardless
+        // of which agents have been run.
+        let availableSkills: SkillSummary[] = []
+        try {
+          availableSkills = await scanSkills({
+            cwd: process.cwd(),
+            settingSources: def.settingSources,
+            extraUserSkillDirs: def.extraUserSkillDirs,
+            extraProjectSkillDirs: def.extraProjectSkillDirs,
+          })
+        } catch (err) {
+          console.error(`Failed to scan skills for agent "${def.id}":`, err)
+        }
+        if (availableSkills.length > 0) {
+          this.scannedSkills.set(def.id, availableSkills)
+        }
+
+        // NOTE: do not pass `allowedSkills` to SDK. New SDK semantics:
+        // omitting it means "no filter" — every scanned skill is exposed.
         const opts: CreateOpts = {
           model: process.env.OPENAGENT_MODEL ?? def.model,
           apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
@@ -77,7 +102,6 @@ export class AgentRegistry {
           disallowedTools: def.disallowedTools,
           maxTurns: def.maxTurns,
           permissionMode: def.permissionMode,
-          allowedSkills: def.skills,
           settingSources: def.settingSources,
           extraUserSkillDirs: def.extraUserSkillDirs,
           extraProjectSkillDirs: def.extraProjectSkillDirs,
@@ -126,7 +150,8 @@ export class AgentRegistry {
     if (def.permissionMode !== undefined) detail.permissionMode = def.permissionMode
     if (def.allowedTools !== undefined) detail.allowedTools = def.allowedTools
     if (def.disallowedTools !== undefined) detail.disallowedTools = def.disallowedTools
-    if (def.skills !== undefined) detail.skills = def.skills
+    const scanned = this.scannedSkills.get(agentId)
+    if (scanned !== undefined) detail.availableSkills = scanned
     if (def.settingSources !== undefined) detail.settingSources = def.settingSources
     if (def.extraUserSkillDirs !== undefined) detail.extraUserSkillDirs = def.extraUserSkillDirs
     if (def.extraProjectSkillDirs !== undefined) detail.extraProjectSkillDirs = def.extraProjectSkillDirs
@@ -164,6 +189,7 @@ export class AgentRegistry {
     this.defs.clear()
     this.createOpts.clear()
     this.statuses.clear()
+    this.scannedSkills.clear()
   }
 }
 

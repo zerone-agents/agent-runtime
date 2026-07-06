@@ -9,9 +9,17 @@ vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),
 }))
 
+// Mock scanSkills so registry tests don't touch the real filesystem.
+// Default returns empty; individual tests can override.
+vi.mock("../skills.js", () => ({
+  scanSkills: vi.fn(async () => []),
+}))
+
 import { createAgent } from "@zerone-agent/open-agent-sdk"
+import { scanSkills } from "../skills.js"
 
 const mockCreateAgent = vi.mocked(createAgent)
+const mockScanSkills = vi.mocked(scanSkills)
 
 function makeConfig(agents: any[]) {
   return {
@@ -25,6 +33,7 @@ describe("AgentRegistry (factory)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockScanSkills.mockResolvedValue([])
     registry = new AgentRegistry()
   })
 
@@ -72,6 +81,20 @@ describe("AgentRegistry (factory)", () => {
       expect(mockCreateAgent).toHaveBeenCalledWith(
         expect.objectContaining({ model: "gpt-4", systemPrompt: "test-prompt" }),
       )
+    })
+
+    it("does not pass allowedSkills to SDK (filesystem-only skill model)", async () => {
+      mockCreateAgent.mockReturnValue({ close: vi.fn().mockResolvedValue(undefined) } as any)
+      const config = makeConfig([{
+        id: "skill-agent",
+        model: "gpt-4",
+        settingSources: ["user"],
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("skill-agent")
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.allowedSkills).toBeUndefined()
+      expect(opts.settingSources).toEqual(["user"])
     })
 
     it("converts mcpServers transport field to type before passing to SDK", async () => {
@@ -208,6 +231,11 @@ describe("AgentRegistry (factory)", () => {
     })
 
     it("returns full detail for a fully-configured agent", async () => {
+      const fakeSkills = [
+        { name: "cbt", description: "Cognitive therapy", source: "project" as const, location: "/tmp/.openagent/skills/cbt/SKILL.md" },
+      ]
+      mockScanSkills.mockResolvedValue(fakeSkills)
+
       const config = makeConfig([{
         id: "full-agent",
         name: "Full Agent",
@@ -217,7 +245,6 @@ describe("AgentRegistry (factory)", () => {
         permissionMode: "auto",
         allowedTools: ["Read", "Write"],
         disallowedTools: ["Bash"],
-        skills: ["cbt"],
         settingSources: ["project"],
         extraUserSkillDirs: ["/mnt/sk"],
         extraProjectSkillDirs: ["./sk"],
@@ -236,12 +263,27 @@ describe("AgentRegistry (factory)", () => {
         permissionMode: "auto",
         allowedTools: ["Read", "Write"],
         disallowedTools: ["Bash"],
-        skills: ["cbt"],
+        availableSkills: fakeSkills,
         settingSources: ["project"],
         extraUserSkillDirs: ["/mnt/sk"],
         extraProjectSkillDirs: ["./sk"],
         datasets: { book1: "description" },
       })
+    })
+
+    it("does not include availableSkills when scan returns empty", async () => {
+      mockScanSkills.mockResolvedValue([])
+      const config = makeConfig([{
+        id: "no-skills",
+        model: "gpt-4",
+        settingSources: ["user"],  // configured, but scan finds nothing
+      }])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detail = registry.getDetail("no-skills")!
+      expect(detail.availableSkills).toBeUndefined()
+      // settingSources is still surfaced (it's a config-layer field)
+      expect(detail.settingSources).toEqual(["user"])
     })
 
     it("omits unset fields for a minimally-configured agent", async () => {
@@ -286,9 +328,8 @@ describe("AgentRegistry (factory)", () => {
             prompt: "secret prompt",
             tools: ["Read"],
             model: "gpt-4",
-            skills: ["x"],
           },
-          writer: { description: "writes docs" },
+          writer: { description: "writes docs", prompt: "secret" },
         },
       }])
       await registry.loadFromConfig(config, "/tmp")
@@ -385,6 +426,27 @@ describe("AgentRegistry (factory)", () => {
           headers: { "X-API-Key": "***" },
         },
       })
+    })
+
+    it("availableSkills is per-agent isolated (multi-agent with different scans)", async () => {
+      // Agent A scans and gets skill "cbt"; agent B scans and gets nothing.
+      mockScanSkills
+        .mockResolvedValueOnce([
+          { name: "cbt", description: "therapy", source: "project" as const, location: "/a/SKILL.md" },
+        ])
+        .mockResolvedValueOnce([])
+
+      const config = makeConfig([
+        { id: "agent-a", model: "gpt-4", settingSources: ["project"] },
+        { id: "agent-b", model: "gpt-4", settingSources: ["user"] },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+
+      const detailA = registry.getDetail("agent-a")!
+      const detailB = registry.getDetail("agent-b")!
+      expect(detailA.availableSkills).toHaveLength(1)
+      expect(detailA.availableSkills![0].name).toBe("cbt")
+      expect(detailB.availableSkills).toBeUndefined()
     })
   })
 
