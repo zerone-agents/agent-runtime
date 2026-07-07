@@ -6,10 +6,11 @@ import { MetricsCollector } from "../metrics.js"
 import { createHealthRouter, createMetricsRouter } from "./health.js"
 import { createAgentRouter } from "./agent.js"
 import { createSessionRouter } from "./session.js"
+import { createFilesRouter } from "./files.js"
 import { createAuthMiddleware } from "../auth.js"
 
 export function createApp(config: RuntimeConfig, registry: AgentRegistry, metrics: MetricsCollector) {
-  const app = new Hono()
+  const app = new Hono({ strict: false })
 
   if (config.cors) {
     app.use("*", cors({ origin: config.cors.origins }))
@@ -25,6 +26,7 @@ export function createApp(config: RuntimeConfig, registry: AgentRegistry, metric
   app.route("/v1/metrics", createMetricsRouter(metrics))
   app.route("/v1/agents", createAgentRouter(registry, metrics))
   app.route("/v1/sessions", createSessionRouter())
+  app.route("/v1/files", createFilesRouter())
 
   return app
 }

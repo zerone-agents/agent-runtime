@@ -177,6 +177,52 @@ describe("createApp auth integration", () => {
     expect(res.status).toBe(401)
   })
 
+  it("Key configured, GET /v1/files without header → 401", async () => {
+    const config = createTestConfig({ apiKey: "secret-key" })
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+
+    const res = await app.request("http://localhost/v1/files")
+    expect(res.status).toBe(401)
+  })
+
+  it("Key configured, GET /v1/files with correct key → 200", async () => {
+    const config = createTestConfig({ apiKey: "secret-key" })
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+
+    const res = await app.request("http://localhost/v1/files", {
+      headers: { "x-api-key": "secret-key" },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it("Key configured, GET /v1/files/content without header → 401", async () => {
+    const config = createTestConfig({ apiKey: "secret-key" })
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+
+    const res = await app.request(
+      "http://localhost/v1/files/content?path=agents.yaml",
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it("/v1/files/ (trailing slash) works under auth when strict:false", async () => {
+    const config = createTestConfig({ apiKey: "secret-key" })
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+    const res = await app.request("http://localhost/v1/files/", {
+      headers: { "x-api-key": "secret-key" },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it("/v1/files (no trailing slash) works under auth", async () => {
+    const config = createTestConfig({ apiKey: "secret-key" })
+    const app = createApp(config, mockRegistry as any, mockMetrics as any)
+    const res = await app.request("http://localhost/v1/files", {
+      headers: { "x-api-key": "secret-key" },
+    })
+    expect(res.status).toBe(200)
+  })
+
   it("OPTIONS /v1/agents preflight is not blocked by auth middleware when CORS enabled", async () => {
     const config = { ...createTestConfig({ apiKey: "secret-key" }), cors: { origins: ["http://example.com"] } }
     const app = createApp(config, mockRegistry as any, mockMetrics as any)

@@ -103,6 +103,9 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 | `GET` | `/v1/sessions` | List sessions |
 | `GET` | `/v1/sessions/:id` | Session detail with messages |
 | `DELETE` | `/v1/sessions/:id` | Delete session |
+| `GET` | `/v1/files` | List files in cwd (`?path`、`?recursive`、`?depth`) |
+| `GET` | `/v1/files/content` | Download a file (`?path=`) |
+| `HEAD` | `/v1/files/content` | File headers only (`?path=`) |
 
 ## Configuration
 
@@ -400,6 +403,41 @@ Client → Hono HTTP Server → AgentRegistry → open-agent-sdk Agent
 - **AgentRegistry** creates Agent instances from config at startup, caches them in-process
 - **SSE Bridge** directly forwards SDK streaming events to HTTP clients
 - **Session** management delegates to SDK's filesystem storage
+
+## File Browsing
+
+`/v1/files` exposes the runtime's working directory over HTTP. Useful for debugging and observation by external clients (frontend consoles, ops dashboards).
+
+**Trust model:** any caller with a valid API key has full read access to everything under cwd — including `agents.yaml`, `.env`, and any secrets. Configure `OPENAGENT_HTTP_API_KEY` before deploying to production.
+
+### List files
+
+```bash
+# Top-level entries
+curl http://localhost:3000/v1/files
+
+# Subdirectory
+curl "http://localhost:3000/v1/files?path=src"
+
+# Recursive tree (limit depth to 2 levels)
+curl "http://localhost:3000/v1/files?recursive=true&depth=2"
+```
+
+### Download a file
+
+```bash
+# Full file
+curl "http://localhost:3000/v1/files/content?path=outputs/report.json" -o report.json
+
+# Range request (first 100 bytes)
+curl -H "Range: bytes=0-99" \
+     "http://localhost:3000/v1/files/content?path=logs/app.log" -o partial.log
+
+# HEAD to inspect size/type without downloading body
+curl -I "http://localhost:3000/v1/files/content?path=outputs/report.json"
+```
+
+See [`docs/api/files.md`](docs/api/files.md) for full API reference.
 
 ## License
 
