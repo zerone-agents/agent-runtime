@@ -96,6 +96,60 @@ async function handleContent(c: Context, cwd: string, headOnly: boolean) {
   c.header("Accept-Ranges", "bytes")
   c.header("Last-Modified", info.mtime.toUTCString())
 
+  // 检查 Range 头
+  const rangeHeader = c.req.header("Range")
+  if (rangeHeader && rangeHeader.startsWith("bytes=")) {
+    const rangeSpec = rangeHeader.slice(6).trim()
+
+    // 多段 Range（含逗号）：回退为 200 全文（业界惯例）
+    if (!rangeSpec.includes(",")) {
+      const match = rangeSpec.match(/^(\d*)-(\d*)$/)
+      if (match) {
+        const [, startStr, endStr] = match
+        const size = info.size
+
+        let start: number
+        let end: number
+
+        if (startStr === "" && endStr === "") {
+          // bytes=- 无效，回退全文
+        } else if (startStr === "") {
+          // suffix: bytes=-N → 最后 N 字节
+          const suffixLen = parseInt(endStr, 10)
+          if (Number.isNaN(suffixLen) || suffixLen <= 0) {
+            return rangeNotSatisfiable(c, size)
+          }
+          start = Math.max(0, size - suffixLen)
+          end = size - 1
+          return sendRangeResponse(c, realAbs, start, end, size, headOnly)
+        } else if (endStr === "") {
+          // bytes=N- → 从 N 到末尾
+          start = parseInt(startStr, 10)
+          if (Number.isNaN(start) || start >= size) {
+            return rangeNotSatisfiable(c, size)
+          }
+          end = size - 1
+          return sendRangeResponse(c, realAbs, start, end, size, headOnly)
+        } else {
+          start = parseInt(startStr, 10)
+          end = parseInt(endStr, 10)
+          if (
+            Number.isNaN(start) ||
+            Number.isNaN(end) ||
+            start > end ||
+            start >= size
+          ) {
+            return rangeNotSatisfiable(c, size)
+          }
+          // 钳制 end 到文件大小内
+          if (end >= size) end = size - 1
+          return sendRangeResponse(c, realAbs, start, end, size, headOnly)
+        }
+      }
+    }
+    // 如果没匹配上（语法错或未处理分支），继续走 200 全文逻辑
+  }
+
   if (headOnly) {
     return c.body(null)
   }
@@ -103,4 +157,35 @@ async function handleContent(c: Context, cwd: string, headOnly: boolean) {
   // 流式响应：Node Readable → Web ReadableStream
   const stream = createReadStream(realAbs)
   return c.body(Readable.toWeb(stream) as ReadableStream)
+}
+
+/**
+ * 发送 206 Partial Content 响应。
+ */
+function sendRangeResponse(
+  c: Context,
+  absPath: string,
+  start: number,
+  end: number,
+  size: number,
+  headOnly: boolean,
+) {
+  const contentLength = end - start + 1
+  c.header("Content-Length", String(contentLength))
+  c.header("Content-Range", `bytes ${start}-${end}/${size}`)
+
+  if (headOnly) {
+    return c.body(null, 206)
+  }
+
+  const stream = createReadStream(absPath, { start, end })
+  return c.body(Readable.toWeb(stream) as ReadableStream, 206)
+}
+
+/**
+ * 发送 416 Range Not Satisfiable 响应。
+ */
+function rangeNotSatisfiable(c: Context, size: number) {
+  c.header("Content-Range", `bytes */${size}`)
+  return c.json({ error: "Range not satisfiable" }, 416)
 }

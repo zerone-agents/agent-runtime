@@ -222,4 +222,101 @@ describe("Files Router /content", () => {
       expect(res.status).toBe(400)
     })
   })
+
+  describe("Range requests", () => {
+    beforeEach(() => {
+      // 写一个 100 字节的固定内容文件：0123456789 重复 10 次
+      const content = "0123456789".repeat(10)
+      writeFileSync(join(tmpRoot, "rangeable.dat"), content)
+    })
+
+    it("returns 206 with Content-Range for bytes=0-9", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=0-9" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Length")).toBe("10")
+      expect(res.headers.get("Content-Range")).toBe("bytes 0-9/100")
+      expect(res.headers.get("Accept-Ranges")).toBe("bytes")
+      const body = await res.text()
+      expect(body).toBe("0123456789")
+    })
+
+    it("returns 206 for middle range bytes=10-19", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=10-19" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Range")).toBe("bytes 10-19/100")
+      const body = await res.text()
+      expect(body).toBe("0123456789")
+    })
+
+    it("supports suffix range bytes=-10 (last 10 bytes)", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=-10" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Range")).toBe("bytes 90-99/100")
+      const body = await res.text()
+      expect(body).toBe("0123456789")
+    })
+
+    it("supports open-ended range bytes=90-", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=90-" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Range")).toBe("bytes 90-99/100")
+      expect(res.headers.get("Content-Length")).toBe("10")
+    })
+
+    it("clamps end beyond file size", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=90-200" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Range")).toBe("bytes 90-99/100")
+      expect(res.headers.get("Content-Length")).toBe("10")
+    })
+
+    it("returns 416 for start beyond file size", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=200-300" } },
+      )
+      expect(res.status).toBe(416)
+      expect(res.headers.get("Content-Range")).toBe("bytes */100")
+      const body = await res.json()
+      expect(body.error).toBe("Range not satisfiable")
+    })
+
+    it("falls back to 200 full file for multi-range request", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { headers: { Range: "bytes=0-9,20-29" } },
+      )
+      expect(res.status).toBe(200)
+      expect(res.headers.get("Content-Length")).toBe("100")
+      const body = await res.text()
+      expect(body.length).toBe(100)
+    })
+
+    it("HEAD with Range returns 206 headers without body", async () => {
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=rangeable.dat",
+        { method: "HEAD", headers: { Range: "bytes=0-9" } },
+      )
+      expect(res.status).toBe(206)
+      expect(res.headers.get("Content-Range")).toBe("bytes 0-9/100")
+      expect(res.headers.get("Content-Length")).toBe("10")
+      const body = await res.text()
+      expect(body).toBe("")
+    })
+  })
 })
