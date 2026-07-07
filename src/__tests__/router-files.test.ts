@@ -116,9 +116,7 @@ describe("Files Router /content", () => {
     writeFileSync(join(tmpRoot, "hello.txt"), "Hello, World!")
     writeFileSync(join(tmpRoot, "data.json"), JSON.stringify({ ok: true }))
     mkdirSync(join(tmpRoot, "subdir"))
-    // symlink 逃出 cwd：指向 tmpRoot 的父目录
-    symlinkSync(tmpRoot, join(tmpRoot, "self-out"), "file")
-    // symlink 逃出 cwd：指向 tmpRoot 的父目录
+    // symlink 指向 cwd 之外（用于测试 escape 拒绝）
     symlinkSync(join(tmpRoot, ".."), join(tmpRoot, "escape"), "dir")
 
     app = new Hono()
@@ -220,6 +218,16 @@ describe("Files Router /content", () => {
         "http://localhost/v1/files/content?path=escape",
       )
       expect(res.status).toBe(400)
+    })
+
+    it("returns 404 for broken symlink (target missing)", async () => {
+      symlinkSync("/nonexistent-target-xyz", join(tmpRoot, "broken-link"))
+      const res = await app.request(
+        "http://localhost/v1/files/content?path=broken-link",
+      )
+      expect(res.status).toBe(404)
+      const body = await res.json()
+      expect(body.error).toBe("File not found")
     })
   })
 
