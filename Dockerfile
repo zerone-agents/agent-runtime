@@ -59,12 +59,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Upgrade npm to v10 to match builder.
 RUN npm install -g npm@10
 
-WORKDIR /app
+WORKDIR /workdir
 
 # Copy production dependencies and built artifacts from builder
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules /app/node_modules
+COPY --from=builder /app/dist /app/dist
+COPY --from=builder /app/package.json /app/package.json
 
 # Expose the default port
 EXPOSE 3000
@@ -75,4 +75,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 
 # Default command
 # Users should mount their config directory to /app/config
-CMD ["node", "dist/index.js", "--config", "/app/config"]
+CMD ["node", "/app/dist/index.js", "--config", "/app/config"]
