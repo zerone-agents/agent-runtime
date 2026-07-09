@@ -68,7 +68,7 @@ docker run -d \
   --name open-agent \
   -p 8080:8080 \
   -v "$(pwd)/config:/app/config" \
-  open-agent-runtime node dist/index.js --config /app/config --port 8080
+  open-agent-runtime node /app/dist/index.js --config /app/config --port 8080
 ```
 
 ## 环境变量

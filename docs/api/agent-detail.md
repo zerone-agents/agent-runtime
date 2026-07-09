@@ -84,7 +84,7 @@ curl -H "x-api-key: your-secret-key" \
       "name": "reflection",
       "description": "主动倾听与反馈",
       "source": "project",
-      "location": "/app/.openagent/skills/reflection/SKILL.md"
+      "location": "/workdir/.openagent/skills/reflection/SKILL.md"
     }
   ]
 }
