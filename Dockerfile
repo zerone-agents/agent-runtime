@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Use Alibaba Cloud npm mirror for faster installs in China.
+RUN npm config set registry https://registry.npmmirror.com
+
 # Upgrade npm to v10 to match the previous node:22-alpine baseline.
 RUN npm install -g npm@10
 
@@ -56,10 +59,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# Use Alibaba Cloud npm mirror for faster installs in China.
+RUN npm config set registry https://registry.npmmirror.com
+
 # Upgrade npm to v10 to match builder.
 RUN npm install -g npm@10
 
 WORKDIR /workdir
+
+# Use Alibaba Cloud PyPI mirror for faster Python package installs.
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 
 # Copy production dependencies and built artifacts from builder
 COPY --from=builder /app/node_modules /app/node_modules
