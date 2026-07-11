@@ -73,10 +73,19 @@ RUN npm config set registry https://registry.npmmirror.com
 # Upgrade npm to v10 to match builder.
 RUN npm install -g npm@10
 
+# Preinstall Bun for agents that use it at runtime.
+# Reuses the npmmirror registry configured above, so the bun package and its
+# platform-specific binary optionalDependencies all download domestically.
+RUN npm install -g bun
+
 WORKDIR /workdir
 
 # Use Alibaba Cloud PyPI mirror for faster Python package installs.
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+
+# Configure Bun to use the npmmirror registry globally so agents' `bun install`
+# / `bun add` at runtime resolve from the domestic mirror. Bun reads ~/.bunfig.toml.
+RUN printf '[install]\nregistry = "https://registry.npmmirror.com"\n' > /root/.bunfig.toml
 
 # Copy production dependencies and built artifacts from builder
 COPY --from=builder /app/node_modules /app/node_modules
