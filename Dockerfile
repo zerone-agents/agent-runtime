@@ -12,6 +12,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Node.js 22.22.1 + npm 9.2.0 from Ubuntu repo; npm upgraded to 10.x below.
 # python3 is installed in case any dependency needs node-gyp during `npm ci`.
+# Switch apt to Alibaba Cloud mirror (http scheme: ca-certificates not yet installed).
+RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g; s|http://security.ubuntu.com|http://mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -50,6 +54,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Runtime: Node.js 22 + Python 3 + pip.
 # This image is a general-purpose agent runtime, so agents can `npm install`
 # and `pip install` packages on the fly at runtime.
+# Switch apt to Alibaba Cloud mirror (http scheme: ca-certificates not yet installed).
+RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g; s|http://security.ubuntu.com|http://mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
