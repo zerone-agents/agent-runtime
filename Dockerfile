@@ -12,6 +12,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Node.js 22.22.1 + npm 9.2.0 from Ubuntu repo; npm upgraded to 10.x below.
 # python3 is installed in case any dependency needs node-gyp during `npm ci`.
+# Switch apt to Alibaba Cloud mirror (http scheme: ca-certificates not yet installed).
+RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g; s|http://security.ubuntu.com|http://mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -50,6 +54,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Runtime: Node.js 22 + Python 3 + pip.
 # This image is a general-purpose agent runtime, so agents can `npm install`
 # and `pip install` packages on the fly at runtime.
+# Switch apt to Alibaba Cloud mirror (http scheme: ca-certificates not yet installed).
+RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g; s|http://security.ubuntu.com|http://mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -65,10 +73,19 @@ RUN npm config set registry https://registry.npmmirror.com
 # Upgrade npm to v10 to match builder.
 RUN npm install -g npm@10
 
+# Preinstall Bun for agents that use it at runtime.
+# Reuses the npmmirror registry configured above, so the bun package and its
+# platform-specific binary optionalDependencies all download domestically.
+RUN npm install -g bun
+
 WORKDIR /workdir
 
 # Use Alibaba Cloud PyPI mirror for faster Python package installs.
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+
+# Configure Bun to use the npmmirror registry globally so agents' `bun install`
+# / `bun add` at runtime resolve from the domestic mirror. Bun reads ~/.bunfig.toml.
+RUN printf '[install]\nregistry = "https://registry.npmmirror.com"\n' > /root/.bunfig.toml
 
 # Copy production dependencies and built artifacts from builder
 COPY --from=builder /app/node_modules /app/node_modules
