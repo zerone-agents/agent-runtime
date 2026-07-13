@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+
+# Local uploads (skill zips, etc.)
+.yione-uploads/
