@@ -17,6 +17,7 @@ agents:
       - researcher：擅长网络搜索与研究
       - writer：擅长撰写文档
     maxTurns: 10
+    maxSessionTurns: 50  # Optional: limit context window to 50 conversation rounds
     allowedTools:
       - Task
       - Read

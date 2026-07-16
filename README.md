@@ -118,6 +118,7 @@ agents:
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/researcher.md"
     maxTurns: 10
+    maxSessionTurns: 50
     allowedTools:
       - WebFetch
       - WebSearch
@@ -150,6 +151,7 @@ agents:
 | `systemPrompt` | No | — | Inline system prompt |
 | `systemPromptFile` | No | — | Path to `.md` file (relative to config dir) |
 | `maxTurns` | No | `10` | Max agentic loop turns |
+| `maxSessionTurns` | No | unlimited | Max conversation rounds sent to LLM (context window) |
 | `allowedTools` | No | all tools | Whitelist of tool names |
 | `disallowedTools` | No | — | Blacklist of tool names |
 | `settingSources` | No | — | Which skill dirs to scan: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (no-op). All scanned skills are exposed — no whitelist |
