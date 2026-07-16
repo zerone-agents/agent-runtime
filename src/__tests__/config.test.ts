@@ -231,6 +231,22 @@ describe("RuntimeConfigSchema", () => {
       }),
     ).toThrow()
   })
+
+  describe("maxSessionTurns", () => {
+    it("parses maxSessionTurns when provided", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [{ id: "assistant", maxSessionTurns: 50 }],
+      })
+      expect(result.agents[0].maxSessionTurns).toBe(50)
+    })
+
+    it("leaves maxSessionTurns undefined when not provided", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [{ id: "assistant" }],
+      })
+      expect(result.agents[0].maxSessionTurns).toBeUndefined()
+    })
+  })
 })
 
 describe("AuthConfigSchema", () => {
