@@ -38,6 +38,7 @@ export interface AgentDetail {
   model: string
   status: "ready" | "unavailable"
   maxTurns: number
+  maxSessionTurns?: number
   hasSystemPrompt: boolean
   permissionMode?: string
   allowedTools?: string[]
@@ -101,6 +102,7 @@ export class AgentRegistry {
           allowedTools: def.allowedTools,
           disallowedTools: def.disallowedTools,
           maxTurns: def.maxTurns,
+          maxSessionTurns: def.maxSessionTurns,
           permissionMode: def.permissionMode,
           settingSources: def.settingSources,
           extraUserSkillDirs: def.extraUserSkillDirs,
@@ -148,6 +150,7 @@ export class AgentRegistry {
       hasSystemPrompt: Boolean(def.systemPrompt || def.systemPromptFile),
     }
     if (def.permissionMode !== undefined) detail.permissionMode = def.permissionMode
+    if (def.maxSessionTurns !== undefined) detail.maxSessionTurns = def.maxSessionTurns
     if (def.allowedTools !== undefined) detail.allowedTools = def.allowedTools
     if (def.disallowedTools !== undefined) detail.disallowedTools = def.disallowedTools
     const scanned = this.scannedSkills.get(agentId)
