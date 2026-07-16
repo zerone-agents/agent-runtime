@@ -472,6 +472,71 @@ describe("AgentRegistry (factory)", () => {
     })
   })
 
+  describe("maxSessionTurns", () => {
+    it("passes maxSessionTurns to createAgent when configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+        maxSessionTurns: 50,
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("test")
+
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ maxSessionTurns: 50 }),
+      )
+    })
+
+    it("passes undefined maxSessionTurns when not configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("test")
+
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ maxSessionTurns: undefined }),
+      )
+    })
+
+    it("includes maxSessionTurns in getDetail when configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+        maxSessionTurns: 50,
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      const detail = registry.getDetail("test")
+
+      expect(detail?.maxSessionTurns).toBe(50)
+    })
+
+    it("omits maxSessionTurns from getDetail when not configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      const detail = registry.getDetail("test")
+
+      expect(detail?.maxSessionTurns).toBeUndefined()
+      expect(detail).not.toHaveProperty("maxSessionTurns")
+    })
+  })
+
   describe("closeAll", () => {
     it("is a no-op (no live instances)", async () => {
       const config = makeConfig([{ id: "a1", model: "gpt-4" }])

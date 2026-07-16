@@ -47,6 +47,130 @@ describe("Agent Router (per-request)", () => {
     })
   })
 
+  describe("maxSessionTurns parameter", () => {
+    it("passes maxSessionTurns to agent.query in blocking mode", async () => {
+      const mockQuery = vi.fn().mockReturnValue(async function* () {
+        yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
+      })
+      const mockAgent = {
+        query: mockQuery,
+        prompt: vi.fn(),
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "hello",
+          stream: "block",
+          maxSessionTurns: 20,
+        }),
+      })
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({ maxSessionTurns: 20 })
+      )
+    })
+
+    it("passes maxSessionTurns to agent.query in SSE mode", async () => {
+      const mockQuery = vi.fn().mockReturnValue(async function* () {
+        yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
+      })
+      const mockAgent = {
+        query: mockQuery,
+        prompt: vi.fn(),
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "hello",
+          stream: true,
+          maxSessionTurns: 15,
+        }),
+      })
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({ includePartialMessages: true, maxSessionTurns: 15 })
+      )
+    })
+
+    it("passes maxSessionTurns to agent.prompt in sync mode", async () => {
+      const mockPrompt = vi.fn().mockResolvedValue({
+        text: "response",
+        usage: {},
+        num_turns: 1,
+        duration_ms: 1,
+      })
+      const mockAgent = {
+        query: vi.fn(),
+        prompt: mockPrompt,
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "hello",
+          stream: false,
+          maxSessionTurns: 25,
+        }),
+      })
+
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({ maxSessionTurns: 25 })
+      )
+    })
+
+    it("passes undefined maxSessionTurns when not provided", async () => {
+      const mockPrompt = vi.fn().mockResolvedValue({
+        text: "response",
+        usage: {},
+        num_turns: 1,
+        duration_ms: 1,
+      })
+      const mockAgent = {
+        query: vi.fn(),
+        prompt: mockPrompt,
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false }),
+      })
+
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({ maxSessionTurns: undefined })
+      )
+    })
+  })
+
   describe("GET /v1/agents/:agentId", () => {
     it("returns agent detail when found", async () => {
       const detail = {
@@ -144,7 +268,7 @@ describe("Agent Router (per-request)", () => {
       expect(body.text).toBe("Hello world")
       expect(body.sessionId).toBe("sess-new")
       expect(registry.create).toHaveBeenCalledWith("a1", "sess-old")
-      expect(agent.prompt).toHaveBeenCalledWith("hello")
+      expect(agent.prompt).toHaveBeenCalledWith("hello", { maxSessionTurns: undefined })
       expect(agent.close).toHaveBeenCalledOnce()
       expect(metrics.recordRun).toHaveBeenCalledWith("a1", { input_tokens: 10, output_tokens: 20 }, undefined)
     })
@@ -195,7 +319,7 @@ describe("Agent Router (per-request)", () => {
       })
       expect(res.status).toBe(200)
       expect(streamAgentResponse).toHaveBeenCalledOnce()
-      expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true })
+      expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true, maxSessionTurns: undefined })
       const onDone = vi.mocked(streamAgentResponse).mock.calls[0][2]
       expect(onDone).toBeTypeOf("function")
       await onDone!()

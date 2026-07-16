@@ -27,7 +27,7 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
       return c.json({ error: "Invalid request: message is required" }, 400)
     }
 
-    const { message, sessionId, stream = true } = body
+    const { message, sessionId, stream = true, maxSessionTurns } = body
 
     const status = registry.getStatus(agentId)
     if (status === "not_found") {
@@ -43,17 +43,17 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
     }
 
     if (stream === "block") {
-      const agentStream = agent.query(message)
+      const agentStream = agent.query(message, { maxSessionTurns })
       return streamAgentResponse(c, agentStream, () => agent.close())
     }
 
     if (stream === true || stream === "raw") {
-      const agentStream = agent.query(message, { includePartialMessages: true })
+      const agentStream = agent.query(message, { includePartialMessages: true, maxSessionTurns })
       return streamAgentResponse(c, agentStream, () => agent.close())
     }
 
     try {
-      const result = await agent.prompt(message)
+      const result = await agent.prompt(message, { maxSessionTurns })
       metrics.recordRun(agentId, result.usage, undefined)
       return c.json({
         sessionId: agent.getSessionId(),
