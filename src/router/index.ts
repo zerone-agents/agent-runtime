@@ -8,8 +8,20 @@ import { createAgentRouter } from "./agent.js"
 import { createSessionRouter } from "./session.js"
 import { createFilesRouter } from "./files.js"
 import { createAuthMiddleware } from "../auth.js"
+import { resolveAigcConfig } from "../aigc.js"
+import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
 
-export function createApp(config: RuntimeConfig, registry: AgentRegistry, metrics: MetricsCollector) {
+export interface CreateAppOptions {
+  /** External persistence hook for the in-memory AIGC audit log. */
+  onAigcRecord?: (record: AigcRunRecord) => void | Promise<void>
+}
+
+export function createApp(
+  config: RuntimeConfig,
+  registry: AgentRegistry,
+  metrics: MetricsCollector,
+  options: CreateAppOptions = {},
+) {
   const app = new Hono({ strict: false })
 
   if (config.cors) {
@@ -24,7 +36,11 @@ export function createApp(config: RuntimeConfig, registry: AgentRegistry, metric
   }
 
   app.route("/v1/metrics", createMetricsRouter(metrics))
-  app.route("/v1/agents", createAgentRouter(registry, metrics))
+
+  const aigc = resolveAigcConfig(config.aigc)
+  const auditLog = aigc ? new AigcAuditLog({ onRecord: options.onAigcRecord }) : undefined
+
+  app.route("/v1/agents", createAgentRouter(registry, metrics, { aigc, auditLog }))
   app.route("/v1/sessions", createSessionRouter())
   app.route("/v1/files", createFilesRouter())
 

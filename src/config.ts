@@ -20,6 +20,18 @@ const AuthConfigSchema = z.object({
   apiKey: z.string().min(1).optional(),
 })
 
+const AigcConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Full 27-char provider code; last 4 chars are the model/app code slot */
+  contentProducer: z.string().length(27),
+  label: z.enum(["1", "2", "3"]).optional(),
+  signingKey: z.string().optional(),
+  explicitHint: z.boolean().optional(),
+  produceIdPrefix: z.string().optional(),
+  /** model name -> 4-char model code replacing the last 4 chars */
+  modelCodes: z.record(z.string(), z.string().length(4)).optional(),
+})
+
 const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
   z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional() }),
@@ -74,6 +86,7 @@ export const RuntimeConfigSchema = z.object({
   cors: CorsConfigSchema.optional(),
   logging: LoggingConfigSchema.optional(),
   auth: AuthConfigSchema.optional(),
+  aigc: AigcConfigSchema.optional(),
   agents: z.array(AgentDefinitionSchema).min(1),
 })
 

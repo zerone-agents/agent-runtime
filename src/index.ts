@@ -7,10 +7,22 @@ import { MetricsCollector } from "./metrics.js"
 import { createApp } from "./router/index.js"
 
 export { createApp } from "./router/index.js"
+export type { CreateAppOptions } from "./router/index.js"
 export { AgentRegistry, type AgentInfo, type AgentDetail } from "./registry.js"
 export { scanSkills, type SkillSummary } from "./skills.js"
 export { MetricsCollector, type AgentMetrics, type RuntimeMetrics } from "./metrics.js"
 export { streamAgentResponse } from "./sse.js"
+export type { StreamOptions } from "./sse.js"
+export {
+  buildAigcLabel,
+  generateProduceId,
+  resolveContentProducer,
+  resolveAigcConfig,
+  signLabel,
+  type AigcLabel,
+  type AigcConfig,
+} from "./aigc.js"
+export { AigcAuditLog, type AigcRunRecord, type AigcAuditLogOptions } from "./audit-log.js"
 export {
   discoverConfig,
   findConfigDir,

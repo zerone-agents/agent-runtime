@@ -99,6 +99,38 @@ describe("RuntimeConfigSchema", () => {
     expect(result.logging).toBeUndefined()
   })
 
+  it("accepts aigc config section", () => {
+    const result = RuntimeConfigSchema.parse({
+      aigc: {
+        enabled: true,
+        contentProducer: "001191320118MAK93FC72D10001",
+        label: "1",
+        signingKey: "k",
+        explicitHint: true,
+        produceIdPrefix: "prod-",
+        modelCodes: { "qwen-max": "0002" },
+      },
+      agents: [{ id: "a" }],
+    })
+    expect(result.aigc?.enabled).toBe(true)
+    expect(result.aigc?.contentProducer).toBe("001191320118MAK93FC72D10001")
+    expect(result.aigc?.modelCodes).toEqual({ "qwen-max": "0002" })
+  })
+
+  it("leaves aigc undefined when omitted", () => {
+    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a" }] })
+    expect(result.aigc).toBeUndefined()
+  })
+
+  it("rejects invalid aigc label values", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        aigc: { enabled: true, contentProducer: "x".repeat(27), label: "9" },
+        agents: [{ id: "a" }],
+      }),
+    ).toThrow()
+  })
+
   it("accepts skill loading configuration (settingSources + extra dirs)", () => {
     const result = RuntimeConfigSchema.parse({
       agents: [

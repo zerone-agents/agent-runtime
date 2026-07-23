@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
 vi.mock("@zerone-agent/open-agent-sdk", () => ({
@@ -469,6 +469,29 @@ describe("AgentRegistry (factory)", () => {
 
     it("returns not_found for unknown agent", () => {
       expect(registry.getStatus("unknown")).toBe("not_found")
+    })
+  })
+
+  describe("getModel", () => {
+    const ENV_KEY = "OPENAGENT_MODEL"
+
+    afterEach(() => {
+      delete process.env[ENV_KEY]
+    })
+
+    it("returns the configured model for a known agent", async () => {
+      await registry.loadFromConfig(makeConfig([{ id: "a1", model: "glm-4.5" }]), "/tmp")
+      expect(registry.getModel("a1")).toBe("glm-4.5")
+    })
+
+    it("prefers OPENAGENT_MODEL env override", async () => {
+      process.env[ENV_KEY] = "qwen-max"
+      await registry.loadFromConfig(makeConfig([{ id: "a1", model: "glm-4.5" }]), "/tmp")
+      expect(registry.getModel("a1")).toBe("qwen-max")
+    })
+
+    it("returns undefined for unknown agent", () => {
+      expect(registry.getModel("unknown")).toBeUndefined()
     })
   })
 

@@ -1,9 +1,21 @@
 import { Hono } from "hono"
+import { createHash } from "node:crypto"
 import type { AgentRegistry } from "../registry.js"
 import type { MetricsCollector } from "../metrics.js"
 import { streamAgentResponse } from "../sse.js"
+import { buildAigcLabel, type AigcConfig } from "../aigc.js"
+import type { AigcAuditLog } from "../audit-log.js"
 
-export function createAgentRouter(registry: AgentRegistry, metrics: MetricsCollector) {
+export interface AgentRouterOptions {
+  aigc?: AigcConfig
+  auditLog?: AigcAuditLog
+}
+
+export function createAgentRouter(
+  registry: AgentRegistry,
+  metrics: MetricsCollector,
+  options: AgentRouterOptions = {},
+) {
   const router = new Hono()
 
   router.get("/", (c) => {
@@ -42,25 +54,51 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
       return c.json({ error: "Agent not found" }, 404)
     }
 
+    const aigcLabel = options.aigc
+      ? buildAigcLabel(options.aigc, registry.getModel(agentId))
+      : undefined
+    const explicitHint = options.aigc?.explicitHint ?? false
+
+    const recordAudit = (text?: string) => {
+      if (!aigcLabel || !options.auditLog) return
+      options.auditLog.record({
+        produceId: aigcLabel.ProduceID,
+        createdAt: new Date().toISOString(),
+        agentId,
+        model: registry.getModel(agentId),
+        sessionId: agent.getSessionId?.(),
+        ...(text !== undefined ? { contentHash: sha256(text) } : {}),
+      })
+    }
+
     if (stream === "block") {
       const agentStream = agent.query(message, { maxSessionTurns })
-      return streamAgentResponse(c, agentStream, () => agent.close())
+      return streamAgentResponse(c, agentStream, () => agent.close(), {
+        aigc: aigcLabel,
+        explicitHint,
+      })
     }
 
     if (stream === true || stream === "raw") {
       const agentStream = agent.query(message, { includePartialMessages: true, maxSessionTurns })
-      return streamAgentResponse(c, agentStream, () => agent.close())
+      recordAudit() // SSE: text unknown at stream start
+      return streamAgentResponse(c, agentStream, () => agent.close(), {
+        aigc: aigcLabel,
+        explicitHint,
+      })
     }
 
     try {
       const result = await agent.prompt(message, { maxSessionTurns })
       metrics.recordRun(agentId, result.usage, undefined)
+      recordAudit(result.text)
       return c.json({
         sessionId: agent.getSessionId(),
         text: result.text,
         usage: result.usage,
         numTurns: result.num_turns,
         durationMs: result.duration_ms,
+        ...(aigcLabel ? { aigc: aigcLabel, ...(explicitHint ? { aigcExplicitHint: true } : {}) } : {}),
       })
     } finally {
       await agent.close()
@@ -68,4 +106,8 @@ export function createAgentRouter(registry: AgentRegistry, metrics: MetricsColle
   })
 
   return router
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex")
 }
