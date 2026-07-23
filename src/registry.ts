@@ -136,6 +136,12 @@ export class AgentRegistry {
     return this.statuses.get(agentId) ?? "not_found"
   }
 
+  getModel(agentId: string): string | undefined {
+    const def = this.defs.get(agentId)
+    if (!def) return undefined
+    return process.env.OPENAGENT_MODEL ?? def.model ?? undefined
+  }
+
   getDetail(agentId: string): AgentDetail | null {
     const def = this.defs.get(agentId)
     if (!def) return null

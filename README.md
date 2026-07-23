@@ -162,6 +162,49 @@ agents:
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
 | `datasets` | No | — | Map of dataset-id to description, injected into the system prompt as a `<datasets>` block |
 
+### Top-level AIGC labeling (GB 45438-2025)
+
+Optional. When enabled, every response (SSE events and blocking JSON) carries an implicit-label `aigc` field per the China national standard, plus a per-run audit record for traceability.
+
+```yaml
+aigc:
+  enabled: true
+  # 27-char provider code of THIS runtime's operator (not the upstream model vendor).
+  # Bits 1-23 identify the operator; bits 24-27 are the model/app code slot.
+  contentProducer: "001191320118MAK93FC72D10001"
+  # label: "1"            # 1 = AI-generated, 2 = possibly, 3 = suspected (default "1")
+  # signingKey: ""        # SHA-256 signature of the label, written into ReservedCode1
+  # explicitHint: true    # also emit aigcExplicitHint: true in responses
+  # produceIdPrefix: ""   # optional prefix for ProduceID generation
+  modelCodes:             # optional: model name -> 4-char model code (overrides bits 24-27)
+    "glm-4.5": "0001"
+    "qwen-max": "0002"
+    "deepseek-chat": "0003"
+    "claude-sonnet-4-6": "0004"
+```
+
+Env overrides (take priority over YAML values): `OPENAGENT_AIGC_ENABLED`, `OPENAGENT_AIGC_CONTENT_PRODUCER`, `OPENAGENT_AIGC_LABEL`, `OPENAGENT_AIGC_SIGNING_KEY`, `OPENAGENT_AIGC_EXPLICIT_HINT`.
+
+When enabled, responses gain:
+
+```jsonc
+{
+  "sessionId": "...",
+  "text": "...",
+  "aigc": {
+    "Label": "1",
+    "ContentProducer": "001191320118MAK93FC72D10001",
+    "ProduceID": "20260723103000-a1b2c3d4e5f6",
+    "ReservedCode1": ""           // when signingKey is set, holds SHA-256 HMAC
+  },
+  "aigcExplicitHint": true        // when explicitHint is true
+}
+```
+
+For SSE, the `aigc` field is injected into both the leading `system` event and the trailing `result` event (dual-anchor, resilient to stream drops). Per-run audit records are kept in memory for traceability; attach a persistence hook via `createApp(..., { onAigcRecord: ... })` for DB/log-pipeline storage (regulation-typical retention: 6+ months).
+
+See [`docs/compliance.md`](docs/compliance.md) for the full design rationale, role assignments, and a compliance materials checklist.
+
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
 
 #### Skill loading
