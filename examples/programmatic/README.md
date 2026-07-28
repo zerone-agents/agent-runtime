@@ -1,6 +1,6 @@
 # Programmatic — SDK + Runtime 组件组合示例
 
-用代码驱动方式组合 open-agent-sdk 和 open-agent-runtime 的全部能力。
+用代码驱动方式组合 open-agent-sdk 和 agent-runtime 的全部能力。
 
 ## 启动
 

@@ -40,7 +40,7 @@ const argv1 = process.argv[1]
 const isMain = !!argv1 && (
   // NOTE: more idiomatic in Node 22+ is `import.meta.filename === argv1`
   __filename === fileURLToPath(pathToFileURL(argv1)) ||
-  argv1.endsWith("open-agent-runtime")
+  argv1.endsWith("agent-runtime")
 )
 
 if (isMain) {
@@ -73,7 +73,7 @@ if (isMain) {
     serve(
       { fetch: app.fetch, port: config.server.port, hostname: config.server.host },
       (info: { address: string; port: number }) => {
-        console.log(`open-agent-runtime listening on http://${info.address}:${info.port}`)
+        console.log(`agent-runtime listening on http://${info.address}:${info.port}`)
       },
     )
   }

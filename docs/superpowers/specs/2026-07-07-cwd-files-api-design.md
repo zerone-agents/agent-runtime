@@ -6,7 +6,7 @@
 
 ## 背景与动机
 
-`open-agent-runtime` 启动后，agent 的"工作区"（cwd）里散落着各种对调试有用的文件：`agents.yaml` 配置、`systemPromptFile` 指向的 prompt 文件、agent 写入的 `outputs/`、技能扫描能看到的 `.openagent/skills/` 等。
+`agent-runtime` 启动后，agent 的"工作区"（cwd）里散落着各种对调试有用的文件：`agents.yaml` 配置、`systemPromptFile` 指向的 prompt 文件、agent 写入的 `outputs/`、技能扫描能看到的 `.openagent/skills/` 等。
 
 目前外部客户端（前端控制台、运维面板）想看这些文件，只能 SSH 上去 `cat`，或者让 agent 在对话里调 `Read` 工具回显——两条路都别扭。需要一组 HTTP 接口直接把 cwd 下的文件结构和内容暴露出来，作为"工作区透视镜"。
 

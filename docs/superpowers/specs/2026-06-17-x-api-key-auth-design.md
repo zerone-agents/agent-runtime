@@ -5,7 +5,7 @@
 
 ## 1. Goal
 
-Add HTTP-level authentication to the `open-agent-runtime` HTTP server via the `x-api-key` request header. Prevent unauthorized access to agent execution, session data, and metrics.
+Add HTTP-level authentication to the `agent-runtime` HTTP server via the `x-api-key` request header. Prevent unauthorized access to agent execution, session data, and metrics.
 
 ## 2. Non-Goals
 

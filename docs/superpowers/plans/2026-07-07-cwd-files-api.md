@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 open-agent-runtime 新增 `/v1/files` 列表端点与 `/v1/files/content` 流式下载端点，让外部客户端可以通过 HTTP 浏览和下载 cwd 下的文件。
+**Goal:** 为 agent-runtime 新增 `/v1/files` 列表端点与 `/v1/files/content` 流式下载端点，让外部客户端可以通过 HTTP 浏览和下载 cwd 下的文件。
 
 **Architecture:** 自写工具层（`src/files.ts`：路径安全 + 列表 + MIME）+ 路由层（`src/router/files.ts`：Hono 子路由），不引入新依赖。所有路径经 `safeResolve` + `realpath` 双重校验后才能被读取。
 
