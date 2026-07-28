@@ -1,4 +1,4 @@
-# open-agent-runtime
+# agent-runtime
 
 HTTP Server runtime for [open-agent-sdk](https://github.com/zerone-agent/open-agent-sdk) agents.
 
@@ -25,7 +25,7 @@ Or use TypeScript config:
 
 ```ts
 // agent.config.ts
-import { defineConfig } from "@zerone-agent/open-agent-runtime"
+import { defineConfig } from "@zerone-agent/agent-runtime"
 
 export default defineConfig({
   server: { port: 3000 },
@@ -272,7 +272,7 @@ agents:
 ### TypeScript Mode (`agent.config.ts`)
 
 ```ts
-import { defineConfig } from "@zerone-agent/open-agent-runtime"
+import { defineConfig } from "@zerone-agent/agent-runtime"
 import { defineTool, tool } from "@zerone-agent/open-agent-sdk"
 import { z } from "zod"
 
@@ -384,7 +384,7 @@ Search order:
 Use as a library instead of CLI:
 
 ```ts
-import { createApp, AgentRegistry, MetricsCollector } from "@zerone-agent/open-agent-runtime"
+import { createApp, AgentRegistry, MetricsCollector } from "@zerone-agent/agent-runtime"
 import { createAgent, defineTool } from "@zerone-agent/open-agent-sdk"
 import { serve } from "@hono/node-server"
 

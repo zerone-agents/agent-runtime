@@ -1,6 +1,6 @@
 # Docker 使用说明
 
-项目已提供 Dockerfile，可将 open-agent-runtime 打包为容器镜像运行。
+项目已提供 Dockerfile，可将 agent-runtime 打包为容器镜像运行。
 
 ## 镜像运行时环境
 
@@ -21,7 +21,7 @@
 在项目根目录执行：
 
 ```bash
-docker build -t open-agent-runtime .
+docker build -t agent-runtime .
 ```
 
 ## 准备配置
@@ -46,7 +46,7 @@ docker run -d \
   --name open-agent \
   -p 3000:3000 \
   -v "$(pwd)/config:/app/config" \
-  open-agent-runtime
+  agent-runtime
 ```
 
 容器会读取 `/app/config` 目录下的 `agents.yaml` 或 `agent.config.ts`。
@@ -58,7 +58,7 @@ docker run -d \
   --name open-agent \
   -p 8080:8080 \
   -v "$(pwd)/config:/app/config" \
-  open-agent-runtime
+  agent-runtime
 ```
 
 注意：默认命令使用 `--config /app/config`，端口由配置文件或环境变量决定。如需显式指定端口，可覆盖 CMD：
@@ -68,7 +68,7 @@ docker run -d \
   --name open-agent \
   -p 8080:8080 \
   -v "$(pwd)/config:/app/config" \
-  open-agent-runtime node /app/dist/index.js --config /app/config --port 8080
+  agent-runtime node /app/dist/index.js --config /app/config --port 8080
 ```
 
 ## 环境变量
@@ -82,7 +82,7 @@ docker run -d \
   -v "$(pwd)/config:/app/config" \
   -e OPENAGENT_API_KEY=your-api-key \
   -e OPENAGENT_MODEL=claude-sonnet-4-6 \
-  open-agent-runtime
+  agent-runtime
 ```
 
 常用环境变量：

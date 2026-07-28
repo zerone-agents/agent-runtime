@@ -10,7 +10,7 @@
 
 ## 0. 文档目的
 
-明确本仓库（`@zerone-agent/open-agent-runtime`，线上对应域名 `runtime.currantmind.cn`）作为 AI 生成合成服务提供者的法定义务，给出技术改造方案、合规取证清单和上下游协议要求，供工程团队、法务、产品联合评审。
+明确本仓库（`@zerone-agent/agent-runtime`，线上对应域名 `runtime.currantmind.cn`）作为 AI 生成合成服务提供者的法定义务，给出技术改造方案、合规取证清单和上下游协议要求，供工程团队、法务、产品联合评审。
 
 ---
 
@@ -29,7 +29,7 @@
 | 主体 | 角色 | 核心义务 |
 |------|------|----------|
 | 智谱 GLM 模型方 | 上游模型提供者 | 模型备案、训练数据合规（《生成式 AI 暂行办法》） |
-| **本仓库（open-agent-runtime）** | **生成合成服务提供者** | **打显式 + 隐式标识、保留反查日志、出具有关材料** |
+| **本仓库（agent-runtime）** | **生成合成服务提供者** | **打显式 + 隐式标识、保留反查日志、出具有关材料** |
 | 下游 AgentHub / 业务方 | 内容传播服务提供者 | 核验元数据、添加显著提示标识、回填传播字段 |
 | 应用市场 / 分发平台 | — | 上架审核时核验本仓库输出的标识材料 |
 
@@ -233,7 +233,7 @@ aigc:
   enabled: true                                  # 默认 false（本地开发友好）
   contentProducer: "001191320118MAK93FC72D10001" # currant.cn 完整 27 位编码（位 1-23 为主体段，位 24-27 为模型码；切换模型只改最后 4 位）
   label: "1"                                     # 默认 "1"
-  serviceName: "open-agent-runtime"              # 用于日志
+  serviceName: "agent-runtime"              # 用于日志
   produceIdPrefix: ""                            # 可选，多实例部署区分
   signingKey: ""                                 # 可选，填了会对 metadata 做 SHA-256 HMAC 写入 ReservedCode1
   explicitHint: true                             # 是否输出 aigcExplicitHint
