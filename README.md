@@ -2,7 +2,7 @@
 
 HTTP Server runtime for [open-agent-sdk](https://github.com/zerone-agent/open-agent-sdk) agents.
 
-Multi-agent runtime with SSE streaming. Define agents in YAML or TypeScript, start the server, call the API.
+Multi-agent runtime with Streamable HTTP (SSE + JSON content negotiation). Define agents in YAML or TypeScript, start the server, call the API.
 
 ## Quick Start
 
@@ -37,13 +37,18 @@ export default defineConfig({
 
 All routes prefixed with `/v1`.
 
-### Run Agent (SSE — raw / default)
+### Run Agent (Streamable HTTP — Recommended)
 
-`stream: true` (default). Token-level streaming — includes `partial_message` events with text deltas, thinking chunks, tool_use progress.
+The same endpoint supports both streaming and blocking responses via **`Accept` header content negotiation** — this is the recommended protocol.
+
+#### Streaming (SSE)
+
+Send `Accept: text/event-stream` to receive token-level streaming with `partial_message` events (text deltas, thinking chunks, tool_use progress).
 
 ```bash
 curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
   -d '{"message":"Hello"}'
 ```
 
@@ -73,23 +78,37 @@ event: done
 data: {}
 ```
 
-### Run Agent (SSE — block)
+#### Blocking (JSON)
 
-`stream: "block"`. Complete messages only — system init, assistant turns, tool results, final result. No `partial_message` events.
-
-```bash
-curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Hello","stream":"block"}'
-```
-
-### Run Agent (blocking)
+Send `Accept: application/json` to receive the complete result as a single JSON response.
 
 ```bash
 curl -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
-  -d '{"message":"Hello","stream":false}'
+  -H "Accept: application/json" \
+  -d '{"message":"Hello"}'
 ```
+
+### SSE Block Mode
+
+Add `stream: "block"` in the body to receive SSE with complete messages only — no `partial_message` events. Useful when you want streaming but don't need token-level granularity.
+
+```bash
+curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message":"Hello","stream":"block"}'
+```
+
+### Backward Compatibility
+
+The legacy `stream` body field is still supported when no `Accept` header is provided:
+
+- `stream: true` or `"raw"` (default) → SSE with `partial_message` events
+- `stream: "block"` → SSE without `partial_message` events
+- `stream: false` → JSON blocking response
+
+For new integrations, prefer the `Accept` header approach (Streamable HTTP) as it follows standard HTTP content negotiation.
 
 ### Endpoints
 
@@ -99,7 +118,7 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 | `GET` | `/v1/metrics` | Token usage, request counts, costs |
 | `GET` | `/v1/agents` | List registered agents |
 | `GET` | `/v1/agents/:id` | Agent detail |
-| `POST` | `/v1/agents/:id/runs` | Run agent (SSE or blocking) |
+| `POST` | `/v1/agents/:id/runs` | Run agent (Streamable HTTP: SSE via `Accept: text/event-stream`, JSON via `Accept: application/json`) |
 | `GET` | `/v1/sessions` | List sessions |
 | `GET` | `/v1/sessions/:id` | Session detail with messages |
 | `DELETE` | `/v1/sessions/:id` | Delete session |
@@ -439,14 +458,15 @@ node --import tsx src/index.ts --port 8080
 
 ```
 Client → Hono HTTP Server → AgentRegistry → open-agent-sdk Agent
-                                ↓
-                         AsyncGenerator<SDKMessage>
-                                ↓
-                          SSE Bridge → Client
+         (Accept header)         ↓                ↓
+              ↓          AsyncGenerator<SDKMessage>
+     ┌────────┴────────┐           ↓
+     │                 │    Streamable HTTP Bridge
+  SSE stream      JSON response    → Client
 ```
 
 - **AgentRegistry** creates Agent instances from config at startup, caches them in-process
-- **SSE Bridge** directly forwards SDK streaming events to HTTP clients
+- **Streamable HTTP Bridge** routes SDK streaming events to SSE or aggregates into JSON, negotiated via `Accept` header
 - **Session** management delegates to SDK's filesystem storage
 
 ## File Browsing

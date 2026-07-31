@@ -39,7 +39,7 @@ export function createAgentRouter(
       return c.json({ error: "Invalid request: message is required" }, 400)
     }
 
-    const { message, sessionId, stream = true, maxSessionTurns } = body
+    const { message, sessionId, stream, maxSessionTurns } = body
 
     const status = registry.getStatus(agentId)
     if (status === "not_found") {
@@ -71,7 +71,32 @@ export function createAgentRouter(
       })
     }
 
-    if (stream === "block") {
+    // Streamable HTTP: Accept header content negotiation
+    const accept = c.req.header("Accept") ?? ""
+    const wantsJson = accept.includes("application/json") && !accept.includes("text/event-stream")
+    const wantsSse = accept.includes("text/event-stream")
+
+    // Determine response mode:
+    // 1. Accept header takes priority (Streamable HTTP)
+    // 2. Fall back to body.stream field (backward compatibility)
+    let responseMode: "json" | "sse-block" | "sse-raw"
+    if (wantsJson) {
+      responseMode = "json"
+    } else if (wantsSse) {
+      responseMode = stream === "block" ? "sse-block" : "sse-raw"
+    } else {
+      // Backward compatibility: use body.stream field
+      const streamValue = stream ?? true
+      if (streamValue === false) {
+        responseMode = "json"
+      } else if (streamValue === "block") {
+        responseMode = "sse-block"
+      } else {
+        responseMode = "sse-raw"
+      }
+    }
+
+    if (responseMode === "sse-block") {
       const agentStream = agent.query(message, { maxSessionTurns })
       return streamAgentResponse(c, agentStream, () => agent.close(), {
         aigc: aigcLabel,
@@ -79,7 +104,7 @@ export function createAgentRouter(
       })
     }
 
-    if (stream === true || stream === "raw") {
+    if (responseMode === "sse-raw") {
       const agentStream = agent.query(message, { includePartialMessages: true, maxSessionTurns })
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, () => agent.close(), {
@@ -88,6 +113,7 @@ export function createAgentRouter(
       })
     }
 
+    // JSON blocking response
     try {
       const result = await agent.prompt(message, { maxSessionTurns })
       metrics.recordRun(agentId, result.usage, undefined)
