@@ -1,6 +1,6 @@
 # agent-runtime
 
-HTTP Server runtime for [open-agent-sdk](https://github.com/zerone-agent/open-agent-sdk) agents.
+HTTP Server runtime for [agent-sdk](https://github.com/zerone-agents/agent-sdk) agents.
 
 Multi-agent runtime with Streamable HTTP (SSE + JSON content negotiation). Define agents in YAML or TypeScript, start the server, call the API.
 
@@ -292,7 +292,7 @@ agents:
 
 ```ts
 import { defineConfig } from "@zerone-agent/agent-runtime"
-import { defineTool, tool } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool } from "@zerone-agent/agent-sdk"
 import { z } from "zod"
 
 const weatherTool = defineTool({
@@ -404,7 +404,7 @@ Use as a library instead of CLI:
 
 ```ts
 import { createApp, AgentRegistry, MetricsCollector } from "@zerone-agent/agent-runtime"
-import { createAgent, defineTool } from "@zerone-agent/open-agent-sdk"
+import { createAgent, defineTool } from "@zerone-agent/agent-sdk"
 import { serve } from "@hono/node-server"
 
 const agent = createAgent({
@@ -457,7 +457,7 @@ node --import tsx src/index.ts --port 8080
 ## Architecture
 
 ```
-Client → Hono HTTP Server → AgentRegistry → open-agent-sdk Agent
+Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
          (Accept header)         ↓                ↓
               ↓          AsyncGenerator<SDKMessage>
      ┌────────┴────────┐           ↓

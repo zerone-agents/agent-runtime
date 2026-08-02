@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/open-agent-sdk", () => ({
+vi.mock("@zerone-agent/agent-sdk", () => ({
   createAgent: vi.fn(),
 }))
 
@@ -15,7 +15,7 @@ vi.mock("../skills.js", () => ({
   scanSkills: vi.fn(async () => []),
 }))
 
-import { createAgent } from "@zerone-agent/open-agent-sdk"
+import { createAgent } from "@zerone-agent/agent-sdk"
 import { scanSkills } from "../skills.js"
 
 const mockCreateAgent = vi.mocked(createAgent)
@@ -79,7 +79,10 @@ describe("AgentRegistry (factory)", () => {
       const agent = registry.create("my-agent")
       expect(agent).toBe(mockAgent)
       expect(mockCreateAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "gpt-4", systemPrompt: "test-prompt" }),
+        expect.objectContaining({
+          model: "gpt-4",
+          agent: expect.objectContaining({ prompt: "test-prompt" }),
+        }),
       )
     })
 

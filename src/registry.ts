@@ -1,4 +1,4 @@
-import { createAgent, type Agent } from "@zerone-agent/open-agent-sdk"
+import { createAgent, type Agent } from "@zerone-agent/agent-sdk"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 import { scanSkills, type SkillSummary } from "./skills.js"
@@ -93,15 +93,20 @@ export class AgentRegistry {
 
         // NOTE: do not pass `allowedSkills` to SDK. New SDK semantics:
         // omitting it means "no filter" — every scanned skill is exposed.
+        // SDK 1.0.0 API: systemPrompt/allowedTools/disallowedTools/maxTurns moved
+        // into the `agent` field (AgentDefinition).
         const opts: CreateOpts = {
           model: process.env.OPENAGENT_MODEL ?? def.model,
           apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
           apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
           baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
-          systemPrompt,
-          allowedTools: def.allowedTools,
-          disallowedTools: def.disallowedTools,
-          maxTurns: def.maxTurns,
+          agent: {
+            description: def.name ?? def.id,
+            prompt: systemPrompt ?? "",
+            allowedTools: def.allowedTools,
+            disallowedTools: def.disallowedTools,
+            maxTurns: def.maxTurns,
+          },
           maxSessionTurns: def.maxSessionTurns,
           permissionMode: def.permissionMode,
           settingSources: def.settingSources,
@@ -109,7 +114,7 @@ export class AgentRegistry {
           extraProjectSkillDirs: def.extraProjectSkillDirs,
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
-          agents: def.subagents as any,
+          subAgents: def.subagents as any,
         }
 
         this.defs.set(def.id, def)

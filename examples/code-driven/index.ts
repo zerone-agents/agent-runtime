@@ -1,5 +1,5 @@
 import { createApp, AgentRegistry, MetricsCollector } from "../../src/index.js"
-import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
 
@@ -46,13 +46,19 @@ async function main() {
     "smart",
     { id: "smart", model: "claude-sonnet-4-6", maxTurns: 15 },
     {
-      model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
-      apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
-      apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
-      baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
-      systemPrompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
-      maxTurns: 15,
-      tools: [weatherTool, sdkToolToToolDefinition(calcTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+      // SDK 1.0 reads ZERONE_AGENT_* env vars natively — only override when set.
+      model: process.env.ZERONE_AGENT_MODEL ?? "claude-sonnet-4-6",
+      apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? undefined,
+      apiKey: process.env.ZERONE_AGENT_API_KEY ?? undefined,
+      baseURL: process.env.ZERONE_AGENT_BASE_URL ?? undefined,
+      // SDK 1.0: prompt/allowedTools/disallowedTools/maxTurns moved into `agent`.
+      agent: {
+        description: "smart assistant",
+        prompt: "你是一个智能助手，可以查天气、做数学计算、读写文件、执行命令。",
+        allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "GetWeather", "Calculator"],
+        maxTurns: 15,
+      },
+      customTools: [weatherTool, sdkToolToToolDefinition(calcTool)],
       thinking: { type: "enabled", budgetTokens: 4000 },
       hooks: {
         PreToolUse: [
@@ -82,9 +88,11 @@ async function main() {
 
   const metrics = new MetricsCollector()
 
+  const PORT = Number(process.env.PORT ?? 3100)
+  const HOST = process.env.HOST ?? "0.0.0.0"
   const app = createApp(
     {
-      server: { host: "0.0.0.0", port: 3000 },
+      server: { host: HOST, port: PORT },
       cors: { origins: ["*"] },
       agents: [{ id: "smart", model: "claude-sonnet-4-6" }],
     },
@@ -92,7 +100,7 @@ async function main() {
     metrics,
   )
 
-  serve({ fetch: app.fetch, port: 3000, hostname: "0.0.0.0" }, (info) => {
+  serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`Code-driven agent running on http://${info.address}:${info.port}`)
     console.log("Agent: smart")
     console.log("Custom tools: GetWeather, Calculator")

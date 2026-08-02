@@ -14,7 +14,7 @@ Run order before committing: `tsc --noEmit` → `npm test` → 检查 README 是
 
 ## Architecture
 
-HTTP Server runtime wrapping `@zerone-agent/open-agent-sdk`. Single package, no monorepo.
+HTTP Server runtime wrapping `@zerone-agent/agent-sdk`. Single package, no monorepo.
 
 - `src/config.ts` — YAML + TS config loading (`agent.config.ts` loaded via `tsx/esm` + dynamic import)
 - `src/registry.ts` — `AgentRegistry` holds SDK `Agent` instances, created at startup and reused across requests
@@ -34,11 +34,11 @@ HTTP Server runtime wrapping `@zerone-agent/open-agent-sdk`. Single package, no 
 - `defineConfig` is exported for TS config users — provides `RuntimeConfig` type inference
 - The `bin` field points to `dist/index.js` — requires `npm run build` before publish
 - `prepublishOnly` runs build automatically
-- Sibling SDK at `@zerone-agent/open-agent-sdk` is the only runtime dependency on our own packages
+- Sibling SDK at `@zerone-agent/agent-sdk` is the only runtime dependency on our own packages
 
 ## Testing
 
 - Vitest, no config file (uses defaults)
-- Tests mock `@zerone-agent/open-agent-sdk` and `node:fs` — no real API calls or file I/O
+- Tests mock `@zerone-agent/agent-sdk` and `node:fs` — no real API calls or file I/O
 - Hono routes tested via `app.request()` (no HTTP server needed)
 - `src/__tests__/` only — vitest picks up this pattern by default

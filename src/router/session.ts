@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import {
   listSessions, getSessionInfo, getSessionMessages,
   deleteSession,
-} from "@zerone-agent/open-agent-sdk"
+} from "@zerone-agent/agent-sdk"
 
 export function createSessionRouter() {
   const router = new Hono()
