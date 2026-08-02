@@ -4,7 +4,7 @@
 
 用于运维 / 调试 / 控制台展示——让外部客户端通过 HTTP 浏览 agent 的工作区，无需 SSH。
 
-> **安全提示**：任何持有有效 API key 的调用方都可以读取 cwd 下的**全部**内容，包括 `agents.yaml`、`.env`、MCP server 凭证。生产部署前必须配置 `OPENAGENT_HTTP_API_KEY`。
+> **安全提示**：任何持有有效 API key 的调用方都可以读取 cwd 下的**全部**内容，包括 `agents.yaml`、`.env`、MCP server 凭证。生产部署前必须配置 `ZERONE_AGENT_HTTP_API_KEY`。
 
 ---
 
@@ -236,6 +236,4 @@ Last-Modified: Tue, 07 Jul 2026 10:00:00 GMT
 
 ## 相关
 
-- 设计文档：[`docs/superpowers/specs/2026-07-07-cwd-files-api-design.md`](../superpowers/specs/2026-07-07-cwd-files-api-design.md)
-- 鉴权设计：[`docs/superpowers/specs/2026-06-17-x-api-key-auth-design.md`](../superpowers/specs/2026-06-17-x-api-key-auth-design.md)
 - Agent 详情端点（同类只读 API）：[`docs/api/agent-detail.md`](agent-detail.md)

@@ -96,10 +96,10 @@ export class AgentRegistry {
         // SDK 1.0.0 API: systemPrompt/allowedTools/disallowedTools/maxTurns moved
         // into the `agent` field (AgentDefinition).
         const opts: CreateOpts = {
-          model: process.env.OPENAGENT_MODEL ?? def.model,
-          apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
-          apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
-          baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
+          model: process.env.ZERONE_AGENT_MODEL ?? def.model,
+          apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? undefined,
+          apiKey: process.env.ZERONE_AGENT_API_KEY ?? undefined,
+          baseURL: process.env.ZERONE_AGENT_BASE_URL ?? undefined,
           agent: {
             description: def.name ?? def.id,
             prompt: systemPrompt ?? "",
@@ -144,7 +144,7 @@ export class AgentRegistry {
   getModel(agentId: string): string | undefined {
     const def = this.defs.get(agentId)
     if (!def) return undefined
-    return process.env.OPENAGENT_MODEL ?? def.model ?? undefined
+    return process.env.ZERONE_AGENT_MODEL ?? def.model ?? undefined
   }
 
   getDetail(agentId: string): AgentDetail | null {
@@ -183,7 +183,7 @@ export class AgentRegistry {
   }
 
   list(): AgentInfo[] {
-    const envModel = process.env.OPENAGENT_MODEL
+    const envModel = process.env.ZERONE_AGENT_MODEL
     const result: AgentInfo[] = []
     for (const [id, def] of this.defs) {
       const status = this.statuses.get(id)

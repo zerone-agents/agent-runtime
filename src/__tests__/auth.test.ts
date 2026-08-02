@@ -96,7 +96,7 @@ describe("createAuthMiddleware", () => {
 
 describe("createApp auth integration", () => {
   beforeEach(() => {
-    delete process.env.OPENAGENT_HTTP_API_KEY
+    delete process.env.ZERONE_AGENT_HTTP_API_KEY
     vi.clearAllMocks()
   })
 
@@ -239,8 +239,8 @@ describe("createApp auth integration", () => {
     expect(res.status).toBe(204)
   })
 
-  it("Env var OPENAGENT_HTTP_API_KEY set, yaml auth.apiKey set → Env var wins", async () => {
-    process.env.OPENAGENT_HTTP_API_KEY = "env-key"
+  it("Env var ZERONE_AGENT_HTTP_API_KEY set, yaml auth.apiKey set → Env var wins", async () => {
+    process.env.ZERONE_AGENT_HTTP_API_KEY = "env-key"
     const config = createTestConfig({ apiKey: "yaml-key" })
     const app = createApp(config, mockRegistry as any, mockMetrics as any)
 
@@ -259,7 +259,7 @@ describe("createApp auth integration", () => {
   })
 
   it("Env var unset, yaml auth.apiKey set → yaml value used", async () => {
-    delete process.env.OPENAGENT_HTTP_API_KEY
+    delete process.env.ZERONE_AGENT_HTTP_API_KEY
     const config = createTestConfig({ apiKey: "yaml-key" })
     const app = createApp(config, mockRegistry as any, mockMetrics as any)
 
@@ -274,8 +274,8 @@ describe("createApp auth integration", () => {
     expect(resWrong.status).toBe(401)
   })
 
-  it("Empty env var OPENAGENT_HTTP_API_KEY disables auth (no middleware mounted)", async () => {
-    process.env.OPENAGENT_HTTP_API_KEY = ""
+  it("Empty env var ZERONE_AGENT_HTTP_API_KEY disables auth (no middleware mounted)", async () => {
+    process.env.ZERONE_AGENT_HTTP_API_KEY = ""
     const config = createTestConfig({ apiKey: "yaml-key" })
     const app = createApp(config, mockRegistry as any, mockMetrics as any)
 
