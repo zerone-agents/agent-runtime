@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { Hono } from "hono"
 
-vi.mock("@zerone-agent/open-agent-sdk", () => ({
+vi.mock("@zerone-agent/agent-sdk", () => ({
   listSessions: vi.fn(),
   getSessionInfo: vi.fn(),
   getSessionMessages: vi.fn(),
   deleteSession: vi.fn(),
 }))
 
-import { listSessions, getSessionInfo, getSessionMessages, deleteSession } from "@zerone-agent/open-agent-sdk"
+import { listSessions, getSessionInfo, getSessionMessages, deleteSession } from "@zerone-agent/agent-sdk"
 import { createSessionRouter } from "../router/session.js"
 
 function createApp() {

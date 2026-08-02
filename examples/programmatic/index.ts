@@ -15,7 +15,7 @@ import { Hono } from "hono"
 import { serve } from "@hono/node-server"
 import { z } from "zod"
 
-import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
 import {
   createApp,
   AgentRegistry,

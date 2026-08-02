@@ -1,5 +1,5 @@
 import { createApp, AgentRegistry, MetricsCollector } from "../../src/index.js"
-import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/open-agent-sdk"
+import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
 

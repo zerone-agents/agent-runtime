@@ -1,4 +1,4 @@
-import type { SDKMessage } from "@zerone-agent/open-agent-sdk"
+import type { SDKMessage } from "@zerone-agent/agent-sdk"
 import { streamSSE } from "hono/streaming"
 import type { Context } from "hono"
 import type { AigcLabel } from "./aigc.js"
