@@ -93,10 +93,11 @@ function createLoggingHooks(label: string) {
 
 async function main() {
   const envOverrides = {
-    model: process.env.OPENAGENT_MODEL ?? "claude-sonnet-4-6",
-    apiType: (process.env.OPENAGENT_API_TYPE as any) ?? undefined,
-    apiKey: process.env.OPENAGENT_API_KEY ?? undefined,
-    baseURL: process.env.OPENAGENT_BASE_URL ?? undefined,
+    // SDK 1.0 reads ZERONE_AGENT_* env vars natively.
+    model: process.env.ZERONE_AGENT_MODEL ?? "claude-sonnet-4-6",
+    apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? undefined,
+    apiKey: process.env.ZERONE_AGENT_API_KEY ?? undefined,
+    baseURL: process.env.ZERONE_AGENT_BASE_URL ?? undefined,
   }
 
   const registry = new AgentRegistry()
@@ -105,13 +106,17 @@ async function main() {
     { id: "analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
     {
       ...envOverrides,
-      systemPrompt: [
-        "你是一个金融分析助手。",
-        "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
-        "回答要简洁，关键数据用列表呈现。",
-      ].join("\n"),
-      maxTurns: 10,
-      tools: [stockTool, "WebSearch", "Read", "Glob", "Grep"],
+      agent: {
+        description: "financial analyst",
+        prompt: [
+          "你是一个金融分析助手。",
+          "你可以查询股票价格（使用 GetStockPrice 工具）、搜索新闻、读写文件。",
+          "回答要简洁，关键数据用列表呈现。",
+        ].join("\n"),
+        allowedTools: ["WebSearch", "Read", "Glob", "Grep", "GetStockPrice"],
+        maxTurns: 10,
+      },
+      customTools: [stockTool],
       thinking: { type: "enabled", budgetTokens: 4000 },
       hooks: createLoggingHooks("analyst"),
     },
@@ -121,23 +126,30 @@ async function main() {
     { id: "ops", model: "claude-sonnet-4-6", maxTurns: 15 },
     {
       ...envOverrides,
-      systemPrompt: [
-        "你是一个运维助手。",
-        "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
-        "执行危险操作前先确认。",
-      ].join("\n"),
-      maxTurns: 15,
-      tools: [sdkToolToToolDefinition(noteTool), "Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+      agent: {
+        description: "ops assistant",
+        prompt: [
+          "你是一个运维助手。",
+          "你可以执行命令、读写文件、编辑代码、保存笔记（使用 SaveNote 工具）。",
+          "执行危险操作前先确认。",
+        ].join("\n"),
+        allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "SaveNote"],
+        maxTurns: 15,
+      },
+      customTools: [sdkToolToToolDefinition(noteTool)],
       permissionMode: "acceptEdits",
       thinking: { type: "enabled", budgetTokens: 4000 },
       hooks: createLoggingHooks("ops"),
     },
   )
 
+  const PORT = Number(process.env.PORT ?? 3100)
+  const HOST = process.env.HOST ?? "0.0.0.0"
+
   const metrics = new MetricsCollector()
 
   const config: RuntimeConfig = {
-    server: { host: "0.0.0.0", port: 3000 },
+    server: { host: HOST, port: PORT },
     cors: { origins: ["*"] },
     agents: [
       { id: "analyst", model: "claude-sonnet-4-6" },
@@ -157,7 +169,7 @@ async function main() {
   })
   app.route("/custom", extension)
 
-  serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, (info) => {
+  serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`\n  Programmatic Agent Server`)
     console.log(`  http://${info.address}:${info.port}`)
     console.log(`\n  Agents:`)
