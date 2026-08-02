@@ -30,7 +30,7 @@ export function createApp(
 
   app.route("/health", createHealthRouter(registry))
 
-  const apiKey = process.env.OPENAGENT_HTTP_API_KEY ?? config.auth?.apiKey
+  const apiKey = process.env.ZERONE_AGENT_HTTP_API_KEY ?? config.auth?.apiKey
   if (apiKey) {
     app.use("/v1/*", createAuthMiddleware(apiKey))
   }

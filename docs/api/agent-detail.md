@@ -17,7 +17,7 @@ GET /v1/agents/:agentId
 | 属性 | 值 |
 |---|---|
 | 路径参数 | `agentId`（string，必填） |
-| 鉴权 | 受 `OPENAGENT_HTTP_API_KEY` / `auth.apiKey` 保护（若配置） |
+| 鉴权 | 受 `ZERONE_AGENT_HTTP_API_KEY` / `auth.apiKey` 保护（若配置） |
 | Content-Type | `application/json` |
 
 ### curl 示例
@@ -303,5 +303,4 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 
 ## 相关
 
-- 设计文档：[`docs/superpowers/specs/2026-07-06-agent-detail-endpoint-design.md`](../superpowers/specs/2026-07-06-agent-detail-endpoint-design.md)
 - 配置字段全集（`agents.yaml`）：见仓库根 `README.md` 的 Configuration 章节

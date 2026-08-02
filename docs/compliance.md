@@ -245,7 +245,7 @@ aigc:
     "deepseek-chat": "0003"
 ```
 
-环境变量等价：`OPENAGENT_AIGC_ENABLED`、`OPENAGENT_AIGC_CONTENT_PRODUCER` 等。
+环境变量等价：`ZERONE_AGENT_AIGC_ENABLED`、`ZERONE_AGENT_AIGC_CONTENT_PRODUCER` 等。
 
 **切换上游模型时**：仅需在 agent 配置中改 `model` 字段，runtime 会自动根据 `modelCodes` 映射刷新 `ContentProducer` 的 24–27 位；主体段保持稳定，不影响下游识别本服务。
 

@@ -24,16 +24,16 @@ simple/
 
 | 变量 | 说明 |
 |---|---|
-| `OPENAGENT_MODEL` | 模型名称（如 `claude-sonnet-4-6`、`kimi-k2.5`） |
-| `OPENAGENT_API_KEY` | API Key |
-| `OPENAGENT_BASE_URL` | API Base URL |
-| `OPENAGENT_API_TYPE` | API 类型（`anthropic-messages` / `openai-completions`） |
+| `ZERONE_AGENT_MODEL` | 模型名称（如 `claude-sonnet-4-6`、`kimi-k2.5`） |
+| `ZERONE_AGENT_API_KEY` | API Key |
+| `ZERONE_AGENT_BASE_URL` | API Base URL |
+| `ZERONE_AGENT_API_TYPE` | API 类型（`anthropic-messages` / `openai-completions`） |
 
 ```bash
-export OPENAGENT_API_KEY=sk-xxx
-export OPENAGENT_BASE_URL=https://xxx
-export OPENAGENT_MODEL=kimi-k2.5
-export OPENAGENT_API_TYPE=anthropic-messages
+export ZERONE_AGENT_API_KEY=sk-xxx
+export ZERONE_AGENT_BASE_URL=https://xxx
+export ZERONE_AGENT_MODEL=kimi-k2.5
+export ZERONE_AGENT_API_TYPE=anthropic-messages
 ```
 
 ## 测试

@@ -72,19 +72,19 @@ export function buildAigcLabel(
 }
 
 /**
- * Merge config-file `aigc` section with OPENAGENT_AIGC_* env vars.
+ * Merge config-file `aigc` section with ZERONE_AGENT_AIGC_* env vars.
  * Returns undefined when the feature is disabled (default).
  * Env vars take priority over config values.
  */
 export function resolveAigcConfig(cfg?: AigcConfig): AigcConfig | undefined {
   const env = process.env
-  const envEnabled = env.OPENAGENT_AIGC_ENABLED
+  const envEnabled = env.ZERONE_AGENT_AIGC_ENABLED
   const enabled =
     envEnabled !== undefined ? envEnabled === "true" : (cfg?.enabled ?? false)
 
   if (!enabled) return undefined
 
-  const contentProducer = env.OPENAGENT_AIGC_CONTENT_PRODUCER ?? cfg?.contentProducer
+  const contentProducer = env.ZERONE_AGENT_AIGC_CONTENT_PRODUCER ?? cfg?.contentProducer
   if (!contentProducer) {
     throw new Error("AIGC is enabled but contentProducer is not configured")
   }
@@ -92,14 +92,14 @@ export function resolveAigcConfig(cfg?: AigcConfig): AigcConfig | undefined {
     throw new Error(`AIGC contentProducer must be 27 chars, got ${contentProducer.length}`)
   }
 
-  const envLabel = env.OPENAGENT_AIGC_LABEL
-  const envHint = env.OPENAGENT_AIGC_EXPLICIT_HINT
+  const envLabel = env.ZERONE_AGENT_AIGC_LABEL
+  const envHint = env.ZERONE_AGENT_AIGC_EXPLICIT_HINT
 
   return {
     enabled: true,
     contentProducer,
     label: (envLabel as "1" | "2" | "3" | undefined) ?? cfg?.label,
-    signingKey: env.OPENAGENT_AIGC_SIGNING_KEY ?? cfg?.signingKey,
+    signingKey: env.ZERONE_AGENT_AIGC_SIGNING_KEY ?? cfg?.signingKey,
     explicitHint: envHint !== undefined ? envHint === "true" : cfg?.explicitHint,
     produceIdPrefix: cfg?.produceIdPrefix,
     modelCodes: cfg?.modelCodes,

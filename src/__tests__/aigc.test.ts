@@ -98,11 +98,11 @@ describe("buildAigcLabel", () => {
 
 describe("resolveAigcConfig", () => {
   const ENV_KEYS = [
-    "OPENAGENT_AIGC_ENABLED",
-    "OPENAGENT_AIGC_CONTENT_PRODUCER",
-    "OPENAGENT_AIGC_LABEL",
-    "OPENAGENT_AIGC_SIGNING_KEY",
-    "OPENAGENT_AIGC_EXPLICIT_HINT",
+    "ZERONE_AGENT_AIGC_ENABLED",
+    "ZERONE_AGENT_AIGC_CONTENT_PRODUCER",
+    "ZERONE_AGENT_AIGC_LABEL",
+    "ZERONE_AGENT_AIGC_SIGNING_KEY",
+    "ZERONE_AGENT_AIGC_EXPLICIT_HINT",
   ]
 
   beforeEach(() => {
@@ -127,23 +127,23 @@ describe("resolveAigcConfig", () => {
   })
 
   it("enables via env even without config", () => {
-    process.env.OPENAGENT_AIGC_ENABLED = "true"
-    process.env.OPENAGENT_AIGC_CONTENT_PRODUCER = "001191320118MAK93FC72D10001"
+    process.env.ZERONE_AGENT_AIGC_ENABLED = "true"
+    process.env.ZERONE_AGENT_AIGC_CONTENT_PRODUCER = "001191320118MAK93FC72D10001"
     const result = resolveAigcConfig(undefined)
     expect(result?.enabled).toBe(true)
     expect(result?.contentProducer).toBe("001191320118MAK93FC72D10001")
   })
 
   it("env values override config values", () => {
-    process.env.OPENAGENT_AIGC_CONTENT_PRODUCER = "0011000000000000000001A0009"
-    process.env.OPENAGENT_AIGC_SIGNING_KEY = "env-key"
+    process.env.ZERONE_AGENT_AIGC_CONTENT_PRODUCER = "0011000000000000000001A0009"
+    process.env.ZERONE_AGENT_AIGC_SIGNING_KEY = "env-key"
     const result = resolveAigcConfig(BASE_CONFIG)
     expect(result?.contentProducer).toBe("0011000000000000000001A0009")
     expect(result?.signingKey).toBe("env-key")
   })
 
   it("throws when enabled but contentProducer is missing", () => {
-    process.env.OPENAGENT_AIGC_ENABLED = "true"
+    process.env.ZERONE_AGENT_AIGC_ENABLED = "true"
     expect(() => resolveAigcConfig(undefined)).toThrow(/contentProducer/i)
   })
 

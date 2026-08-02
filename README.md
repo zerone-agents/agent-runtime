@@ -202,7 +202,7 @@ aigc:
     "claude-sonnet-4-6": "0004"
 ```
 
-Env overrides (take priority over YAML values): `OPENAGENT_AIGC_ENABLED`, `OPENAGENT_AIGC_CONTENT_PRODUCER`, `OPENAGENT_AIGC_LABEL`, `OPENAGENT_AIGC_SIGNING_KEY`, `OPENAGENT_AIGC_EXPLICIT_HINT`.
+Env overrides (take priority over YAML values): `ZERONE_AGENT_AIGC_ENABLED`, `ZERONE_AGENT_AIGC_CONTENT_PRODUCER`, `ZERONE_AGENT_AIGC_LABEL`, `ZERONE_AGENT_AIGC_SIGNING_KEY`, `ZERONE_AGENT_AIGC_EXPLICIT_HINT`.
 
 When enabled, responses gain:
 
@@ -336,7 +336,7 @@ export default defineConfig({
 
 Authentication is opt-in. When no API key is configured, all routes are open (convenient for local development).
 
-To enable authentication, set either the `OPENAGENT_HTTP_API_KEY` environment variable or the `auth.apiKey` field in your config. The environment variable takes priority.
+To enable authentication, set either the `ZERONE_AGENT_HTTP_API_KEY` environment variable or the `auth.apiKey` field in your config. The environment variable takes priority.
 
 ### YAML config
 
@@ -352,7 +352,7 @@ agents:
 ### Environment variable
 
 ```bash
-OPENAGENT_HTTP_API_KEY="your-secret-key" npm start
+ZERONE_AGENT_HTTP_API_KEY="your-secret-key" npm start
 ```
 
 ### Using the key
@@ -473,7 +473,7 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 `/v1/files` exposes the runtime's working directory over HTTP. Useful for debugging and observation by external clients (frontend consoles, ops dashboards).
 
-**Trust model:** any caller with a valid API key has full read access to everything under cwd — including `agents.yaml`, `.env`, and any secrets. Configure `OPENAGENT_HTTP_API_KEY` before deploying to production.
+**Trust model:** any caller with a valid API key has full read access to everything under cwd — including `agents.yaml`, `.env`, and any secrets. Configure `ZERONE_AGENT_HTTP_API_KEY` before deploying to production.
 
 ### List files
 

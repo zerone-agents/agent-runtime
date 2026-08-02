@@ -80,8 +80,8 @@ docker run -d \
   --name open-agent \
   -p 3000:3000 \
   -v "$(pwd)/config:/app/config" \
-  -e OPENAGENT_API_KEY=your-api-key \
-  -e OPENAGENT_MODEL=claude-sonnet-4-6 \
+  -e ZERONE_AGENT_API_KEY=your-api-key \
+  -e ZERONE_AGENT_MODEL=claude-sonnet-4-6 \
   agent-runtime
 ```
 
@@ -89,11 +89,11 @@ docker run -d \
 
 | 变量 | 说明 |
 |---|---|
-| `OPENAGENT_API_KEY` | LLM API Key |
-| `OPENAGENT_BASE_URL` | API Base URL |
-| `OPENAGENT_MODEL` | 默认模型 |
-| `OPENAGENT_API_TYPE` | API 类型 |
-| `OPENAGENT_HTTP_API_KEY` | HTTP 服务认证 Key |
+| `ZERONE_AGENT_API_KEY` | LLM API Key |
+| `ZERONE_AGENT_BASE_URL` | API Base URL |
+| `ZERONE_AGENT_MODEL` | 默认模型 |
+| `ZERONE_AGENT_API_TYPE` | API 类型 |
+| `ZERONE_AGENT_HTTP_API_KEY` | HTTP 服务认证 Key |
 
 ## 健康检查
 

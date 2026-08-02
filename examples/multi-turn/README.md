@@ -18,10 +18,10 @@ node --import tsx src/index.ts --config examples/multi-turn
 ## 环境变量
 
 ```bash
-export OPENAGENT_API_KEY=sk-xxx
-export OPENAGENT_BASE_URL=https://xxx
-export OPENAGENT_MODEL=kimi-k2.5
-export OPENAGENT_API_TYPE=anthropic-messages
+export ZERONE_AGENT_API_KEY=sk-xxx
+export ZERONE_AGENT_BASE_URL=https://xxx
+export ZERONE_AGENT_MODEL=kimi-k2.5
+export ZERONE_AGENT_API_TYPE=anthropic-messages
 ```
 
 ## 测试

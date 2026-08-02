@@ -476,7 +476,7 @@ describe("AgentRegistry (factory)", () => {
   })
 
   describe("getModel", () => {
-    const ENV_KEY = "OPENAGENT_MODEL"
+    const ENV_KEY = "ZERONE_AGENT_MODEL"
 
     afterEach(() => {
       delete process.env[ENV_KEY]
@@ -487,7 +487,7 @@ describe("AgentRegistry (factory)", () => {
       expect(registry.getModel("a1")).toBe("glm-4.5")
     })
 
-    it("prefers OPENAGENT_MODEL env override", async () => {
+    it("prefers ZERONE_AGENT_MODEL env override", async () => {
       process.env[ENV_KEY] = "qwen-max"
       await registry.loadFromConfig(makeConfig([{ id: "a1", model: "glm-4.5" }]), "/tmp")
       expect(registry.getModel("a1")).toBe("qwen-max")
