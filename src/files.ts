@@ -5,8 +5,6 @@
  *   - safeResolve: 路径安全解析（防 traversal、绝对路径、null byte）
  *   - lookupMimeType: 扩展名到 MIME 的查表
  *   - FileEntry: 列表条目类型
- *
- * 详见 docs/superpowers/specs/2026-07-07-cwd-files-api-design.md。
  */
 
 import { resolve, isAbsolute, relative } from "node:path"
