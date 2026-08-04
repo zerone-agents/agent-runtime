@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
-import { fileURLToPath, pathToFileURL } from "node:url"
 import { discoverConfig, findConfigDir } from "./config.js"
 import { AgentRegistry } from "./registry.js"
 import { MetricsCollector } from "./metrics.js"
@@ -35,15 +34,7 @@ export {
   type AgentDefinition,
 } from "./config.js"
 
-const __filename = fileURLToPath(import.meta.url)
-const argv1 = process.argv[1]
-const isMain = !!argv1 && (
-  // NOTE: more idiomatic in Node 22+ is `import.meta.filename === argv1`
-  __filename === fileURLToPath(pathToFileURL(argv1)) ||
-  argv1.endsWith("agent-runtime")
-)
-
-if (isMain) {
+if (import.meta.filename === process.argv[1]) {
   async function main() {
     const { values } = parseArgs({
       options: {
