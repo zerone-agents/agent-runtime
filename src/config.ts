@@ -68,7 +68,7 @@ const AgentDefinitionSchema = z.object({
   maxSessionTurns: z.number().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
-  settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
+  settingSources: z.array(z.enum(["user", "project"])).optional(),
   extraUserSkillDirs: z.array(z.string()).optional(),
   extraProjectSkillDirs: z.array(z.string()).optional(),
   mcpServers: z.record(McpServerConfigSchema).optional(),

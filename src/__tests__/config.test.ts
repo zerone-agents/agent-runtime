@@ -136,14 +136,14 @@ describe("RuntimeConfigSchema", () => {
       agents: [
         {
           id: "skill-agent",
-          settingSources: ["user", "project", "local"],
+          settingSources: ["user", "project"],
           extraUserSkillDirs: ["/mnt/shared/skills"],
           extraProjectSkillDirs: ["/opt/project/skills"],
         },
       ],
     })
     const agent = result.agents[0]
-    expect(agent.settingSources).toEqual(["user", "project", "local"])
+    expect(agent.settingSources).toEqual(["user", "project"])
     expect(agent.extraUserSkillDirs).toEqual(["/mnt/shared/skills"])
     expect(agent.extraProjectSkillDirs).toEqual(["/opt/project/skills"])
   })
@@ -155,6 +155,19 @@ describe("RuntimeConfigSchema", () => {
           {
             id: "bad",
             settingSources: ["global"],
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it("rejects removed 'local' settingSource value (SDK 1.1.2 dropped it)", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "bad-local",
+            settingSources: ["user", "local"],
           },
         ],
       }),
