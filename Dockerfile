@@ -8,7 +8,9 @@
 # native addons compiled in builder (musl) won't load at runtime (glibc).
 FROM ubuntu:26.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # Node.js 22.22.1 + npm 9.2.0 from Ubuntu repo; npm upgraded to 10.x below.
 # python3 is installed in case any dependency needs node-gyp during `npm ci`.
@@ -49,7 +51,9 @@ RUN npm prune --omit=dev
 # -----------------------------------------------------------------------------
 FROM ubuntu:26.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # Runtime: Node.js 22 + Python 3 + pip.
 # This image is a general-purpose agent runtime, so agents can `npm install`
