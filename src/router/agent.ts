@@ -138,11 +138,17 @@ export function createAgentRouter(
     // JSON blocking response
     try {
       const result = await agent.prompt(message, { maxSessionTurns })
-      metrics.recordRun(agentId, result.usage, undefined)
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)
       if (runInfo?.state === "cancelling" || runInfo?.state === "cancelled") {
+        // Cancelled during prompt: coerce cancelling → cancelled via markTerminal.
+        // This ensures agent.close() is called exactly once and the run record
+        // transitions out of the active map. The finally block's state guard
+        // (state === "running") will then skip, so no double-close.
+        // Metrics are NOT recorded here: a client-aborted run should not
+        // conflate "completed work" with "cancelled work" in metrics.
+        runsRegistry.markTerminal(runId, "cancelled", runInfo.reason ?? "client_request")
         return c.json({
           runId,
           sessionId: agent.getSessionId(),
@@ -156,6 +162,7 @@ export function createAgentRouter(
         })
       }
 
+      metrics.recordRun(agentId, result.usage, undefined)
       return c.json({
         runId,
         sessionId: agent.getSessionId(),
