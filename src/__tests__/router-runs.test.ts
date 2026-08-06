@@ -193,5 +193,6 @@ describe("cancel endpoint auth integration", () => {
     )
 
     expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: "Run not found" })
   })
 })
