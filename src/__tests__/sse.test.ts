@@ -202,6 +202,66 @@ describe("streamAgentResponse cancelled event injection", () => {
   })
 })
 
+describe("streamAgentResponse failure state handling", () => {
+  it("calls onTerminal with failed state when SDK stream throws", async () => {
+    const registry = makeMockRegistry("running")
+    const onTerminal = vi.fn()
+    const throwingGen = {
+      async *[Symbol.asyncIterator]() {
+        yield { type: "system", subtype: "init" } as any
+        throw new Error("stream blew up")
+      },
+    }
+    const app = new Hono()
+    app.get("/stream", (c) =>
+      streamAgentResponse(c, throwingGen as any, undefined, {
+        runId: "run-fail",
+        runsRegistry: registry,
+        onTerminal,
+      }),
+    )
+
+    const res = await app.request("http://localhost/stream")
+    await res.text()
+    expect(onTerminal).toHaveBeenCalledWith("failed", "error", undefined)
+  })
+
+  it("calls onTerminal with failed state when SDK result subtype is error_*", async () => {
+    const registry = makeMockRegistry("running")
+    const onTerminal = vi.fn()
+    const app = createApp(
+      [{ type: "result", subtype: "error_max_turns", usage: { input_tokens: 1 } }],
+      { runId: "run-err", runsRegistry: registry, onTerminal },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    await res.text()
+    expect(onTerminal).toHaveBeenCalledWith("failed", "error", { input_tokens: 1 })
+  })
+
+  it("cancelling state takes precedence over failure (cancel wins)", async () => {
+    const registry = makeMockRegistry("cancelling", "client_request")
+    const onTerminal = vi.fn()
+    const throwingGen = {
+      async *[Symbol.asyncIterator]() {
+        throw new Error("aborted mid-stream")
+      },
+    }
+    const app = new Hono()
+    app.get("/stream", (c) =>
+      streamAgentResponse(c, throwingGen as any, undefined, {
+        runId: "run-cancel-then-throw",
+        runsRegistry: registry,
+        onTerminal,
+      }),
+    )
+
+    const res = await app.request("http://localhost/stream")
+    await res.text()
+    expect(onTerminal).toHaveBeenCalledWith("cancelled", "client_request", undefined)
+  })
+})
+
 describe("streamAgentResponse SSE disconnect handling", () => {
   it("calls runsRegistry.cancel(runId, 'disconnect') when stream is aborted mid-flight", async () => {
     const cancelSpy = vi.fn()

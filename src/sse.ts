@@ -62,6 +62,7 @@ export function streamAgentResponse(
       }
 
       let lastResultEvent: any = undefined
+      let streamThrew = false
       try {
         for await (const event of agentStream) {
           if (event.type === "result") lastResultEvent = event
@@ -71,6 +72,7 @@ export function streamAgentResponse(
           })
         }
       } catch (err: any) {
+        streamThrew = true
         await stream.writeSSE({
           event: "error",
           data: JSON.stringify({ error: err.message ?? "Unknown error" }),
@@ -82,10 +84,17 @@ export function streamAgentResponse(
         await onDone?.()
       }
 
-      // Decide terminal state by querying registry (source of truth),
-      // NOT by SDK's result.subtype (unreliable on abort — see spec appendix).
+      // Decide terminal state in precedence order:
+      //   1. registry is cancelling/cancelled → cancelled (cancel wins over failure)
+      //   2. stream threw, or terminal SDK result is an error subtype → failed
+      //   3. otherwise → completed
+      // The registry is the source of truth for cancellation; SDK's
+      // result.subtype is unreliable on abort but DOES reliably signal
+      // non-cancel errors via the `error_` prefix.
       let terminalState: "cancelled" | "completed" | "failed" = "completed"
       let terminalReason: string | undefined
+      const isSdkError = typeof lastResultEvent?.subtype === "string"
+        && lastResultEvent.subtype.startsWith("error_")
       if (options?.runId && options?.runsRegistry) {
         const runInfo = options.runsRegistry.get(options.runId)
         if (runInfo?.state === "cancelling" || runInfo?.state === "cancelled") {
@@ -98,7 +107,14 @@ export function streamAgentResponse(
               reason: terminalReason ?? "client_request",
             }),
           })
+        } else if (streamThrew || isSdkError) {
+          terminalState = "failed"
+          terminalReason = "error"
         }
+      } else if (streamThrew || isSdkError) {
+        // No registry wired (backward-compat path); still surface failure.
+        terminalState = "failed"
+        terminalReason = "error"
       }
 
       await stream.writeSSE({ event: "done", data: "{}" })
@@ -108,7 +124,7 @@ export function streamAgentResponse(
         const usage = lastResultEvent?.usage
         options.onTerminal(
           terminalState,
-          terminalForCallback(terminalState, lastResultEvent, terminalReason),
+          terminalForCallback(terminalState, lastResultEvent, terminalReason, streamThrew),
           usage,
         )
       }
@@ -124,9 +140,15 @@ function terminalForCallback(
   state: "cancelled" | "completed" | "failed",
   lastResultEvent: any,
   cancelReason?: string,
+  streamThrew?: boolean,
 ): string | undefined {
   if (state === "cancelled") return cancelReason ?? "client_request"
-  if (lastResultEvent?.subtype?.startsWith("error_")) return "error"
+  if (state === "failed") {
+    // streamThrew takes precedence over SDK subtype for diagnostics
+    if (streamThrew) return "error"
+    if (lastResultEvent?.subtype?.startsWith("error_")) return "error"
+    return "error"
+  }
   return "stream_end"
 }
 
