@@ -3,7 +3,7 @@ import type { Agent } from "@zerone-agent/agent-sdk"
 
 export type RunState = "running" | "cancelling" | "cancelled" | "completed" | "failed"
 export type TerminalState = "cancelled" | "completed" | "failed"
-export type CancelReason = "client_request" | "disconnect"
+export type CancelReason = "client_request" | "disconnect" | "shutdown"
 export type TerminalReason = CancelReason | "stream_end" | "error" | "shutdown"
 
 export interface RunRecord {
@@ -145,8 +145,18 @@ export class RunRegistry {
 
     // Agent close exactly once. closePromise guard prevents double-close
     // when cancel(), SDK completion, and SSE disconnect all race.
+    // Rejections are swallowed with a diagnostic to avoid unhandled promise
+    // rejections: outside closeAll(), nobody awaits this promise.
     if (!rec.closePromise) {
-      rec.closePromise = rec.agent.close()
+      rec.closePromise = rec.agent.close().catch((err: unknown) => {
+        // Diagnostic only; exactly-once is preserved by the closePromise
+        // field guard, not by the close() resolution.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[RunRegistry] agent.close() rejected for run ${runId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
     }
   }
 
@@ -166,7 +176,11 @@ export class RunRegistry {
     const activeRuns = [...this.active.values()]
 
     for (const rec of activeRuns) {
-      this.cancel(rec.runId, "client_request")
+      // Cancel with reason='shutdown' so the terminal record reflects the
+      // shutdown origin, not 'client_request'. The cancelling invariant in
+      // markTerminal preserves the first writer's reason, so we must set
+      // 'shutdown' here, not later.
+      this.cancel(rec.runId, "shutdown")
       // markTerminal may not be called by handler in shutdown path; force it.
       this.markTerminal(rec.runId, "cancelled", "shutdown")
     }

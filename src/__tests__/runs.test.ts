@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { RunRegistry } from "../runs.js"
 
-function makeMockAgent() {
+function makeMockAgent(overrides: Record<string, any> = {}) {
   return {
     interrupt: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     getSessionId: vi.fn().mockReturnValue("test-session"),
+    ...overrides,
   } as any
 }
 
@@ -208,5 +209,40 @@ describe("RunRegistry — closeAll", () => {
     expect(agent2.close).toHaveBeenCalledTimes(1)
     expect(reg.get(id1)?.state).toBe("cancelled")
     expect(reg.get(id2)?.state).toBe("cancelled")
+  })
+
+  it("preserves 'shutdown' as the terminal reason (not coerced to client_request)", async () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    await reg.closeAll()
+
+    const info = reg.get(id)
+    expect(info?.state).toBe("cancelled")
+    expect(info?.reason).toBe("shutdown")
+  })
+
+  it("agent.close() rejection is swallowed (no unhandled promise rejection)", async () => {
+    const reg = new RunRegistry()
+    const closeErr = new Error("close blew up")
+    const agent = makeMockAgent({
+      close: vi.fn().mockRejectedValue(closeErr),
+    })
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    // Capture console.error to verify diagnostic is logged without throwing
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    reg.markTerminal(id, "completed", "stream_end")
+
+    // Drain microtasks so the .catch handler runs
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(agent.close).toHaveBeenCalledTimes(1)
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[RunRegistry] agent.close() rejected"),
+      "close blew up",
+    )
+    errSpy.mockRestore()
   })
 })
