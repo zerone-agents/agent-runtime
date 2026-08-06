@@ -16,6 +16,12 @@ import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
 export interface CreateAppOptions {
   /** External persistence hook for the in-memory AIGC audit log. */
   onAigcRecord?: (record: AigcRunRecord) => void | Promise<void>
+  /**
+   * Optional injected RunRegistry. When omitted, a new instance is created
+   * internally. Inject when the orchestrator (e.g. agent-deployer) needs to
+   * call closeAll() on SIGTERM or query run state outside the HTTP API.
+   */
+  runsRegistry?: RunRegistry
 }
 
 export function createApp(
@@ -42,8 +48,9 @@ export function createApp(
   const aigc = resolveAigcConfig(config.aigc)
   const auditLog = aigc ? new AigcAuditLog({ onRecord: options.onAigcRecord }) : undefined
 
-  // RunRegistry is process-singleton; one instance serves all agent runs.
-  const runsRegistry = new RunRegistry()
+  // Use injected RunRegistry if provided (orchestrator-managed lifecycle);
+  // otherwise instantiate internally. Single instance serves all agent runs.
+  const runsRegistry = options.runsRegistry ?? new RunRegistry()
   app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog }))
   app.route("/v1/runs", createRunsRouter(runsRegistry))
   app.route("/v1/sessions", createSessionRouter())

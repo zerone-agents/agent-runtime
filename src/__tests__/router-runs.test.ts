@@ -196,3 +196,35 @@ describe("cancel endpoint auth integration", () => {
     expect(await res.json()).toEqual({ error: "Run not found" })
   })
 })
+
+describe("CreateAppOptions.runsRegistry injection", () => {
+  it("injected RunRegistry owns runs created through the app", async () => {
+    // Lightweight mock registry — only what createApp touches
+    const injected = new RunRegistry({ ttlMs: 60_000, sweepMs: 60_000 })
+
+    // Mock SDK so AgentRegistry.loadFromConfig doesn't try real I/O
+    vi.doMock("@zerone-agent/agent-sdk", () => ({ createAgent: vi.fn() }))
+    vi.doMock("../skills.js", () => ({ scanSkills: vi.fn(async () => []) }))
+
+    const config: any = {
+      server: { host: "0.0.0.0", port: 3000 },
+      agents: [{ id: "a1", model: "glm-4.5" }],
+    }
+    const registry = new AgentRegistry()
+    await registry.loadFromConfig(config, "/tmp")
+    const metrics = new MetricsCollector()
+    const app = createFullApp(config, registry, metrics, { runsRegistry: injected })
+
+    // Verify the injected instance is reachable: register a run externally,
+    // then cancel via the app's /v1/runs endpoint.
+    const agent = makeMockAgent()
+    const runId = injected.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    const res = await app.request(`http://localhost/v1/runs/${runId}/cancel`, {
+      method: "POST",
+    })
+
+    expect(res.status).toBe(202)
+    expect(injected.get(runId)?.state).toBe("cancelling")
+  })
+})
