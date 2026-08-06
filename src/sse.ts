@@ -27,11 +27,40 @@ export function streamAgentResponse(
   onDone?: () => Promise<void> | void,
   options?: StreamOptions,
 ): Response {
+  // Spike 2026-08-06: hono/streaming's SSEStreamingApi (extends StreamingApi)
+  // exposes `stream.onAbort(listener)`. However, onAbort only fires when
+  // `stream.abort()` is invoked, and hono wires the request.signal →
+  // stream.abort() path only for "old Bun versions" (see hono's
+  // helper/streaming/stream.js `isOldBunVersion()` branch). In standard
+  // Node/undici (test env, production runtime), only `c.req.raw.signal`
+  // fires on client disconnect. We therefore register BOTH, guarded by
+  // a `fired` flag to prevent double-cancel (idempotency is also enforced
+  // by RunRegistry.cancel which no-ops on already-cancelling runs).
   // streamSSE returns Response synchronously; if setup throws (e.g. headers
   // already sent), we still need to clean up the agent. That's handled by
   // the try/catch around the call.
   try {
     return streamSSE(c, async (stream) => {
+      // Hook client disconnect → fire cancel with reason='disconnect'.
+      // No-op when runId/runsRegistry absent (backward compat for callers
+      // that don't opt into run tracking).
+      if (options?.runId && options?.runsRegistry) {
+        let fired = false
+        const cancelOnDisconnect = () => {
+          if (fired) return
+          fired = true
+          options.runsRegistry!.cancel(options.runId!, "disconnect")
+        }
+        // onAbort covers downstream ReadableStream cancel and old Bun wiring.
+        if (typeof (stream as any).onAbort === "function") {
+          ;(stream as any).onAbort(cancelOnDisconnect)
+        }
+        // c.req.raw.signal covers standard Node/undici client disconnect.
+        c.req.raw.signal?.addEventListener("abort", cancelOnDisconnect, {
+          once: true,
+        })
+      }
+
       let lastResultEvent: any = undefined
       try {
         for await (const event of agentStream) {

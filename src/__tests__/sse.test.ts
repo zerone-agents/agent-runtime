@@ -200,3 +200,47 @@ describe("streamAgentResponse cancelled event injection", () => {
     expect(onTerminal).toHaveBeenCalledWith("completed", "stream_end", { input_tokens: 5 })
   })
 })
+
+describe("streamAgentResponse SSE disconnect handling", () => {
+  it("calls runsRegistry.cancel(runId, 'disconnect') when stream is aborted mid-flight", async () => {
+    const cancelSpy = vi.fn()
+    const registry = {
+      get: vi.fn().mockReturnValue(undefined), // run is gone after cancel
+      cancel: cancelSpy,
+    } as any
+
+    // Generator that never yields (simulates long-running run that gets
+    // aborted before any event).
+    const slowGen = {
+      async *[Symbol.asyncIterator]() {
+        await new Promise(() => {}) // hangs forever
+        yield {} as any
+      },
+    }
+
+    const app = new Hono()
+    app.get("/stream", (c) => {
+      return streamAgentResponse(c, slowGen as any, undefined, {
+        runId: "run-disc",
+        runsRegistry: registry,
+      })
+    })
+
+    // Issue request and abort it immediately. app.request may return either
+    // a Response (sync) or Promise<Response> depending on internals; wrap in
+    // Promise.resolve to normalize.
+    const controller = new AbortController()
+    const resPromise = Promise.resolve(
+      app.request("http://localhost/stream", {
+        signal: controller.signal,
+      }),
+    )
+    controller.abort()
+    await resPromise.catch(() => {}) // ignore AbortError
+
+    // Give the abort event a tick to propagate through hono's stream.cancel
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(cancelSpy).toHaveBeenCalledWith("run-disc", "disconnect")
+  })
+})
