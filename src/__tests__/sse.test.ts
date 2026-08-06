@@ -1,7 +1,14 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { Hono } from "hono"
 import { streamAgentResponse } from "../sse.js"
 import type { AigcLabel } from "../aigc.js"
+import type { RunRegistry } from "../runs.js"
+
+function makeMockRegistry(state: string, reason?: string): RunRegistry {
+  return {
+    get: vi.fn().mockReturnValue({ state, agentId: "a1", sessionId: "s1", reason }),
+  } as any
+}
 
 const LABEL: AigcLabel = {
   Label: "1",
@@ -109,5 +116,87 @@ describe("streamAgentResponse AIGC injection", () => {
     const events = parseSse(await res.text())
     expect(events.find((e) => e.event === "system")?.data.aigc).toBeUndefined()
     expect(events.find((e) => e.event === "result")?.data.aigc).toBeUndefined()
+  })
+})
+
+describe("streamAgentResponse runId decoration", () => {
+  it("injects runId into system init event when option is set", async () => {
+    const app = createApp(
+      [{ type: "system", subtype: "init", sessionId: "s1" }],
+      { runId: "run-123" },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    const events = parseSse(await res.text())
+    const system = events.find((e) => e.event === "system")
+    expect(system?.data.runId).toBe("run-123")
+  })
+
+  it("does not inject runId when option is absent (backward compatible)", async () => {
+    const app = createApp([{ type: "system", subtype: "init" }])
+
+    const res = await app.request("http://localhost/stream")
+    const events = parseSse(await res.text())
+    const system = events.find((e) => e.event === "system")
+    expect(system?.data.runId).toBeUndefined()
+  })
+})
+
+describe("streamAgentResponse cancelled event injection", () => {
+  it("injects cancelled event when registry state is cancelling", async () => {
+    const registry = makeMockRegistry("cancelling", "client_request")
+    const app = createApp(
+      [{ type: "result", subtype: "success" }],
+      { runId: "run-x", runsRegistry: registry },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    const events = parseSse(await res.text())
+
+    const cancelled = events.find((e) => e.event === "cancelled")
+    expect(cancelled).toBeDefined()
+    expect(cancelled?.data).toEqual({ runId: "run-x", reason: "client_request" })
+
+    // done still follows
+    const done = events.find((e) => e.event === "done")
+    expect(done).toBeDefined()
+  })
+
+  it("does not inject cancelled event when registry state is completed", async () => {
+    const registry = makeMockRegistry("completed")
+    const app = createApp(
+      [{ type: "result", subtype: "success" }],
+      { runId: "run-y", runsRegistry: registry },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    const events = parseSse(await res.text())
+    expect(events.find((e) => e.event === "cancelled")).toBeUndefined()
+  })
+
+  it("calls onTerminal with cancelled state when registry says cancelling", async () => {
+    const registry = makeMockRegistry("cancelling", "client_request")
+    const onTerminal = vi.fn()
+    const app = createApp(
+      [{ type: "result", subtype: "success" }],
+      { runId: "run-z", runsRegistry: registry, onTerminal },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    await res.text() // drain stream so onTerminal (fires after stream end) runs
+    expect(onTerminal).toHaveBeenCalledWith("cancelled", "client_request", undefined)
+  })
+
+  it("calls onTerminal with completed state when registry says completed", async () => {
+    const registry = makeMockRegistry("completed", "stream_end")
+    const onTerminal = vi.fn()
+    const app = createApp(
+      [{ type: "result", subtype: "success", usage: { input_tokens: 5 } }],
+      { runId: "run-w", runsRegistry: registry, onTerminal },
+    )
+
+    const res = await app.request("http://localhost/stream")
+    await res.text() // drain stream so onTerminal (fires after stream end) runs
+    expect(onTerminal).toHaveBeenCalledWith("completed", "stream_end", { input_tokens: 5 })
   })
 })
