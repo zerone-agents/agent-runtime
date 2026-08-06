@@ -2,6 +2,8 @@
 
 HTTP Server runtime for [agent-sdk](https://github.com/zerone-agents/agent-sdk) agents.
 
+English | [中文](README.zh-CN.md)
+
 Multi-agent runtime with Streamable HTTP (SSE + JSON content negotiation). Define agents in YAML or TypeScript, start the server, call the API.
 
 ## Quick Start
@@ -21,29 +23,17 @@ EOF
 npm start
 ```
 
-Or use TypeScript config:
-
-```ts
-// agent.config.ts
-import { defineConfig } from "@zerone-agent/agent-runtime"
-
-export default defineConfig({
-  server: { port: 3000 },
-  agents: [{ id: "assistant", model: "claude-sonnet-4-6", systemPrompt: "You are a helpful assistant." }],
-})
-```
+TypeScript config (`agent.config.ts`) is also supported — see [`docs/configuration.md`](docs/configuration.md).
 
 ## API
 
-All routes prefixed with `/v1`.
+All routes prefixed with `/v1`. The run endpoint uses Streamable HTTP — response mode is negotiated via the `Accept` header:
 
-### Run Agent (Streamable HTTP — Recommended)
-
-The same endpoint supports both streaming and blocking responses via **`Accept` header content negotiation** — this is the recommended protocol.
-
-#### Streaming (SSE)
-
-Send `Accept: text/event-stream` to receive token-level streaming with `partial_message` events (text deltas, thinking chunks, tool_use progress).
+| `Accept` header | Body | Response |
+|---|---|---|
+| `text/event-stream` | — | SSE, token-level `partial_message` events |
+| `text/event-stream` | `stream: "block"` | SSE, complete messages only |
+| `application/json` | — | Blocking JSON response |
 
 ```bash
 curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
@@ -52,63 +42,7 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"Hello"}'
 ```
 
-```
-event: system
-data: {"type":"system","subtype":"init",...}
-
-event: partial_message
-data: {"type":"partial_message","partial":{"type":"thinking","text":"Let me..."}}
-
-event: partial_message
-data: {"type":"partial_message","partial":{"type":"text","text":"Hello!"}}
-
-event: partial_message
-data: {"type":"partial_message","partial":{"type":"tool_use","tool_name":"Read",...}}
-
-event: assistant
-data: {"type":"assistant","message":{"role":"assistant","content":[...]}}
-
-event: tool_result
-data: {"type":"tool_result","result":{...}}
-
-event: result
-data: {"type":"result","subtype":"success",...}
-
-event: done
-data: {}
-```
-
-#### Blocking (JSON)
-
-Send `Accept: application/json` to receive the complete result as a single JSON response.
-
-```bash
-curl -X POST http://localhost:3000/v1/agents/assistant/runs \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"message":"Hello"}'
-```
-
-### SSE Block Mode
-
-Add `stream: "block"` in the body to receive SSE with complete messages only — no `partial_message` events. Useful when you want streaming but don't need token-level granularity.
-
-```bash
-curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{"message":"Hello","stream":"block"}'
-```
-
-### Backward Compatibility
-
-The legacy `stream` body field is still supported when no `Accept` header is provided:
-
-- `stream: true` or `"raw"` (default) → SSE with `partial_message` events
-- `stream: "block"` → SSE without `partial_message` events
-- `stream: false` → JSON blocking response
-
-For new integrations, prefer the `Accept` header approach (Streamable HTTP) as it follows standard HTTP content negotiation.
+See [`docs/api/runs.md`](docs/api/runs.md) for the SSE event sequence, block mode, and legacy `stream` field compatibility.
 
 ### Endpoints
 
@@ -118,7 +52,7 @@ For new integrations, prefer the `Accept` header approach (Streamable HTTP) as i
 | `GET` | `/v1/metrics` | Token usage, request counts, costs |
 | `GET` | `/v1/agents` | List registered agents |
 | `GET` | `/v1/agents/:id` | Agent detail |
-| `POST` | `/v1/agents/:id/runs` | Run agent (Streamable HTTP: SSE via `Accept: text/event-stream`, JSON via `Accept: application/json`) |
+| `POST` | `/v1/agents/:id/runs` | Run agent (Streamable HTTP) |
 | `GET` | `/v1/sessions` | List sessions |
 | `GET` | `/v1/sessions/:id` | Session detail with messages |
 | `DELETE` | `/v1/sessions/:id` | Delete session |
@@ -127,8 +61,6 @@ For new integrations, prefer the `Accept` header approach (Streamable HTTP) as i
 | `HEAD` | `/v1/files/content` | File headers only (`?path=`) |
 
 ## Configuration
-
-### YAML Mode (`agents.yaml`)
 
 ```yaml
 agents:
@@ -181,73 +113,19 @@ agents:
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
 | `datasets` | No | — | Map of dataset-id to description, injected into the system prompt as a `<datasets>` block |
 
-### Top-level AIGC labeling (GB 45438-2025)
-
-Optional. When enabled, every response (SSE events and blocking JSON) carries an implicit-label `aigc` field per the China national standard, plus a per-run audit record for traceability.
-
-```yaml
-aigc:
-  enabled: true
-  # 27-char provider code of THIS runtime's operator (not the upstream model vendor).
-  # Bits 1-23 identify the operator; bits 24-27 are the model/app code slot.
-  contentProducer: "001191320118MAK93FC72D10001"
-  # label: "1"            # 1 = AI-generated, 2 = possibly, 3 = suspected (default "1")
-  # signingKey: ""        # SHA-256 signature of the label, written into ReservedCode1
-  # explicitHint: true    # also emit aigcExplicitHint: true in responses
-  # produceIdPrefix: ""   # optional prefix for ProduceID generation
-  modelCodes:             # optional: model name -> 4-char model code (overrides bits 24-27)
-    "glm-4.5": "0001"
-    "qwen-max": "0002"
-    "deepseek-chat": "0003"
-    "claude-sonnet-4-6": "0004"
-```
-
-Env overrides (take priority over YAML values): `ZERONE_AGENT_AIGC_ENABLED`, `ZERONE_AGENT_AIGC_CONTENT_PRODUCER`, `ZERONE_AGENT_AIGC_LABEL`, `ZERONE_AGENT_AIGC_SIGNING_KEY`, `ZERONE_AGENT_AIGC_EXPLICIT_HINT`.
-
-When enabled, responses gain:
-
-```jsonc
-{
-  "sessionId": "...",
-  "text": "...",
-  "aigc": {
-    "Label": "1",
-    "ContentProducer": "001191320118MAK93FC72D10001",
-    "ProduceID": "20260723103000-a1b2c3d4e5f6",
-    "ReservedCode1": ""           // when signingKey is set, holds SHA-256 HMAC
-  },
-  "aigcExplicitHint": true        // when explicitHint is true
-}
-```
-
-For SSE, the `aigc` field is injected into both the leading `system` event and the trailing `result` event (dual-anchor, resilient to stream drops). Per-run audit records are kept in memory for traceability; attach a persistence hook via `createApp(..., { onAigcRecord: ... })` for DB/log-pipeline storage (regulation-typical retention: 6+ months).
-
-See [`docs/compliance.md`](docs/compliance.md) for the full design rationale, role assignments, and a compliance materials checklist.
-
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
 
-#### Skill loading
+### AIGC labeling (GB 45438-2025)
 
-Skills are **fully filesystem-driven** — there is no whitelist. Configure `settingSources` to choose which directories to scan; every `SKILL.md` discovered is exposed to the agent.
+Optional top-level `aigc` config: when enabled, every response carries an implicit-label `aigc` field per the China national standard, plus a per-run audit record. Supports env overrides (`ZERONE_AGENT_AIGC_*`). See [`docs/compliance.md`](docs/compliance.md) for full config, design rationale, and a compliance checklist.
 
-```yaml
-agents:
-  - id: "my-agent"
-    settingSources: ["user", "project"]   # scans both ~/.openagent/skills/ and <cwd>/.openagent/skills/
-```
+### Skill loading
 
-Scan order (later entries override earlier ones on name collisions):
+Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to choose which directories to scan (`~/.openagent/skills/`, `<cwd>/.openagent/skills/`, plus `extraUserSkillDirs` / `extraProjectSkillDirs`); every discovered `SKILL.md` is exposed to the agent. Skills are scanned once at startup; restart to pick up changes. `GET /v1/agents/:id` surfaces the resolved list as `availableSkills`.
 
-1. `~/.openagent/skills/`                    (when `settingSources` includes `user`)
-2. `extraUserSkillDirs[0]`, `[1]`, ...       (additional user-level dirs)
-3. `<cwd>/.openagent/skills/`                (when `settingSources` includes `project`)
-4. `extraProjectSkillDirs[0]`, `[1]`, ...    (additional project-level dirs)
+### Subagents
 
-The runtime scans once at startup and caches the result per agent. The detail endpoint (`GET /v1/agents/:id`) surfaces the resolved list as `availableSkills` — useful for checking what's actually loaded. Restart the runtime to pick up filesystem changes.
-
-### Subagents (YAML)
-
-Define subagents under an agent's `subagents` key. The parent agent can delegate work to them via the `Task` tool. Each subagent needs `description` and `prompt`; other fields are optional.
+Define subagents under an agent's `subagents` key; the parent delegates via the `Task` tool:
 
 ```yaml
 agents:
@@ -276,173 +154,29 @@ agents:
         maxTurns: 15
 ```
 
-**Subagent fields:**
-
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `description` | Yes | — | Short description shown to the parent agent |
-| `prompt` | Yes | — | System prompt for the subagent |
-| `tools` | No | all tools | Whitelist of tool names |
-| `disallowedTools` | No | — | Blacklist of tool names |
-| `model` | No | inherits parent | LLM model name |
-| `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
-| `maxTurns` | No | `10` | Max agentic loop turns |
-
-### TypeScript Mode (`agent.config.ts`)
-
-```ts
-import { defineConfig } from "@zerone-agent/agent-runtime"
-import { defineTool, tool } from "@zerone-agent/agent-sdk"
-import { z } from "zod"
-
-const weatherTool = defineTool({
-  name: "GetWeather",
-  description: "Get weather for a city",
-  inputSchema: {
-    type: "object" as const,
-    properties: { city: { type: "string" } },
-    required: ["city"],
-  },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
-  async call(input: { city: string }) {
-    return `${input.city}: 22°C, partly cloudy`
-  },
-})
-
-const calcTool = tool("Calculator", "Evaluate math expression (^ = power)", { expression: z.string() }, async ({ expression }) => {
-  const safe = expression.replace(/\^/g, "**")
-  const result = Function(`'use strict'; return (${safe})`)()
-  return { content: [{ type: "text" as const, text: `${expression} = ${result}` }] }
-})
-
-export default defineConfig({
-  server: { port: 3000 },
-  agents: [
-    {
-      id: "smart",
-      model: "claude-sonnet-4-6",
-      systemPrompt: "You are a smart assistant with weather and calculator tools.",
-      maxTurns: 15,
-      allowedTools: ["Bash", "Read", "Write", "Edit"],
-    },
-  ],
-})
-```
-
-`agent.config.ts` takes priority over `agents.yaml`.
+Field reference and TypeScript mode: [`docs/configuration.md`](docs/configuration.md).
 
 ## Authentication
 
-Authentication is opt-in. When no API key is configured, all routes are open (convenient for local development).
-
-To enable authentication, set either the `ZERONE_AGENT_HTTP_API_KEY` environment variable or the `auth.apiKey` field in your config. The environment variable takes priority.
-
-### YAML config
-
-```yaml
-auth:
-  apiKey: "your-secret-key"
-
-agents:
-  - id: "assistant"
-    model: "claude-sonnet-4-6"
-```
-
-### Environment variable
+Opt-in: when no API key is configured, all routes are open. Set the `ZERONE_AGENT_HTTP_API_KEY` env var (takes priority) or `auth.apiKey` in config, then send the key in the `x-api-key` header for all `/v1/*` requests:
 
 ```bash
 ZERONE_AGENT_HTTP_API_KEY="your-secret-key" npm start
-```
 
-### Using the key
-
-Include the key in the `x-api-key` header for all `/v1/*` requests:
-
-```bash
 curl -X POST http://localhost:3000/v1/agents/assistant/runs \
   -H "Content-Type: application/json" \
   -H "x-api-key: your-secret-key" \
   -d '{"message":"Hello"}'
 ```
 
-The `/health` endpoint remains unauthenticated so load balancers and monitoring probes can use it without credentials.
-
-### 401 Response
-
-If a request to a protected route is missing or has an invalid `x-api-key`, the server returns:
-
-```json
-{
-  "error": "Unauthorized",
-  "reason": "missing x-api-key header"
-}
-```
-
-or, for an invalid key:
-
-```json
-{
-  "error": "Unauthorized",
-  "reason": "invalid api key"
-}
-```
-
-## Config Discovery
-
-Search order:
-
-1. `--config <path>` CLI argument
-2. `agent.config.ts` in config directory
-3. `agents.yaml` in config directory
-4. Current working directory
-5. `~/.openagent/`
-
-## SDK Usage
-
-Use as a library instead of CLI:
-
-```ts
-import { createApp, AgentRegistry, MetricsCollector } from "@zerone-agent/agent-runtime"
-import { createAgent, defineTool } from "@zerone-agent/agent-sdk"
-import { serve } from "@hono/node-server"
-
-const agent = createAgent({
-  model: "claude-sonnet-4-6",
-  systemPrompt: "You are a helpful assistant.",
-  maxTurns: 10,
-  hooks: {
-    PreToolUse: [{ matcher: "Bash", hooks: [async (input) => {
-      console.log(`Running: ${input.toolInput}`)
-      return {}
-    }]}],
-  },
-})
-
-const registry = new AgentRegistry()
-registry.register("my-agent", agent)
-
-const metrics = new MetricsCollector()
-const app = createApp(
-  { server: { host: "0.0.0.0", port: 3000 }, agents: [{ id: "my-agent", model: "claude-sonnet-4-6" }] },
-  registry,
-  metrics,
-)
-
-serve({ fetch: app.fetch, port: 3000 })
-```
+`/health` remains unauthenticated for load balancers and probes. Missing/invalid keys get a `401` with a JSON error body.
 
 ## CLI
 
 ```bash
-# Start with default config (looks for agents.yaml in cwd)
-node --import tsx src/index.ts
-
-# Specify config directory
-node --import tsx src/index.ts --config ./my-agents/
-
-# Override port
-node --import tsx src/index.ts --port 8080
+open-agent                          # start with config from cwd
+open-agent --config ./my-agents/    # specify config directory
+open-agent --port 8080              # override port
 ```
 
 ## Examples
@@ -471,38 +205,15 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 ## File Browsing
 
-`/v1/files` exposes the runtime's working directory over HTTP. Useful for debugging and observation by external clients (frontend consoles, ops dashboards).
+`/v1/files` exposes the runtime's working directory over HTTP (list, download, range requests) — useful for debugging and observation by external consoles.
 
 **Trust model:** any caller with a valid API key has full read access to everything under cwd — including `agents.yaml`, `.env`, and any secrets. Configure `ZERONE_AGENT_HTTP_API_KEY` before deploying to production.
 
-### List files
+See [`docs/api/files.md`](docs/api/files.md) for the full API reference.
 
-```bash
-# Top-level entries
-curl http://localhost:3000/v1/files
+## Library Usage
 
-# Subdirectory
-curl "http://localhost:3000/v1/files?path=src"
-
-# Recursive tree (limit depth to 2 levels)
-curl "http://localhost:3000/v1/files?recursive=true&depth=2"
-```
-
-### Download a file
-
-```bash
-# Full file
-curl "http://localhost:3000/v1/files/content?path=outputs/report.json" -o report.json
-
-# Range request (first 100 bytes)
-curl -H "Range: bytes=0-99" \
-     "http://localhost:3000/v1/files/content?path=logs/app.log" -o partial.log
-
-# HEAD to inspect size/type without downloading body
-curl -I "http://localhost:3000/v1/files/content?path=outputs/report.json"
-```
-
-See [`docs/api/files.md`](docs/api/files.md) for full API reference.
+The runtime can also be embedded as a library (`createApp`, `AgentRegistry`, `MetricsCollector`) — see [`docs/sdk-usage.md`](docs/sdk-usage.md).
 
 ## License
 
