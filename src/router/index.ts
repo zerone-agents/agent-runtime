@@ -3,6 +3,7 @@ import { cors } from "hono/cors"
 import type { RuntimeConfig } from "../config.js"
 import { AgentRegistry } from "../registry.js"
 import { MetricsCollector } from "../metrics.js"
+import { RunRegistry } from "../runs.js"
 import { createHealthRouter, createMetricsRouter } from "./health.js"
 import { createAgentRouter } from "./agent.js"
 import { createSessionRouter } from "./session.js"
@@ -14,6 +15,8 @@ import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
 export interface CreateAppOptions {
   /** External persistence hook for the in-memory AIGC audit log. */
   onAigcRecord?: (record: AigcRunRecord) => void | Promise<void>
+  /** Inject a RunRegistry (e.g. for graceful shutdown wiring). Caller owns lifecycle. */
+  runsRegistry?: RunRegistry
 }
 
 export function createApp(
@@ -39,8 +42,9 @@ export function createApp(
 
   const aigc = resolveAigcConfig(config.aigc)
   const auditLog = aigc ? new AigcAuditLog({ onRecord: options.onAigcRecord }) : undefined
+  const runsRegistry = options.runsRegistry ?? new RunRegistry()
 
-  app.route("/v1/agents", createAgentRouter(registry, metrics, { aigc, auditLog }))
+  app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog }))
   app.route("/v1/sessions", createSessionRouter())
   app.route("/v1/files", createFilesRouter())
 
