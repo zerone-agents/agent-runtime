@@ -30,3 +30,128 @@ describe("RunRegistry — register and get", () => {
     expect(reg.get("does-not-exist")).toBeUndefined()
   })
 })
+
+describe("RunRegistry — cancel state machine", () => {
+  it("cancel() transitions running → cancelling and calls agent.interrupt()", async () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    const result = reg.cancel(id)
+
+    expect(result).toEqual({ state: "cancelling", reason: undefined })
+    expect(reg.get(id)?.state).toBe("cancelling")
+    // interrupt is fire-and-forget; await microtask flush
+    await Promise.resolve()
+    expect(agent.interrupt).toHaveBeenCalledTimes(1)
+  })
+
+  it("cancel() is idempotent: 2nd call returns state=cancelling without re-calling interrupt", async () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.cancel(id)
+    await Promise.resolve()
+    const result2 = reg.cancel(id)
+
+    // Idempotent 2nd call returns current state + FIRST cancel's reason
+    // (matches API spec: repeated cancel body shape is { state, reason }).
+    // Note: brief's test assertion was `reason: undefined` (copy-paste typo
+    // from the first cancel test); implementation returns the stored reason.
+    expect(result2).toEqual({ state: "cancelling", reason: "client_request" })
+    expect(agent.interrupt).toHaveBeenCalledTimes(1)
+  })
+
+  it("cancel() with reason='disconnect' records the reason", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.cancel(id, "disconnect")
+
+    expect(reg.get(id)?.reason).toBe("disconnect")
+  })
+
+  it("cancel() returns undefined for unknown runId (404)", () => {
+    const reg = new RunRegistry()
+    expect(reg.cancel("nonexistent")).toBeUndefined()
+  })
+})
+
+describe("RunRegistry — markTerminal state machine", () => {
+  it("markTerminal('completed') moves run from active to terminal map", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "completed", "stream_end")
+
+    // active no longer has it; terminal has it
+    expect(reg.get(id)?.state).toBe("completed")
+    expect(reg.get(id)?.agentId).toBe("") // terminal entries don't carry agentId
+    expect(agent.close).toHaveBeenCalledTimes(1)
+  })
+
+  it("markTerminal forces 'cancelled' when current state is cancelling", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.cancel(id, "client_request")
+    // SDK reports success (mislabeled), but we must force cancelled
+    reg.markTerminal(id, "completed", "stream_end")
+
+    expect(reg.get(id)?.state).toBe("cancelled")
+    expect(reg.get(id)?.reason).toBe("client_request")
+  })
+
+  it("markTerminal is idempotent: 2nd call is no-op", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "completed", "stream_end")
+    reg.markTerminal(id, "failed", "error") // should do nothing
+
+    expect(reg.get(id)?.state).toBe("completed")
+    expect(agent.close).toHaveBeenCalledTimes(1)
+  })
+
+  it("agent.close() called exactly once across multiple markTerminal invocations", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "completed", "stream_end")
+    reg.markTerminal(id, "completed", "stream_end")
+    reg.markTerminal(id, "failed", "error")
+
+    expect(agent.close).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("RunRegistry — cancel after terminal", () => {
+  it("cancel() returns cancelled for already-cancelled run (terminal map)", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.cancel(id)
+    reg.markTerminal(id, "cancelled", "client_request")
+
+    const result = reg.cancel(id)
+    expect(result?.state).toBe("cancelled")
+  })
+
+  it("cancel() returns completed/failed for non-cancel terminal (409)", () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "completed", "stream_end")
+
+    const result = reg.cancel(id)
+    expect(result?.state).toBe("completed")
+  })
+})

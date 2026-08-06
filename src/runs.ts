@@ -69,4 +69,66 @@ export class RunRegistry {
     }
     return undefined
   }
+
+  cancel(
+    runId: string,
+    reason: CancelReason = "client_request",
+  ): { state: RunState; reason?: string } | undefined {
+    const rec = this.active.get(runId)
+    if (rec) {
+      if (rec.state === "running") {
+        rec.state = "cancelling"
+        rec.terminalReason = reason
+        // Fire-and-forget: cancel API must return 202 immediately,
+        // not wait for abort to propagate through SDK.
+        rec.agent.interrupt().catch(() => {
+          // Swallow: agent might already be closed or in a bad state.
+        })
+        return { state: "cancelling" }
+      }
+      if (rec.state === "cancelling") {
+        // Idempotent: already cancelling, return current state.
+        // reason reflects the FIRST cancel request's reason.
+        return { state: "cancelling", reason: rec.terminalReason }
+      }
+      // After cancelling, run is moved out of active by markTerminal.
+      // No other state is possible here.
+    }
+
+    const term = this.terminal.get(runId)
+    if (term) {
+      return { state: term.state, reason: term.reason }
+    }
+
+    return undefined // unknown / TTL expired → 404
+  }
+
+  markTerminal(runId: string, newState: TerminalState, reason?: string): void {
+    const rec = this.active.get(runId)
+    if (!rec) return // already terminal; idempotent no-op
+
+    // Force-cancelled invariant: once cancelling, terminal state MUST be cancelled,
+    // regardless of what the SDK reports (it misreports success on abort).
+    if (rec.state === "cancelling" && newState !== "cancelled") {
+      newState = "cancelled"
+      reason = rec.terminalReason ?? "client_request"
+    }
+
+    rec.state = newState
+    rec.terminalAt = Date.now()
+    rec.terminalReason = reason as TerminalReason
+
+    this.active.delete(runId)
+    this.terminal.set(runId, {
+      state: newState,
+      terminalAt: rec.terminalAt,
+      reason: rec.terminalReason,
+    })
+
+    // Agent close exactly once. closePromise guard prevents double-close
+    // when cancel(), SDK completion, and SSE disconnect all race.
+    if (!rec.closePromise) {
+      rec.closePromise = rec.agent.close()
+    }
+  }
 }
