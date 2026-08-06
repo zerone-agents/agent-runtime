@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { Hono } from "hono"
 import { createAgentRouter } from "../router/agent.js"
+import { createRunsRouter } from "../router/runs.js"
 import { RunRegistry } from "../runs.js"
 import type { AigcConfig } from "../aigc.js"
 
@@ -703,5 +704,149 @@ describe("run lifecycle integration", () => {
     })
 
     expect(agent.close).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("caller-provided runId and JSON-mode cancellation race", () => {
+  let registry: any
+  let runsRegistry: RunRegistry
+  let metrics: any
+
+  beforeEach(() => {
+    registry = {
+      list: vi.fn(),
+      create: vi.fn(),
+      getStatus: vi.fn().mockReturnValue("ready"),
+      getDetail: vi.fn(),
+      getModel: vi.fn().mockReturnValue("glm-4.5"),
+    }
+    runsRegistry = new RunRegistry()
+    metrics = { recordRun: vi.fn() }
+    vi.mocked(streamAgentResponse).mockClear()
+  })
+
+  it("accepts caller-provided runId in JSON body and echoes it back", async () => {
+    const agent = makeReadyAgent()
+    registry.create.mockReturnValue(agent)
+    const app = createAppWithRuns(registry, runsRegistry, metrics)
+
+    const callerRunId = "12345678-1234-1234-1234-123456789abc"
+    const res = await app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false, runId: callerRunId }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("X-Run-ID")).toBe(callerRunId)
+    expect((await res.json()).runId).toBe(callerRunId)
+  })
+
+  it("returns 409 when caller-provided runId conflicts with active run", async () => {
+    const agent = makeReadyAgent()
+    registry.create.mockReturnValue(agent)
+    const app = createAppWithRuns(registry, runsRegistry, metrics)
+
+    const callerRunId = "12345678-1234-1234-1234-123456789abc"
+    // Pre-register the same runId so the second call conflicts
+    runsRegistry.register(
+      { agent: makeReadyAgent(), agentId: "a1", sessionId: "s1" },
+      callerRunId,
+    )
+
+    const res = await app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false, runId: callerRunId }),
+    })
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: "Run ID conflict", runId: callerRunId })
+  })
+
+  it("returns 400 on malformed caller-provided runId", async () => {
+    const agent = makeReadyAgent()
+    registry.create.mockReturnValue(agent)
+    const app = createAppWithRuns(registry, runsRegistry, metrics)
+
+    const res = await app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false, runId: "not-a-uuid" }),
+    })
+
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(/Invalid runId format/)
+  })
+
+  it("JSON blocking run with caller-provided runId can be cancelled mid-prompt via cancel endpoint", async () => {
+    // Deferred that controls when prompt() resolves. The handler will be
+    // stuck at `await agent.prompt(...)` until we release it.
+    let resolvePrompt!: (value: any) => void
+    const promptPromise = new Promise<any>((resolve) => {
+      resolvePrompt = resolve
+    })
+
+    const agent = makeReadyAgent({
+      prompt: vi.fn().mockReturnValue(promptPromise),
+      // interrupt() is called by runsRegistry.cancel; no-op in this mock
+      interrupt: vi.fn().mockResolvedValue(undefined),
+    })
+    registry.create.mockReturnValue(agent)
+
+    // Build an app that mounts BOTH the agent router AND the runs router
+    // so the cancel endpoint is reachable from the same Hono instance.
+    const app = new Hono()
+    app.route(
+      "/v1/agents",
+      createAgentRouter(registry, runsRegistry, metrics),
+    )
+    app.route("/v1/runs", createRunsRouter(runsRegistry))
+
+    const callerRunId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    // Issue the JSON run (don't await yet — prompt is pending).
+    const runPromise = app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false, runId: callerRunId }),
+    })
+
+    // Yield so the handler reaches `await agent.prompt()` and registers the run.
+    // We may need several ticks for async dispatch.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setImmediate(r))
+    }
+
+    // Caller-provided runId is known ahead of time; issue cancel.
+    const cancelRes = await app.request(`http://localhost/v1/runs/${callerRunId}/cancel`, {
+      method: "POST",
+    })
+    expect(cancelRes.status).toBe(202)
+    expect(runsRegistry.get(callerRunId)?.state).toBe("cancelling")
+
+    // Release the prompt (simulates SDK resolving partial result after abort).
+    resolvePrompt({
+      text: "partial",
+      usage: { input_tokens: 5 },
+      num_turns: 1,
+      duration_ms: 10,
+    })
+
+    // Now the JSON run should complete with cancelled body.
+    const runRes = await runPromise
+    expect(runRes.status).toBe(200)
+    const body = await runRes.json()
+    expect(body).toMatchObject({
+      runId: callerRunId,
+      state: "cancelled",
+      reason: "client_request",
+      text: "partial",
+    })
+
+    // Exactly-once cleanup
+    expect(agent.interrupt).toHaveBeenCalledTimes(1)
+    expect(agent.close).toHaveBeenCalledTimes(1)
+    expect(runsRegistry.get(callerRunId)?.state).toBe("cancelled")
   })
 })

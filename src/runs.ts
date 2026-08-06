@@ -38,6 +38,17 @@ export interface RunRegistryOptions {
   sweepMs?: number
 }
 
+/** Thrown by register() when a caller-provided runId is already in use. */
+export class RunIdConflictError extends Error {
+  constructor(public runId: string) {
+    super(`Run ID "${runId}" is already active or recently terminal`)
+    this.name = "RunIdConflictError"
+  }
+}
+
+/** Caller-provided runId must match UUID v4 format. */
+const RUN_ID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export class RunRegistry {
   private readonly TTL_MS: number
   private readonly SWEEP_MS: number
@@ -53,8 +64,25 @@ export class RunRegistry {
     this.sweepTimer.unref?.()
   }
 
-  register(rec: Omit<RunRecord, "runId" | "state" | "startedAt">): string {
-    const runId = randomUUID()
+  /**
+   * Register a new run. Runtime generates a UUID by default; if `callerRunId`
+   * is provided, it must be a valid UUID and must not already be active or in
+   * the terminal cache (within TTL window). Throws RunIdConflictError on
+   * duplicate, Error on invalid format.
+   */
+  register(
+    rec: Omit<RunRecord, "runId" | "state" | "startedAt">,
+    callerRunId?: string,
+  ): string {
+    const runId = callerRunId ?? randomUUID()
+    if (callerRunId && !RUN_ID_FORMAT.test(callerRunId)) {
+      throw new Error(
+        `Invalid runId format: caller-provided runId must be a UUID (got "${callerRunId}")`,
+      )
+    }
+    if (this.active.has(runId) || this.terminal.has(runId)) {
+      throw new RunIdConflictError(runId)
+    }
     this.active.set(runId, {
       ...rec,
       runId,

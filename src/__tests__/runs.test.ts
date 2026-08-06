@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { RunRegistry } from "../runs.js"
+import { RunRegistry, RunIdConflictError } from "../runs.js"
 
 function makeMockAgent(overrides: Record<string, any> = {}) {
   return {
@@ -154,6 +154,52 @@ describe("RunRegistry — cancel after terminal", () => {
 
     const result = reg.cancel(id)
     expect(result?.state).toBe("completed")
+  })
+})
+
+describe("RunRegistry — caller-provided runId", () => {
+  it("uses the caller-provided runId when valid UUID", () => {
+    const reg = new RunRegistry()
+    const callerId = "12345678-1234-1234-1234-123456789abc"
+    const id = reg.register(
+      { agent: makeMockAgent(), agentId: "a1", sessionId: "s1" },
+      callerId,
+    )
+    expect(id).toBe(callerId)
+    expect(reg.get(callerId)?.agentId).toBe("a1")
+  })
+
+  it("still generates UUID by default when no caller runId", () => {
+    const reg = new RunRegistry()
+    const id = reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" })
+    expect(id).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(id).not.toBe("12345678-1234-1234-1234-123456789abc")
+  })
+
+  it("throws Error on malformed caller runId", () => {
+    const reg = new RunRegistry()
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" }, "not-a-uuid"),
+    ).toThrow(/Invalid runId format/)
+  })
+
+  it("throws RunIdConflictError when caller runId already active", () => {
+    const reg = new RunRegistry()
+    const callerId = "12345678-1234-1234-1234-123456789abc"
+    reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" }, callerId)
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }, callerId),
+    ).toThrow(RunIdConflictError)
+  })
+
+  it("throws RunIdConflictError when caller runId is recently terminal (within TTL)", () => {
+    const reg = new RunRegistry()
+    const callerId = "12345678-1234-1234-1234-123456789abc"
+    const id = reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" }, callerId)
+    reg.markTerminal(id, "completed", "stream_end")
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }, callerId),
+    ).toThrow(RunIdConflictError)
   })
 })
 

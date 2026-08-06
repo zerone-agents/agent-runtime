@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { createHash } from "node:crypto"
 import type { AgentRegistry } from "../registry.js"
-import type { RunRegistry } from "../runs.js"
+import { RunIdConflictError, type RunRegistry } from "../runs.js"
 import type { MetricsCollector } from "../metrics.js"
 import { streamAgentResponse } from "../sse.js"
 import { buildAigcLabel, type AigcConfig } from "../aigc.js"
@@ -41,7 +41,7 @@ export function createAgentRouter(
       return c.json({ error: "Invalid request: message is required" }, 400)
     }
 
-    const { message, sessionId, stream, maxSessionTurns } = body
+    const { message, sessionId, stream, maxSessionTurns, runId: callerRunId } = body
 
     const status = registry.getStatus(agentId)
     if (status === "not_found") {
@@ -57,11 +57,22 @@ export function createAgentRouter(
     }
 
     // Register run BEFORE any SDK call, so early cancels are addressable.
-    const runId = runsRegistry.register({
-      agent,
-      agentId,
-      sessionId: agent.getSessionId?.() ?? "",
-    })
+    // Optional caller-provided runId enables JSON-blocking-mode cancellation:
+    // otherwise the client cannot know the runtime-generated ID until prompt()
+    // resolves. Reject duplicates (active or recently terminal) with 409, and
+    // malformed UUIDs with 400.
+    let runId: string
+    try {
+      runId = runsRegistry.register(
+        { agent, agentId, sessionId: agent.getSessionId?.() ?? "" },
+        callerRunId,
+      )
+    } catch (err) {
+      if (err instanceof RunIdConflictError) {
+        return c.json({ error: "Run ID conflict", runId: err.runId }, 409)
+      }
+      return c.json({ error: (err as Error).message }, 400)
+    }
     c.header("X-Run-ID", runId)
 
     const aigcLabel = options.aigc
