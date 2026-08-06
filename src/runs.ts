@@ -31,9 +31,27 @@ export interface RunInfo {
   reason?: string
 }
 
+export interface RunRegistryOptions {
+  /** Terminal-state cache TTL in ms. Default: 5 minutes. */
+  ttlMs?: number
+  /** Sweep interval in ms. Default: 60 seconds. */
+  sweepMs?: number
+}
+
 export class RunRegistry {
+  private readonly TTL_MS: number
+  private readonly SWEEP_MS: number
   private active = new Map<string, RunRecord>()
   private terminal = new Map<string, TerminalEntry>()
+  private sweepTimer?: NodeJS.Timeout
+
+  constructor(options: RunRegistryOptions = {}) {
+    this.TTL_MS = options.ttlMs ?? 5 * 60 * 1000
+    this.SWEEP_MS = options.sweepMs ?? 60_000
+    this.sweepTimer = setInterval(() => this.sweep(), this.SWEEP_MS)
+    // unref() so the timer never blocks process exit.
+    this.sweepTimer.unref?.()
+  }
 
   register(rec: Omit<RunRecord, "runId" | "state" | "startedAt">): string {
     const runId = randomUUID()
@@ -130,5 +148,38 @@ export class RunRegistry {
     if (!rec.closePromise) {
       rec.closePromise = rec.agent.close()
     }
+  }
+
+  private sweep(): void {
+    const now = Date.now()
+    for (const [id, entry] of this.terminal) {
+      if (now - entry.terminalAt > this.TTL_MS) {
+        this.terminal.delete(id)
+      }
+    }
+  }
+
+  async closeAll(): Promise<void> {
+    if (this.sweepTimer) clearInterval(this.sweepTimer)
+
+    // Snapshot before mutating; markTerminal deletes from active.
+    const activeRuns = [...this.active.values()]
+
+    for (const rec of activeRuns) {
+      this.cancel(rec.runId, "client_request")
+      // markTerminal may not be called by handler in shutdown path; force it.
+      this.markTerminal(rec.runId, "cancelled", "shutdown")
+    }
+
+    // Await all closePromises created during the markTerminal sweep above.
+    const closePromises = activeRuns
+      .map((r) => r.closePromise)
+      .filter((p): p is Promise<void> => Boolean(p))
+    await Promise.allSettled(closePromises)
+
+    // active is already empty (markTerminal deleted each entry).
+    // terminal is intentionally NOT cleared: post-closeAll callers may still
+    // query run state (e.g. verify cancelled); TTL sweep will reap entries.
+    this.active.clear()
   }
 }

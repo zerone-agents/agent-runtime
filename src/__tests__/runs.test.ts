@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { RunRegistry } from "../runs.js"
 
 function makeMockAgent() {
@@ -153,5 +153,60 @@ describe("RunRegistry — cancel after terminal", () => {
 
     const result = reg.cancel(id)
     expect(result?.state).toBe("completed")
+  })
+})
+
+describe("RunRegistry — TTL sweep", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("sweep removes terminal entries older than TTL_MS", () => {
+    vi.useFakeTimers()
+    const reg = new RunRegistry({ ttlMs: 1000, sweepMs: 60_000 })
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "completed", "stream_end")
+    expect(reg.get(id)?.state).toBe("completed")
+
+    // Advance past TTL
+    vi.advanceTimersByTime(1001)
+    // Manually trigger sweep (private but accessible via any cast for test)
+    ;(reg as any).sweep()
+
+    expect(reg.get(id)).toBeUndefined()
+  })
+
+  it("cancel returns undefined after TTL expires (404)", () => {
+    vi.useFakeTimers()
+    const reg = new RunRegistry({ ttlMs: 1000, sweepMs: 60_000 })
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    reg.markTerminal(id, "cancelled", "client_request")
+    vi.advanceTimersByTime(1001)
+    ;(reg as any).sweep()
+
+    expect(reg.cancel(id)).toBeUndefined()
+  })
+})
+
+describe("RunRegistry — closeAll", () => {
+  it("interrupts and marks all active runs as cancelled, awaits all closePromises", async () => {
+    const reg = new RunRegistry()
+    const agent1 = makeMockAgent()
+    const agent2 = makeMockAgent()
+    const id1 = reg.register({ agent: agent1, agentId: "a1", sessionId: "s1" })
+    const id2 = reg.register({ agent: agent2, agentId: "a2", sessionId: "s2" })
+
+    await reg.closeAll()
+
+    expect(agent1.interrupt).toHaveBeenCalledTimes(1)
+    expect(agent2.interrupt).toHaveBeenCalledTimes(1)
+    expect(agent1.close).toHaveBeenCalledTimes(1)
+    expect(agent2.close).toHaveBeenCalledTimes(1)
+    expect(reg.get(id1)?.state).toBe("cancelled")
+    expect(reg.get(id2)?.state).toBe("cancelled")
   })
 })
