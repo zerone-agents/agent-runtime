@@ -139,3 +139,59 @@ describe("POST /v1/runs/:runId/cancel", () => {
     expect(registry.get(id2)?.state).toBe("running")
   })
 })
+
+import { createApp as createFullApp } from "../router/index.js"
+import { AgentRegistry } from "../registry.js"
+import { MetricsCollector } from "../metrics.js"
+import type { RuntimeConfig } from "../config.js"
+
+describe("cancel endpoint auth integration", () => {
+  it("returns 401 when API key is required but not provided", async () => {
+    // Mock SDK so AgentRegistry doesn't try to load real config
+    vi.doMock("@zerone-agent/agent-sdk", () => ({ createAgent: vi.fn() }))
+    vi.doMock("../skills.js", () => ({ scanSkills: vi.fn(async () => []) }))
+
+    const config: any = {
+      server: { host: "0.0.0.0", port: 3000 },
+      auth: { apiKey: "secret-key" },
+      agents: [{ id: "a1", model: "glm-4.5" }],
+    }
+    const registry = new AgentRegistry()
+    await registry.loadFromConfig(config, "/tmp")
+    const metrics = new MetricsCollector()
+    const app = createFullApp(config, registry, metrics)
+
+    const res = await app.request(
+      "http://localhost/v1/runs/anything/cancel",
+      { method: "POST" },
+    )
+
+    expect(res.status).toBe(401)
+  })
+
+  it("passes auth when correct API key is provided", async () => {
+    vi.doMock("@zerone-agent/agent-sdk", () => ({ createAgent: vi.fn() }))
+    vi.doMock("../skills.js", () => ({ scanSkills: vi.fn(async () => []) }))
+
+    const config: any = {
+      server: { host: "0.0.0.0", port: 3000 },
+      auth: { apiKey: "secret-key" },
+      agents: [{ id: "a1", model: "glm-4.5" }],
+    }
+    const registry = new AgentRegistry()
+    await registry.loadFromConfig(config, "/tmp")
+    const metrics = new MetricsCollector()
+    const app = createFullApp(config, registry, metrics)
+
+    // Unknown runId returns 404 (not 401) when auth passes
+    const res = await app.request(
+      "http://localhost/v1/runs/nonexistent/cancel",
+      {
+        method: "POST",
+        headers: { "X-API-Key": "secret-key" },
+      },
+    )
+
+    expect(res.status).toBe(404)
+  })
+})
