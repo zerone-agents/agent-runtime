@@ -106,6 +106,11 @@ export function createAgentRouter(
       }
     }
 
+    const handleTerminal = (state: "cancelled" | "completed" | "failed", reason?: string, usage?: any) => {
+      if (usage) metrics.recordRun(agentId, usage, undefined)
+      runsRegistry.markTerminal(runId, state, reason)
+    }
+
     if (responseMode === "sse-block") {
       const agentStream = agent.query(message, { maxSessionTurns })
       return streamAgentResponse(c, agentStream, undefined, {
@@ -113,10 +118,7 @@ export function createAgentRouter(
         explicitHint,
         runId,
         runsRegistry,
-        onTerminal: (state, reason, usage) => {
-          if (usage) metrics.recordRun(agentId, usage, undefined)
-          runsRegistry.markTerminal(runId, state, reason)
-        },
+        onTerminal: handleTerminal,
       })
     }
 
@@ -128,10 +130,7 @@ export function createAgentRouter(
         explicitHint,
         runId,
         runsRegistry,
-        onTerminal: (state, reason, usage) => {
-          if (usage) metrics.recordRun(agentId, usage, undefined)
-          runsRegistry.markTerminal(runId, state, reason)
-        },
+        onTerminal: handleTerminal,
       })
     }
 

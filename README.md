@@ -117,6 +117,13 @@ This API is transport-level. agent-runtime does **not** provide:
 - Durable event replay (reconnect mid-stream is not supported)
 - GET status endpoint (terminal state is conveyed via the response itself)
 
+### Shutdown semantics
+
+`RunRegistry.closeAll()` is provided for orchestrators that wrap the
+runtime process (e.g. agent-deployer) and need to drain in-flight runs
+on SIGTERM. The runtime itself does not install signal handlers —
+container-level SIGTERM/KILL is the orchestrator's responsibility.
+
 ## Configuration
 
 ```yaml

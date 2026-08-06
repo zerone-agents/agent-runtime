@@ -114,6 +114,12 @@ runtime 不区分"主动取消"和"网络中断"——两者都会停止 run 以
 - 可持久化的事件回放（不支持中途重连）
 - GET 状态端点（终态通过响应本身传达）
 
+### 关停语义
+
+`RunRegistry.closeAll()` 供包装 runtime 进程的编排器（例如
+agent-deployer）使用，便于在 SIGTERM 时排空 in-flight run。runtime
+自身不安装信号处理器 —— 容器级 SIGTERM/KILL 是编排器的责任。
+
 ## 配置
 
 ```yaml

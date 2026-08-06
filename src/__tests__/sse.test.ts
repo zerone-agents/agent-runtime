@@ -7,6 +7,7 @@ import type { RunRegistry } from "../runs.js"
 function makeMockRegistry(state: string, reason?: string): RunRegistry {
   return {
     get: vi.fn().mockReturnValue({ state, agentId: "a1", sessionId: "s1", reason }),
+    cancel: vi.fn().mockReturnValue(undefined),
   } as any
 }
 

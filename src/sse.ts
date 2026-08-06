@@ -52,8 +52,8 @@ export function streamAgentResponse(
           options.runsRegistry!.cancel(options.runId!, "disconnect")
         }
         // onAbort covers downstream ReadableStream cancel and old Bun wiring.
-        if (typeof (stream as any).onAbort === "function") {
-          ;(stream as any).onAbort(cancelOnDisconnect)
+        if (typeof stream.onAbort === "function") {
+          stream.onAbort(cancelOnDisconnect)
         }
         // c.req.raw.signal covers standard Node/undici client disconnect.
         c.req.raw.signal?.addEventListener("abort", cancelOnDisconnect, {
