@@ -1,10 +1,28 @@
-# agent-runtime
+<div align="center">
 
-[agent-sdk](https://github.com/zerone-agents/agent-sdk) agent 的 HTTP Server 运行时。
+# Zerone Agent Runtime
 
-[English](README.md) | 中文
+**AI agent 的 HTTP 服务运行时。**<br/>
+用 YAML 或 TypeScript 定义 agent，通过 Streamable HTTP（SSE + JSON）对外暴露。
 
-多 agent 运行时，支持 Streamable HTTP（SSE + JSON 内容协商）。用 YAML 或 TypeScript 定义 agent，启动服务，调用 API。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/zerone-agents/agent-runtime?style=flat)](https://github.com/zerone-agents/agent-runtime/stargazers)
+[![Node](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+
+[快速开始](#快速开始) · [文档](#文档) · [生态](#生态) · [许可证](#许可证)
+
+**[English](README.md) | 简体中文**
+
+</div>
+
+---
+
+## Zerone Agent Runtime 是什么？
+
+Zerone Agent Runtime 是 AI agent 的执行层 —— 一个轻量 HTTP 服务，把 agent 定义（YAML 或 TypeScript）转换成 REST/SSE 端点。基于 [`@zerone-agent/agent-sdk`](https://github.com/zerone-agents/agent-sdk)，负责 Streamable HTTP 传输（SSE token 流、SSE block 模式、阻塞 JSON）、会话管理、subagent 派生、File Browsing API —— 让任何客户端（agent-hub 聊天界面、CLI 或你自己的应用）都能通过统一的 HTTP 协议与 agent 交互。
+
+**三种响应模式：** SSE raw · SSE block · JSON
 
 ## 快速开始
 

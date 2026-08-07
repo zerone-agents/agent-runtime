@@ -1,10 +1,28 @@
-# agent-runtime
+<div align="center">
 
-HTTP Server runtime for [agent-sdk](https://github.com/zerone-agents/agent-sdk) agents.
+# Zerone Agent Runtime
 
-English | [中文](README.zh-CN.md)
+**HTTP server runtime for AI agents.**<br/>
+Define agents in YAML or TypeScript, expose them via Streamable HTTP (SSE + JSON).
 
-Multi-agent runtime with Streamable HTTP (SSE + JSON content negotiation). Define agents in YAML or TypeScript, start the server, call the API.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/zerone-agents/agent-runtime?style=flat)](https://github.com/zerone-agents/agent-runtime/stargazers)
+[![Node](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+
+[Quick Start](#quick-start) · [Documentation](#documentation) · [Ecosystem](#ecosystem) · [License](#license)
+
+**English | [简体中文](README.zh-CN.md)**
+
+</div>
+
+---
+
+## What is Zerone Agent Runtime?
+
+Zerone Agent Runtime is the execution layer for AI agents — a lightweight HTTP server that turns agent definitions (YAML or TypeScript) into REST/SSE endpoints. Built on [`@zerone-agent/agent-sdk`](https://github.com/zerone-agents/agent-sdk), it handles Streamable HTTP transport (SSE token streaming, SSE block mode, or blocking JSON), session management, subagent spawning, and the File Browsing API — so any client (agent-hub chat UI, CLI, or your own app) can talk to agents over a uniform HTTP contract.
+
+**Three response modes:** SSE raw · SSE block · JSON
 
 ## Quick Start
 
