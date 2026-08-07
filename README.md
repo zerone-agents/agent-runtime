@@ -238,9 +238,9 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 ## CLI
 
 ```bash
-open-agent                          # start with config from cwd
-open-agent --config ./my-agents/    # specify config directory
-open-agent --port 8080              # override port
+zerone-agent                          # start with config from cwd
+zerone-agent --config ./my-agents/    # specify config directory
+zerone-agent --port 8080              # override port
 ```
 
 ## Examples

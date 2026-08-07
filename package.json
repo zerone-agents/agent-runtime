@@ -1,6 +1,6 @@
 {
   "name": "@zerone-agent/agent-runtime",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,7 +15,7 @@
     "dist"
   ],
   "bin": {
-    "open-agent": "./dist/index.js"
+    "zerone-agent": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
