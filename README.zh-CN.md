@@ -234,9 +234,9 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 ## CLI
 
 ```bash
-open-agent                          # 使用 cwd 下的配置启动
-open-agent --config ./my-agents/    # 指定配置目录
-open-agent --port 8080              # 覆盖端口
+zerone-agent                          # 使用 cwd 下的配置启动
+zerone-agent --config ./my-agents/    # 指定配置目录
+zerone-agent --port 8080              # 覆盖端口
 ```
 
 ## 示例

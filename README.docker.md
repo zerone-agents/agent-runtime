@@ -43,7 +43,7 @@ EOF
 
 ```bash
 docker run -d \
-  --name open-agent \
+  --name zerone-agent \
   -p 3000:3000 \
   -v "$(pwd)/config:/app/config" \
   agent-runtime
@@ -55,7 +55,7 @@ docker run -d \
 
 ```bash
 docker run -d \
-  --name open-agent \
+  --name zerone-agent \
   -p 8080:8080 \
   -v "$(pwd)/config:/app/config" \
   agent-runtime
@@ -65,7 +65,7 @@ docker run -d \
 
 ```bash
 docker run -d \
-  --name open-agent \
+  --name zerone-agent \
   -p 8080:8080 \
   -v "$(pwd)/config:/app/config" \
   agent-runtime node /app/dist/index.js --config /app/config --port 8080
@@ -77,7 +77,7 @@ docker run -d \
 
 ```bash
 docker run -d \
-  --name open-agent \
+  --name zerone-agent \
   -p 3000:3000 \
   -v "$(pwd)/config:/app/config" \
   -e ZERONE_AGENT_API_KEY=your-api-key \
