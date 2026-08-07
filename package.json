@@ -28,7 +28,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@zerone-agent/agent-sdk": "^1.1.2",
+    "@zerone-agent/agent-sdk": "^1.1.5",
     "hono": "^4.7.0",
     "yaml": "^2.7.0",
     "zod": "^3.23.0"
