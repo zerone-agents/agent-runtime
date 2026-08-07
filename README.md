@@ -60,6 +60,70 @@ See [`docs/api/runs.md`](docs/api/runs.md) for the SSE event sequence, block mod
 | `GET` | `/v1/files/content` | Download a file (`?path=`) |
 | `HEAD` | `/v1/files/content` | File headers only (`?path=`) |
 
+## Run lifecycle & cancellation
+
+Every `POST /v1/agents/:agentId/runs` execution is assigned a unique
+`runId` (UUID) for transport-level identification. The ID is exposed in:
+
+- Response header `X-Run-ID` (SSE and JSON)
+- SSE initial `system` event's `runId` field
+- JSON response body's `runId` field
+
+### Cancelling a run
+
+```http
+POST /v1/runs/:runId/cancel
+```
+
+Aborts the addressed active run. Response codes:
+
+| State | Code | Body |
+|---|---|---|
+| Triggered cancellation | 202 | `{ runId, state: "cancelling" }` |
+| Repeated cancel (idempotent) | 202 | `{ runId, state: "cancelling" \| "cancelled", reason }` |
+| Run already in non-cancel terminal | 409 | `{ runId, state: "completed" \| "failed" }` |
+| Unknown / expired runId | 404 | `{ error: "Run not found" }` |
+
+Terminal-state cache TTL: **5 minutes**. After expiry, repeat cancel
+returns 404.
+
+### SSE cancellation semantics
+
+When a run is cancelled (explicit API call or client disconnect), the
+SSE stream emits:
+
+```
+event: cancelled
+data: {"runId":"...","reason":"client_request|disconnect"}
+
+event: done
+data: {}
+```
+
+- `reason=client_request`: explicit `POST /v1/runs/:runId/cancel`.
+- `reason=disconnect`: SSE client disconnected.
+
+**Client disconnect = silent cancellation**: closing the SSE connection
+aborts the underlying agent execution. The runtime does not distinguish
+"intentional cancel" from "network drop" — both stop the run to avoid
+wasting tokens.
+
+### Non-goals
+
+This API is transport-level. agent-runtime does **not** provide:
+
+- Persistent run history (use external orchestrator)
+- Retry / failover policy
+- Durable event replay (reconnect mid-stream is not supported)
+- GET status endpoint (terminal state is conveyed via the response itself)
+
+### Shutdown semantics
+
+`RunRegistry.closeAll()` is provided for orchestrators that wrap the
+runtime process (e.g. agent-deployer) and need to drain in-flight runs
+on SIGTERM. The runtime itself does not install signal handlers —
+container-level SIGTERM/KILL is the orchestrator's responsibility.
+
 ## Configuration
 
 ```yaml

@@ -60,6 +60,66 @@ SSE 事件序列、block 模式及 legacy `stream` 字段兼容性见 [`docs/api
 | `GET` | `/v1/files/content` | 下载文件（`?path=`） |
 | `HEAD` | `/v1/files/content` | 仅文件头信息（`?path=`） |
 
+## Run 生命周期与取消
+
+每次 `POST /v1/agents/:agentId/runs` 执行都会被分配一个唯一的
+`runId`（UUID）用于传输层标识。该 ID 通过以下方式暴露：
+
+- 响应头 `X-Run-ID`（SSE 和 JSON 都有）
+- SSE 初始 `system` 事件的 `runId` 字段
+- JSON 响应体的 `runId` 字段
+
+### 取消 run
+
+```http
+POST /v1/runs/:runId/cancel
+```
+
+中止指定的活跃 run。响应码：
+
+| 场景 | Code | Body |
+|---|---|---|
+| 触发取消 | 202 | `{ runId, state: "cancelling" }` |
+| 重复取消（幂等） | 202 | `{ runId, state: "cancelling" \| "cancelled", reason }` |
+| run 已处于非取消的终态 | 409 | `{ runId, state: "completed" \| "failed" }` |
+| 未知 / 过期的 runId | 404 | `{ error: "Run not found" }` |
+
+终态缓存 TTL：**5 分钟**。过期后重复取消返回 404。
+
+### SSE 取消语义
+
+当 run 被取消时（显式 API 调用或客户端断连），SSE 流会发送：
+
+```
+event: cancelled
+data: {"runId":"...","reason":"client_request|disconnect"}
+
+event: done
+data: {}
+```
+
+- `reason=client_request`：显式调用 `POST /v1/runs/:runId/cancel`。
+- `reason=disconnect`：SSE 客户端断开连接。
+
+**客户端断连 = 静默取消**：关闭 SSE 连接会中止底层的 agent 执行。
+runtime 不区分"主动取消"和"网络中断"——两者都会停止 run 以避免
+浪费 token。
+
+### 不在范围内
+
+本 API 是传输层级别的。agent-runtime **不**提供：
+
+- 持久化的 run 历史记录（请使用外部编排器）
+- 重试 / 故障转移策略
+- 可持久化的事件回放（不支持中途重连）
+- GET 状态端点（终态通过响应本身传达）
+
+### 关停语义
+
+`RunRegistry.closeAll()` 供包装 runtime 进程的编排器（例如
+agent-deployer）使用，便于在 SIGTERM 时排空 in-flight run。runtime
+自身不安装信号处理器 —— 容器级 SIGTERM/KILL 是编排器的责任。
+
 ## 配置
 
 ```yaml

@@ -7,3 +7,4 @@ dist/
 # Local uploads (skill zips, etc.)
 .zerone-uploads/
 .yione-uploads/
+.superpowers/
