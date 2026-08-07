@@ -60,7 +60,8 @@ export function createAgentRouter(
     // Optional caller-provided runId enables JSON-blocking-mode cancellation:
     // otherwise the client cannot know the runtime-generated ID until prompt()
     // resolves. Reject duplicates (active or recently terminal) with 409, and
-    // malformed UUIDs with 400.
+    // malformed UUIDs with 400. In both error cases we must close the
+    // just-created Agent — register failure must not leak SDK resources.
     let runId: string
     try {
       runId = runsRegistry.register(
@@ -68,6 +69,9 @@ export function createAgentRouter(
         callerRunId,
       )
     } catch (err) {
+      // Cleanup the Agent we created above. Swallow rejection so the
+      // documented 4xx response is preserved regardless of close() outcome.
+      await agent.close().catch(() => {})
       if (err instanceof RunIdConflictError) {
         return c.json({ error: "Run ID conflict", runId: err.runId }, 409)
       }
@@ -183,6 +187,21 @@ export function createAgentRouter(
         ...(aigcLabel ? { aigc: aigcLabel, ...(explicitHint ? { aigcExplicitHint: true } : {}) } : {}),
       })
     } catch (err) {
+      // SDK may reject prompt() when interrupted (AbortError propagates
+      // from provider fetch through engine). If the run was cancelled, the
+      // caller should see the documented cancelled response, not an error.
+      const runInfo = runsRegistry.get(runId)
+      if (runInfo?.state === "cancelling" || runInfo?.state === "cancelled") {
+        runsRegistry.markTerminal(runId, "cancelled", runInfo.reason ?? "client_request")
+        return c.json({
+          runId,
+          sessionId: agent.getSessionId(),
+          state: "cancelled",
+          reason: runInfo.reason ?? "client_request",
+          // No text/usage: prompt rejected, no partial result is available.
+          ...(aigcLabel ? { aigc: aigcLabel, ...(explicitHint ? { aigcExplicitHint: true } : {}) } : {}),
+        })
+      }
       runsRegistry.markTerminal(runId, "failed", "error")
       throw err
     } finally {

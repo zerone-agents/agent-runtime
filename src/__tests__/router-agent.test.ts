@@ -762,6 +762,9 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
 
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: "Run ID conflict", runId: callerRunId })
+    // Reviewer follow-up: agent created above must be closed exactly once
+    // even though register() threw.
+    expect(agent.close).toHaveBeenCalledTimes(1)
   })
 
   it("returns 400 on malformed caller-provided runId", async () => {
@@ -777,6 +780,8 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
 
     expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/Invalid runId format/)
+    // Reviewer follow-up: agent created above must be closed exactly once.
+    expect(agent.close).toHaveBeenCalledTimes(1)
   })
 
   it("JSON blocking run with caller-provided runId can be cancelled mid-prompt via cancel endpoint", async () => {
@@ -847,6 +852,67 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
     // Exactly-once cleanup
     expect(agent.interrupt).toHaveBeenCalledTimes(1)
     expect(agent.close).toHaveBeenCalledTimes(1)
+    expect(runsRegistry.get(callerRunId)?.state).toBe("cancelled")
+  })
+
+  it("returns cancelled body when prompt() rejects after interrupt (not error response)", async () => {
+    // Reviewer follow-up: real SDK may reject prompt() on interrupt rather
+    // than resolving with partial. The cancelled JSON contract must hold.
+    let rejectPrompt!: (reason: any) => void
+    const promptPromise = new Promise<any>((_resolve, reject) => {
+      rejectPrompt = reject
+    })
+
+    const agent = makeReadyAgent({
+      prompt: vi.fn().mockReturnValue(promptPromise),
+      interrupt: vi.fn().mockResolvedValue(undefined),
+    })
+    registry.create.mockReturnValue(agent)
+
+    const app = new Hono()
+    app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics))
+    app.route("/v1/runs", createRunsRouter(runsRegistry))
+
+    const callerRunId = "11111111-2222-3333-4444-555555555555"
+
+    const runPromise = app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false, runId: callerRunId }),
+    })
+
+    // Yield so handler reaches `await agent.prompt()`.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setImmediate(r))
+    }
+
+    // Cancel via the cancel router (sets state=cancelling, fires interrupt).
+    const cancelRes = await app.request(`http://localhost/v1/runs/${callerRunId}/cancel`, {
+      method: "POST",
+    })
+    expect(cancelRes.status).toBe(202)
+
+    // Now SDK rejects prompt (simulates AbortError propagation).
+    rejectPrompt(new Error("The operation was aborted"))
+
+    // The router should detect cancelling state and return cancelled body
+    // instead of letting the rejection bubble up as an error response.
+    const runRes = await runPromise
+    expect(runRes.status).toBe(200)
+    const body = await runRes.json()
+    expect(body).toMatchObject({
+      runId: callerRunId,
+      state: "cancelled",
+      reason: "client_request",
+    })
+    // No partial text/usage available when prompt rejected.
+    expect(body.text).toBeUndefined()
+    expect(body.usage).toBeUndefined()
+
+    // Exactly-once cleanup; no metrics recorded for cancelled runs.
+    expect(agent.interrupt).toHaveBeenCalledTimes(1)
+    expect(agent.close).toHaveBeenCalledTimes(1)
+    expect(metrics.recordRun).not.toHaveBeenCalled()
     expect(runsRegistry.get(callerRunId)?.state).toBe("cancelled")
   })
 })
