@@ -40,7 +40,7 @@ agents:
     #    未配置时，完全不扫描任何目录。
     #    settingSources: ["user", "project"]
     #
-    # 2) extraUserSkillDirs / extraProjectSkillDirs（可选）：额外扫描目录。
+    # 2) extraUserSkillDirs（可选）：额外用户级扫描目录。
     #    在默认目录之后追加，方便从其他位置（如 NAS、共享挂载）加载。
     #    extraUserSkillDirs:
     #      - "/mnt/shared/skills"

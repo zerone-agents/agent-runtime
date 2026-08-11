@@ -189,7 +189,6 @@ agents:
 | `disallowedTools` | No | — | Blacklist of tool names |
 | `settingSources` | No | — | Which skill dirs to scan: `user` (~/.openagent/skills/), `project` (<cwd>/.openagent/skills/), `local` (no-op). All scanned skills are exposed — no whitelist |
 | `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
-| `extraProjectSkillDirs` | No | — | Additional project-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
 | `subagents` | No | — | Subagent definitions for the `Task` tool |
@@ -203,7 +202,7 @@ Optional top-level `aigc` config: when enabled, every response carries an implic
 
 ### Skill loading
 
-Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to choose which directories to scan (`~/.openagent/skills/`, `<cwd>/.openagent/skills/`, plus `extraUserSkillDirs` / `extraProjectSkillDirs`); every discovered `SKILL.md` is exposed to the agent. Skills are scanned once at startup; restart to pick up changes. `GET /v1/agents/:id` surfaces the resolved list as `availableSkills`.
+Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to choose which directories to scan (`~/.openagent/skills/`, `<cwd>/.openagent/skills/`, plus `extraUserSkillDirs`); every discovered `SKILL.md` is exposed to the agent. Skills are scanned once at startup; restart to pick up changes. `GET /v1/agents/:id` surfaces the resolved list as `availableSkills`.
 
 ### Subagents
 

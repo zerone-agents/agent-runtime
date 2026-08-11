@@ -250,7 +250,6 @@ describe("AgentRegistry (factory)", () => {
         disallowedTools: ["Bash"],
         settingSources: ["project"],
         extraUserSkillDirs: ["/mnt/sk"],
-        extraProjectSkillDirs: ["./sk"],
         datasets: { book1: "description" },
       }])
       await registry.loadFromConfig(config, "/tmp")
@@ -269,7 +268,6 @@ describe("AgentRegistry (factory)", () => {
         availableSkills: fakeSkills,
         settingSources: ["project"],
         extraUserSkillDirs: ["/mnt/sk"],
-        extraProjectSkillDirs: ["./sk"],
         datasets: { book1: "description" },
       })
     })

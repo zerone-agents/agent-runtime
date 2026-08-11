@@ -70,7 +70,6 @@ const AgentDefinitionSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project"])).optional(),
   extraUserSkillDirs: z.array(z.string()).optional(),
-  extraProjectSkillDirs: z.array(z.string()).optional(),
   mcpServers: z.record(McpServerConfigSchema).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
   thinking: ThinkingConfigSchema.optional(),
