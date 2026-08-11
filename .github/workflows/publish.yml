@@ -44,18 +44,50 @@ jobs:
           echo "::endgroup::"
           test -f dist/index.js || { echo "::error::dist/index.js missing"; exit 1; }
 
-      - name: Set version from tag
+      - name: Verify tag matches package.json version
         if: github.event_name == 'push'
+        id: ver
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#runtime-v}"
-          echo "Publishing version $TAG_VERSION (from tag $GITHUB_REF_NAME)"
-          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.version = '$TAG_VERSION'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')"
+          # 必须是合法 semver（X.Y.Z 或 X.Y.Z-prerelease），否则 npm 也会拒收，提前 fail
+          if ! [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag 版本不合法: $TAG_VERSION（要求 semver：X.Y.Z 或 X.Y.Z-prerelease）"
+            exit 1
+          fi
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "tag: $GITHUB_REF_NAME → $TAG_VERSION, package.json: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag 版本 ($TAG_VERSION) 与 package.json 版本 ($PKG_VERSION) 不匹配"
+            echo "::error::请先 bump package.json 并合并到 main，再重新打 tag"
+            exit 1
+          fi
+          # 稳定版（纯数字三段）才更新 latest；prerelease 只发版本 tag
+          if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> $GITHUB_OUTPUT
+          else
+            echo "stable=false" >> $GITHUB_OUTPUT
+            echo "::notice::prerelease 版本 $TAG_VERSION：npm 用 --tag prerelease 发布，docker 不更新 latest"
+          fi
 
       - name: Set version from manual input
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        id: ver_manual
         run: |
           echo "Publishing version ${{ inputs.version }}"
           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.version = '${{ inputs.version }}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')"
+          if [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> $GITHUB_OUTPUT
+          else
+            echo "stable=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Resolve stable flag
+        id: stable
+        run: |
+          # tag 触发取 ver，手动触发取 ver_manual，默认为稳定版
+          S="${{ steps.ver.outputs.stable }}${{ steps.ver_manual.outputs.stable }}"
+          if [ -z "$S" ]; then S="true"; fi
+          echo "stable=$S" >> $GITHUB_OUTPUT
 
       - name: Show current version
         run: grep '"version"' package.json
@@ -66,7 +98,13 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: |
+          if [ "${{ steps.stable.outputs.stable }}" = "true" ]; then
+            npm publish --access public
+          else
+            # prerelease 不占用 latest dist-tag，需 npm install pkg@prerelease 或显式版本号
+            npm publish --access public --tag prerelease
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -77,7 +115,90 @@ jobs:
           echo "### ✅ Published @zerone-agent/agent-runtime" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "Stable: ${{ steps.stable.outputs.stable }}" >> $GITHUB_STEP_SUMMARY
           echo "Trigger: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           if [ "${{ job.status }}" != "success" ]; then
             echo "Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # npm publish 成功后构建镜像并推送。tag 命名约定：git tag 用 `runtime-v*`
+  # 前缀，镜像 tag 剥掉 `runtime-` 前缀用 `v*`（符合 docker / semver 生态习惯）。
+  docker-push:
+    runs-on: ubuntu-latest
+    needs: [publish]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 登录两个 registry：华为 SWR（国内主推）+ Docker Hub（国际/兜底）
+      # 两套凭据互相独立，缺一个不影响另一个登录。
+      - name: Login to SWR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY_HOST }}
+          username: ${{ secrets.DOCKER_REGISTRY_USER }}
+          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          # 镜像版本：tag 触发时剥掉 "runtime-" 前缀（runtime-v1.2.3 → v1.2.3）；
+          # 手动触发时用输入版本或 package.json 版本。
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME#runtime-}"
+          else
+            TAG="${{ inputs.version }}"
+            if [ -z "$TAG" ]; then
+              TAG="v$(node -p "require('./package.json').version")"
+            fi
+          fi
+
+          # 所有要推送的目标镜像全路径（含 registry host）。
+          # 约定：
+          #   REGISTRY_IMAGE  = SWR 完整路径（如 swr.cn-east-3.myhuaweicloud.com/zerone/agent-runtime）
+          #   DOCKERHUB_IMAGE = Docker Hub 不含 host 的 namespace/repo（如 zeroneai/agent-runtime）
+          # 任一变量未配置则跳过该 registry，避免 CI 因漏配直接挂掉。
+          declare -a TARGETS=()
+          if [ -n "${{ vars.REGISTRY_IMAGE }}" ]; then
+            TARGETS+=("${{ vars.REGISTRY_IMAGE }}")
+          fi
+          if [ -n "${{ vars.DOCKERHUB_IMAGE }}" ]; then
+            TARGETS+=("docker.io/${{ vars.DOCKERHUB_IMAGE }}")
+          fi
+
+          if [ ${#TARGETS[@]} -eq 0 ]; then
+            echo "❌ 未配置任何 registry（REGISTRY_IMAGE 或 DOCKERHUB_IMAGE 至少需要一个）"
+            exit 1
+          fi
+
+          # 构建一次，用第一个 target 占位打 tag
+          echo "Building ${TARGETS[0]}:$TAG"
+          docker build --provenance=false -f Dockerfile -t "${TARGETS[0]}:$TAG" .
+
+          # 给每个 target 推 :TAG；只有稳定版（纯数字三段）才更新 :latest
+          if [[ "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            STABLE=true
+          else
+            STABLE=false
+            echo "::notice::prerelease 版本 $TAG：只推版本 tag，不更新 latest"
+          fi
+          for IMAGE in "${TARGETS[@]}"; do
+            echo "→ Pushing $IMAGE:$TAG"
+            docker tag "${TARGETS[0]}:$TAG" "$IMAGE:$TAG"
+            docker push "$IMAGE:$TAG"
+            if [ "$STABLE" = "true" ]; then
+              docker tag "${TARGETS[0]}:$TAG" "$IMAGE:latest"
+              docker push "$IMAGE:latest"
+            fi
+          done
+
+      - name: Logout from registries
+        if: always()
+        run: |
+          docker logout ${{ vars.REGISTRY_HOST }} || true
+          docker logout docker.io || true
