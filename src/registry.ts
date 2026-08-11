@@ -46,7 +46,6 @@ export interface AgentDetail {
   availableSkills?: SkillSummary[]
   settingSources?: string[]
   extraUserSkillDirs?: string[]
-  extraProjectSkillDirs?: string[]
   mcpServers?: Record<string, McpServerSummary>
   subagents?: Record<string, { description: string }>
   datasets?: Record<string, string>
@@ -82,7 +81,6 @@ export class AgentRegistry {
             cwd: process.cwd(),
             settingSources: def.settingSources,
             extraUserSkillDirs: def.extraUserSkillDirs,
-            extraProjectSkillDirs: def.extraProjectSkillDirs,
           })
         } catch (err) {
           console.error(`Failed to scan skills for agent "${def.id}":`, err)
@@ -111,7 +109,6 @@ export class AgentRegistry {
           permissionMode: def.permissionMode,
           settingSources: def.settingSources,
           extraUserSkillDirs: def.extraUserSkillDirs,
-          extraProjectSkillDirs: def.extraProjectSkillDirs,
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
           subAgents: def.subagents as any,
@@ -168,7 +165,6 @@ export class AgentRegistry {
     if (scanned !== undefined) detail.availableSkills = scanned
     if (def.settingSources !== undefined) detail.settingSources = def.settingSources
     if (def.extraUserSkillDirs !== undefined) detail.extraUserSkillDirs = def.extraUserSkillDirs
-    if (def.extraProjectSkillDirs !== undefined) detail.extraProjectSkillDirs = def.extraProjectSkillDirs
     const mcp = sanitizeMcpServers(def.mcpServers)
     if (mcp !== undefined) detail.mcpServers = mcp
     if (def.subagents !== undefined) {

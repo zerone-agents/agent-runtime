@@ -33,7 +33,6 @@ export interface ScanOptions {
   cwd: string
   settingSources?: Array<"user" | "project">
   extraUserSkillDirs?: string[]
-  extraProjectSkillDirs?: string[]
 }
 
 /**
@@ -50,7 +49,6 @@ export async function scanSkills(opts: ScanOptions): Promise<SkillSummary[]> {
     opts.settingSources as SettingSource[],
     {
       extraUserSkillDirs: opts.extraUserSkillDirs,
-      extraProjectSkillDirs: opts.extraProjectSkillDirs,
     },
     registry,
   )

@@ -185,7 +185,6 @@ agents:
 | `disallowedTools` | 否 | — | 工具名黑名单 |
 | `settingSources` | 否 | — | 扫描哪些 skill 目录：`user`（~/.openagent/skills/）、`project`（<cwd>/.openagent/skills/）、`local`（无操作）。扫描到的 skill 全部暴露——无白名单 |
 | `extraUserSkillDirs` | 否 | — | 额外的 user 级 skill 目录（在默认目录之后扫描） |
-| `extraProjectSkillDirs` | 否 | — | 额外的 project 级 skill 目录（在默认目录之后扫描） |
 | `mcpServers` | 否 | — | MCP server 配置 |
 | `permissionMode` | 否 | `default` | `default`、`acceptEdits`、`bypassPermissions`、`plan`、`dontAsk`、`auto` |
 | `subagents` | 否 | — | 供 `Task` 工具使用的 subagent 定义 |
@@ -199,7 +198,7 @@ agents:
 
 ### Skill 加载
 
-Skill **完全由文件系统驱动**——无白名单。通过 `settingSources` 选择扫描目录（`~/.openagent/skills/`、`<cwd>/.openagent/skills/`，外加 `extraUserSkillDirs` / `extraProjectSkillDirs`）；发现的每个 `SKILL.md` 都会暴露给 agent。Skill 在启动时扫描一次，修改文件系统后需重启生效。`GET /v1/agents/:id` 返回的 `availableSkills` 字段可查看实际加载的列表。
+Skill **完全由文件系统驱动**——无白名单。通过 `settingSources` 选择扫描目录（`~/.openagent/skills/`、`<cwd>/.openagent/skills/`，外加 `extraUserSkillDirs`）；发现的每个 `SKILL.md` 都会暴露给 agent。Skill 在启动时扫描一次，修改文件系统后需重启生效。`GET /v1/agents/:id` 返回的 `availableSkills` 字段可查看实际加载的列表。
 
 ### Subagent
 

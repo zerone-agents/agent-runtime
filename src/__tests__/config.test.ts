@@ -138,14 +138,12 @@ describe("RuntimeConfigSchema", () => {
           id: "skill-agent",
           settingSources: ["user", "project"],
           extraUserSkillDirs: ["/mnt/shared/skills"],
-          extraProjectSkillDirs: ["/opt/project/skills"],
         },
       ],
     })
     const agent = result.agents[0]
     expect(agent.settingSources).toEqual(["user", "project"])
     expect(agent.extraUserSkillDirs).toEqual(["/mnt/shared/skills"])
-    expect(agent.extraProjectSkillDirs).toEqual(["/opt/project/skills"])
   })
 
   it("rejects invalid settingSources value", () => {

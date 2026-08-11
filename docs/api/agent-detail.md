@@ -194,7 +194,6 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 | `availableSkills` | `SkillSummary[]` | **运行时层**：runtime 启动时扫描文件系统得出的实际可用技能清单。仅在扫到 ≥1 个时出现。详见 [SkillSummary](#skillsummary-字段说明) |
 | `settingSources` | (`"user"` \| `"project"` \| `"local"`)[] | **配置层**：技能扫描来源：`user`→`~/.openagent/skills/`，`project`→`<cwd>/.openagent/skills/`，`local`→SDK 类型里有但 loader 未实现（no-op） |
 | `extraUserSkillDirs` | string[] | 额外用户级技能目录 |
-| `extraProjectSkillDirs` | string[] | 额外项目级技能目录 |
 | `mcpServers` | Record\<string, `McpServerSummary`\> | MCP servers，已脱敏，详见 [McpServerSummary](#mcpserversummary-字段说明) |
 | `subagents` | Record\<string, \{ `description`: string \}\> | 子代理，仅含 description，详见 [subagents](#subagents) |
 | `datasets` | Record\<string, string\> | 数据集 ID → 描述映射（运行时会被注入到 systemPrompt） |
@@ -204,7 +203,7 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 技能**完全基于文件系统**——没有白名单配置。runtime 启动时按以下顺序扫描目录：
 
 1. `settingSources: ["user"]` → `~/.openagent/skills/` + `extraUserSkillDirs`
-2. `settingSources: ["project"]` → `<cwd>/.openagent/skills/` + `extraProjectSkillDirs`
+2. `settingSources: ["project"]` → `<cwd>/.openagent/skills/`
 
 所有扫到的 SKILL.md 都会暴露给 agent，没有过滤。同名 skill 后扫到的覆盖先扫到的（project 覆盖 user）。扫描结果缓存在 `availableSkills` 字段，重启 runtime 才会刷新。
 
@@ -218,7 +217,7 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 |---|---|---|
 | `name` | string | 技能名（取自 SKILL.md frontmatter 的 `name` 字段；未填则用所在目录名） |
 | `description` | string | 技能描述（取自 SKILL.md frontmatter 的 `description` 字段，必填） |
-| `source` | `"user"` \| `"project"` | 来源层级：`user` = `~/.openagent/skills/` 或 `extraUserSkillDirs`；`project` = `<cwd>/.openagent/skills/` 或 `extraProjectSkillDirs` |
+| `source` | `"user"` \| `"project"` | 来源层级：`user` = `~/.openagent/skills/` 或 `extraUserSkillDirs`；`project` = `<cwd>/.openagent/skills/` |
 | `location` | string | SKILL.md 文件的绝对路径 |
 
 ---
