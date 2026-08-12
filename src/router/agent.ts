@@ -176,6 +176,30 @@ export function createAgentRouter(
         })
       }
 
+      // SDK >= 1.2.4: prompt() surfaces upstream engine errors via is_error
+      // instead of returning a success-looking empty result. Cancelled runs
+      // are already handled above and take precedence; here the run was not
+      // cancelled, so map the failure to a proper HTTP status.
+      if (result.is_error) {
+        runsRegistry.markTerminal(runId, "failed", result.error_type ?? "error")
+        return c.json(
+          {
+            runId,
+            sessionId: agent.getSessionId(),
+            state: "failed",
+            error: result.errors?.[0] ?? "Agent run failed",
+            errorType: result.error_type,
+            errors: result.errors,
+            text: result.text, // may contain partial output before the failure
+            usage: result.usage,
+            numTurns: result.num_turns,
+            durationMs: result.duration_ms,
+            ...(aigcLabel ? { aigc: aigcLabel, ...(explicitHint ? { aigcExplicitHint: true } : {}) } : {}),
+          },
+          result.error_type === "rate_limit" ? 429 : 502,
+        )
+      }
+
       metrics.recordRun(agentId, result.usage, undefined)
       return c.json({
         runId,

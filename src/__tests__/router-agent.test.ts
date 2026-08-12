@@ -204,6 +204,71 @@ describe("Agent Router (per-request)", () => {
         expect.objectContaining({ maxSessionTurns: undefined })
       )
     })
+
+    it("returns 429 when prompt() reports a rate_limit error (SDK is_error)", async () => {
+      const mockAgent = {
+        query: vi.fn(),
+        prompt: vi.fn().mockResolvedValue({
+          text: "",
+          usage: {},
+          num_turns: 0,
+          duration_ms: 5,
+          is_error: true,
+          error_type: "rate_limit",
+          errors: ["HTTP 429: too many requests"],
+        }),
+        close: vi.fn().mockResolvedValue(undefined),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      const res = await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false }),
+      })
+
+      expect(res.status).toBe(429)
+      const body = await res.json()
+      expect(body.state).toBe("failed")
+      expect(body.error).toContain("429")
+      expect(body.errorType).toBe("rate_limit")
+      expect(body.errors).toEqual(["HTTP 429: too many requests"])
+    })
+
+    it("returns 502 for non-rate-limit prompt errors and keeps partial text", async () => {
+      const mockAgent = {
+        query: vi.fn(),
+        prompt: vi.fn().mockResolvedValue({
+          text: "partial output",
+          usage: {},
+          num_turns: 1,
+          duration_ms: 10,
+          is_error: true,
+          error_type: "auth",
+          errors: ["HTTP 401: invalid api key"],
+        }),
+        close: vi.fn().mockResolvedValue(undefined),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      const res = await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false }),
+      })
+
+      expect(res.status).toBe(502)
+      const body = await res.json()
+      expect(body.state).toBe("failed")
+      expect(body.errorType).toBe("auth")
+      expect(body.text).toBe("partial output")
+    })
   })
 
   describe("GET /v1/agents/:agentId", () => {
