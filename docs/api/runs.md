@@ -61,6 +61,30 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"Hello"}'
 ```
 
+### Error responses (blocking mode)
+
+If the upstream LLM fails (rate limit, auth failure, connection error, etc.), the response is a non-200 status with `state: "failed"` instead of a success-looking empty result:
+
+- `429` — upstream rate limit (`errorType: "rate_limit"`)
+- `502` — all other upstream failures (e.g. `errorType: "auth"`, `"error_during_execution"`)
+
+```json
+{
+  "runId": "...",
+  "sessionId": "...",
+  "state": "failed",
+  "error": "HTTP 429: too many requests",
+  "errorType": "rate_limit",
+  "errors": ["HTTP 429: too many requests"],
+  "text": "",
+  "usage": {},
+  "numTurns": 0,
+  "durationMs": 5
+}
+```
+
+`text` may contain partial output generated before the failure. Clients should check the HTTP status code (or `state` / `error` fields) to distinguish success from failure. A run that was cancelled via `POST /v1/runs/:runId/cancel` still returns 200 with `state: "cancelled"` — cancellation takes precedence over error reporting.
+
 ## Backward Compatibility
 
 The legacy `stream` body field is still supported when no `Accept` header is provided:
