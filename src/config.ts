@@ -74,6 +74,8 @@ const AgentDefinitionSchema = z.object({
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
   thinking: ThinkingConfigSchema.optional(),
   datasets: z.record(z.string()).optional(),
+  /** Custom file-tool directory; relative paths resolve against configDir. Defaults to agents/<id>/tools. */
+  toolsDir: z.string().min(1).optional(),
   subagents: z.record(SubagentDefinitionSchema).optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),

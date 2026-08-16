@@ -60,6 +60,10 @@ Subagents are defined under an agent's `subagents` key (see the README for a YAM
 | `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
 | `maxTurns` | No | `10` | Max agentic loop turns |
 
+## Custom File Tools
+
+Each agent can load custom tools from a directory — by default `<configDir>/agents/<id>/tools/`, overridable per agent with the optional `toolsDir` field (relative paths resolve against the config directory). See [tools.md](tools.md).
+
 ## Config Discovery
 
 Search order:
