@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 import { scanSkills, type SkillSummary } from "./skills.js"
-import { loadToolDirectory } from "./tools/loader.js"
+import { loadToolFiles } from "./tools/loader.js"
 
 function convertMcpServers(
   mcpServers: Record<string, any> | undefined,
@@ -93,13 +93,14 @@ export class AgentRegistry {
           this.scannedSkills.set(def.id, availableSkills)
         }
 
-        // Load file-based custom tools. Defaults to agents/<id>/tools under
-        // configDir; def.toolsDir overrides (relative paths resolve against
-        // configDir). Failures mark this agent unavailable.
-        const toolsDir = def.toolsDir
-          ? resolve(configDir, def.toolsDir)
-          : resolve(configDir, "agents", def.id, "tools")
-        const fileTools = await loadToolDirectory(toolsDir)
+        // Load file-based custom tools listed in def.customTools.
+        // Relative paths resolve against configDir; absolute paths are
+        // used as-is. Failures mark this agent unavailable.
+        const fileTools = def.customTools?.length
+          ? await loadToolFiles(
+              def.customTools.map((p) => resolve(configDir, p)),
+            )
+          : []
         if (fileTools.length > 0) {
           this.fileToolNames.set(def.id, fileTools.map((t) => t.name))
         }

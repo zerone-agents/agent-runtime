@@ -80,7 +80,7 @@ Environment variables `ZERONE_AGENT_API_KEY` / `ZERONE_AGENT_BASE_URL` / `ZERONE
 
 ## Custom File Tools
 
-Each agent can load custom tools from a directory — by default `<configDir>/agents/<id>/tools/`, overridable per agent with the optional `toolsDir` field (relative paths resolve against the config directory). See [tools.md](tools.md).
+Each agent can load custom tools from script files listed under `customTools` (relative paths resolve against the config directory). See [tools.md](tools.md).
 
 ## Config Discovery
 

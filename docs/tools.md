@@ -1,43 +1,35 @@
 # File-Based Custom Tools
 
-Agents can declare custom tools as files in a `tools/` directory — no code changes to the runtime config required. Drop a file in, restart, and the tool is available to that agent.
+Agents can declare custom tools as script files listed in the config — no code changes to the runtime required. Add a file, list it under `customTools`, restart, and the tool is available to that agent.
 
-## Directory Convention
+## Declaring Tools
 
-```
-<configDir>/
-  agents.yaml | agent.config.ts
-  agents/
-    <agent-id>/
-      tools/
-        get_weather.ts      → tool "get_weather"
-        send_slack.mjs      → tool "send_slack"
-```
-
-- By default the directory is `<configDir>/agents/<agent-id>/tools/`, matched by config `id`.
-- Override per agent with the optional `toolsDir` field in `agents.yaml` / `agent.config.ts` — relative paths resolve against `configDir`, absolute paths are used as-is:
+List tool script files per agent in `agents.yaml` / `agent.config.ts`:
 
 ```yaml
 agents:
   - id: assistant
     model: claude-sonnet-4-6
-    toolsDir: shared/tools        # → <configDir>/shared/tools
+    allowedTools: [Task, Read, Write, Edit, Bash, Glob, Grep, WebSearch]
+    customTools:
+      - ./tools/get_weather.ts
+      - ./tools/send_slack.mjs
 ```
 
-This follows the same pattern as `systemPromptFile` (explicit path resolved against configDir); unlike the prompt, the tools directory also has a default convention.
-
-- The tool name is derived from the file name (without extension). Do not declare a `name` field.
+- Paths resolve against `configDir`; absolute paths are used as-is.
+- The tool name comes from the definition's required `name` field — consistent with the SDK's `ToolDefinition` / `tool()` convention.
 - Supported extensions: `.ts`, `.mts`, `.js`, `.mjs`.
-- The directory is optional — agents without one are unaffected.
+- `customTools` is optional — agents without it are unaffected.
 
 ## Writing a Tool
 
 ```ts
-// agents/assistant/tools/get_weather.ts
+// tools/get_weather.ts
 import { defineTool } from "@zerone-agent/agent-runtime/tools"
 import { z } from "zod"
 
 export default defineTool({
+  name: "GetWeather",
   description: "Get weather for a city",
 
   inputSchema: z.object({
@@ -57,6 +49,7 @@ export default defineTool({
 
 | Field | Required | Description |
 |---|---|---|
+| `name` | yes | Tool name, consistent with the SDK's `ToolDefinition` / `tool()` convention. |
 | `description` | yes | What the tool does; shown to the model. |
 | `inputSchema` | yes | A zod object schema. Input is validated before `execute` runs; validation failures are returned to the model as tool errors. |
 | `execute(input, context)` | yes | The tool implementation. Return a string, or any value (serialized to JSON text). Thrown errors become tool errors. |
@@ -64,16 +57,16 @@ export default defineTool({
 
 ## Rules (v1)
 
-- **Flat only** — subdirectories are ignored.
+- **Explicit list only** — tools load only from files listed in `customTools`; there is no directory scanning.
 - **Default export only** — each file must `export default defineTool({...})`.
 - **Startup loading** — tools load once at startup; editing a tool file requires a restart. No hot reload.
-- **Name collisions are errors** — `foo.ts` and `foo.mjs` in the same directory collide; there is no implicit override.
+- **Name collisions are errors** — two listed files defining the same `name` collide; there is no implicit override.
 - **Failure isolation** — if one agent's tools fail to load, that agent is marked `unavailable`; other agents and the HTTP service keep running.
 - **Trusted code** — tool files run with full Node.js privileges in the runtime process. Treat them like server code.
 
 ## Inspecting Loaded Tools
 
-The agent detail endpoint (`GET /agents/:id`) includes `fileTools` with the names of tools loaded from the directory:
+The agent detail endpoint (`GET /agents/:id`) includes `fileTools` with the names of tools loaded from `customTools` files:
 
 ```json
 { "id": "assistant", "status": "ready", "fileTools": ["get_weather"] }
@@ -86,6 +79,7 @@ The agent detail endpoint (`GET /agents/:id`) includes `fileTools` with the name
 ```js
 // tools/ping.mjs
 export default {
+  name: "Ping",
   description: "Ping",
   inputSchema: { parse: (i) => i },  // or use zod if installed
   async execute() { return "pong" },
