@@ -14,7 +14,18 @@ Agents can declare custom tools as files in a `tools/` directory — no code cha
         send_slack.mjs      → tool "send_slack"
 ```
 
-- The directory is `<configDir>/agents/<agent-id>/tools/` — one per agent, matched by config `id`.
+- By default the directory is `<configDir>/agents/<agent-id>/tools/`, matched by config `id`.
+- Override per agent with the optional `toolsDir` field in `agents.yaml` / `agent.config.ts` — relative paths resolve against `configDir`, absolute paths are used as-is:
+
+```yaml
+agents:
+  - id: assistant
+    model: claude-sonnet-4-6
+    toolsDir: shared/tools        # → <configDir>/shared/tools
+```
+
+This follows the same pattern as `systemPromptFile` (explicit path resolved against configDir); unlike the prompt, the tools directory also has a default convention.
+
 - The tool name is derived from the file name (without extension). Do not declare a `name` field.
 - Supported extensions: `.ts`, `.mts`, `.js`, `.mjs`.
 - The directory is optional — agents without one are unaffected.

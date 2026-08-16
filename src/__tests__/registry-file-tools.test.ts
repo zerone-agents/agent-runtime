@@ -45,6 +45,22 @@ describe("AgentRegistry (file tools)", () => {
     expect(mockLoadToolDirectory).toHaveBeenCalledWith("/cfg/agents/agent-a/tools")
   })
 
+  it("uses toolsDir from config when provided, resolved against configDir", async () => {
+    const config = makeConfig([
+      { id: "agent-a", model: "gpt-4", toolsDir: "shared/tools" },
+    ])
+    await registry.loadFromConfig(config, "/cfg")
+    expect(mockLoadToolDirectory).toHaveBeenCalledWith("/cfg/shared/tools")
+  })
+
+  it("accepts absolute toolsDir as-is", async () => {
+    const config = makeConfig([
+      { id: "agent-a", model: "gpt-4", toolsDir: "/opt/zerone/tools" },
+    ])
+    await registry.loadFromConfig(config, "/cfg")
+    expect(mockLoadToolDirectory).toHaveBeenCalledWith("/opt/zerone/tools")
+  })
+
   it("passes loaded file tools to createAgent as customTools", async () => {
     const fileTool = { name: "say_hello", description: "hi" }
     mockLoadToolDirectory.mockResolvedValue([fileTool as any])

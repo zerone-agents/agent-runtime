@@ -93,11 +93,13 @@ export class AgentRegistry {
           this.scannedSkills.set(def.id, availableSkills)
         }
 
-        // Load file-based custom tools from <configDir>/agents/<id>/tools.
-        // Failures mark this agent unavailable (existing per-agent fallback).
-        const fileTools = await loadToolDirectory(
-          resolve(configDir, "agents", def.id, "tools"),
-        )
+        // Load file-based custom tools. Defaults to agents/<id>/tools under
+        // configDir; def.toolsDir overrides (relative paths resolve against
+        // configDir). Failures mark this agent unavailable.
+        const toolsDir = def.toolsDir
+          ? resolve(configDir, def.toolsDir)
+          : resolve(configDir, "agents", def.id, "tools")
+        const fileTools = await loadToolDirectory(toolsDir)
         if (fileTools.length > 0) {
           this.fileToolNames.set(def.id, fileTools.map((t) => t.name))
         }
