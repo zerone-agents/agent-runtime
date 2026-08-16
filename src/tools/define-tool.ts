@@ -19,6 +19,8 @@ import type {
 import type { z, ZodObject, ZodRawShape } from "zod"
 
 export interface FileToolDefinition<T extends ZodRawShape = ZodRawShape> {
+  /** Tool name, consistent with the SDK's ToolDefinition/tool() contract. */
+  name: string
   description: string
   inputSchema: ZodObject<T>
   execute: (
@@ -45,9 +47,9 @@ function fail(fileName: string, message: string): never {
 /**
  * Turn an authored definition into an SDK ToolDefinition.
  *
- * `fileName` is the tool name (file base name without extension), derived by
- * the caller. Authored `name` fields are rejected to prevent drift between
- * the file name and the declared name.
+ * The tool name comes from the definition's required `name` field
+ * (consistent with the SDK's ToolDefinition contract); `fileName` is only
+ * used for error messages.
  */
 export function materializeTool(
   fileName: string,
@@ -57,11 +59,8 @@ export function materializeTool(
   if (!definition || typeof definition !== "object") {
     fail(fileName, "expected a tool definition object (default export)")
   }
-  if ("name" in definition) {
-    fail(
-      fileName,
-      `must not declare "name"; the tool name is derived from the file name ("${fileName}")`,
-    )
+  if (typeof definition.name !== "string" || !definition.name) {
+    fail(fileName, `"name" must be a non-empty string`)
   }
   if (typeof definition.description !== "string" || !definition.description) {
     fail(fileName, `"description" must be a non-empty string`)
@@ -74,7 +73,7 @@ export function materializeTool(
   }
 
   return sdkToolToToolDefinition({
-    name: fileName,
+    name: definition.name,
     description: definition.description,
     inputSchema: definition.inputSchema,
     annotations: definition.annotations,

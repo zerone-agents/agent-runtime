@@ -1,16 +1,16 @@
 /**
  * File-based custom tool loader.
  *
- * Scans a `tools/` directory (flat, non-recursive), dynamically imports each
- * module file, and materializes its default export into SDK ToolDefinitions
- * whose names are derived from file names.
+ * Loads explicitly listed tool script files, dynamically imports each one,
+ * and materializes its default export into SDK ToolDefinitions whose names
+ * are derived from file names.
  *
  * Tool files are trusted code running with full Node.js privileges.
  * Loading happens once at startup; there is no watching or hot reload.
  */
 
-import { readdirSync, existsSync, statSync } from "node:fs"
-import { join, basename } from "node:path"
+import { existsSync, statSync } from "node:fs"
+import { basename } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { ToolDefinition } from "@zerone-agent/agent-sdk"
 import { materializeTool, type FileToolDefinition } from "./define-tool.js"
@@ -23,14 +23,9 @@ function extensionOf(file: string): string {
   return dot < 0 ? "" : base.slice(dot)
 }
 
-function baseNameOf(file: string): string {
-  const base = basename(file)
-  const dot = base.lastIndexOf(".")
-  return dot < 0 ? base : base.slice(0, dot)
-}
-
 async function importModule(path: string): Promise<Record<string, unknown>> {
-  if (extensionOf(path) === ".ts" || extensionOf(path) === ".mts") {
+  const ext = extensionOf(path)
+  if (ext === ".ts" || ext === ".mts") {
     try {
       // Same mechanism used for agent.config.ts (see config.ts).
       // @ts-ignore - optional runtime dependency
@@ -49,52 +44,60 @@ async function importModule(path: string): Promise<Record<string, unknown>> {
 }
 
 /**
- * Load all tool files in `dir` (first level only) into SDK ToolDefinitions.
+ * Load the given tool script files into SDK ToolDefinitions.
  *
- * - Missing/empty directory -> []
- * - File name (without extension) is the tool name; collisions across
- *   extensions (foo.ts + foo.mjs) are an error.
+ * - Paths must already be resolved (the caller resolves them against
+ *   configDir); empty list -> [].
+ * - Only .ts/.mts/.js/.mjs files are accepted.
+ * - File name (without extension) is the tool name; collisions across the
+ *   listed files are an error.
  * - Any load/validation failure throws; the caller (registry) decides how to
  *   degrade per agent.
  */
-export async function loadToolDirectory(dir: string): Promise<ToolDefinition[]> {
-  if (!existsSync(dir) || !statSync(dir).isDirectory()) return []
-
-  const entries = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && TOOL_MODULE_EXTENSIONS.has(extensionOf(e.name)))
-    .map((e) => e.name)
-    .sort()
+export async function loadToolFiles(paths: string[]): Promise<ToolDefinition[]> {
+  if (paths.length === 0) return []
 
   const tools: ToolDefinition[] = []
   const seen = new Map<string, string>()
-  for (const entry of entries) {
-    const name = baseNameOf(entry)
-    const prev = seen.get(name)
-    if (prev) {
+  for (const path of paths) {
+    const file = basename(path)
+    const ext = extensionOf(file)
+    if (!TOOL_MODULE_EXTENSIONS.has(ext)) {
       throw new Error(
-        `Tool name collision in "${dir}": "${prev}" and "${entry}" both map to tool "${name}".`,
+        `Unsupported tool file "${file}": expected one of ${[...TOOL_MODULE_EXTENSIONS].join(", ")}.`,
       )
     }
-    seen.set(name, entry)
+    if (!existsSync(path) || !statSync(path).isFile()) {
+      throw new Error(`Tool file not found: "${path}".`)
+    }
 
-    const path = join(dir, entry)
     const mod = await importModule(path)
     const definition = (mod.default ?? undefined) as
       | FileToolDefinition
       | undefined
     if (definition === undefined) {
       throw new Error(
-        `Tool file "${entry}" in "${dir}" must have a default export (export default defineTool({...})).`,
+        `Tool file "${file}" must have a default export (export default defineTool({...})).`,
       )
     }
 
+    let tool: ToolDefinition
     try {
-      tools.push(materializeTool(name, definition))
+      tool = materializeTool(file, definition)
     } catch (err) {
       throw new Error(
-        `Failed to load tool file "${entry}" in "${dir}": ${(err as Error).message}`,
+        `Failed to load tool file "${file}": ${(err as Error).message}`,
       )
     }
+
+    const prev = seen.get(tool.name)
+    if (prev) {
+      throw new Error(
+        `Tool name collision: "${prev}" and "${path}" both define tool "${tool.name}".`,
+      )
+    }
+    seen.set(tool.name, path)
+    tools.push(tool)
   }
   return tools
 }

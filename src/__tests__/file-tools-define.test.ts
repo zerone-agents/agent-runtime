@@ -3,6 +3,7 @@ import { z } from "zod"
 import { defineTool, materializeTool } from "../tools/define-tool.js"
 
 const echoDef = {
+  name: "Echo",
   description: "Echo the input text",
   inputSchema: z.object({ text: z.string() }),
   async execute(input: { text: string }) {
@@ -18,19 +19,19 @@ describe("defineTool", () => {
 })
 
 describe("materializeTool", () => {
-  it("derives the tool name from the given filename", () => {
+  it("takes the tool name from the definition (SDK convention)", () => {
     const tool = materializeTool("get_weather", defineTool(echoDef))
-    expect(tool.name).toBe("get_weather")
+    expect(tool.name).toBe("Echo")
     expect(tool.description).toBe("Echo the input text")
   })
 
-  it("rejects definitions that carry their own name field", () => {
-    const def = defineTool({ ...echoDef, name: "sneaky" } as any)
-    expect(() => materializeTool("get_weather", def)).toThrow(/name/)
+  it("rejects definitions missing a name", () => {
+    const { name: _name, ...def } = echoDef
+    expect(() => materializeTool("get_weather", def as any)).toThrow(/name/)
   })
 
   it("rejects definitions missing description", () => {
-    const def = { inputSchema: echoDef.inputSchema, execute: echoDef.execute } as any
+    const def = { name: "Echo", inputSchema: echoDef.inputSchema, execute: echoDef.execute } as any
     expect(() => materializeTool("get_weather", def)).toThrow(/description/)
   })
 
@@ -40,7 +41,7 @@ describe("materializeTool", () => {
   })
 
   it("rejects definitions missing inputSchema", () => {
-    const def = { description: "x", execute: echoDef.execute } as any
+    const def = { name: "Echo", description: "x", execute: echoDef.execute } as any
     expect(() => materializeTool("get_weather", def)).toThrow(/inputSchema/)
   })
 

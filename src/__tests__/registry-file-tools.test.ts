@@ -14,14 +14,14 @@ vi.mock("../skills.js", () => ({
 }))
 
 vi.mock("../tools/loader.js", () => ({
-  loadToolDirectory: vi.fn(async () => []),
+  loadToolFiles: vi.fn(async () => []),
 }))
 
 import { createAgent } from "@zerone-agent/agent-sdk"
-import { loadToolDirectory } from "../tools/loader.js"
+import { loadToolFiles } from "../tools/loader.js"
 
 const mockCreateAgent = vi.mocked(createAgent)
-const mockLoadToolDirectory = vi.mocked(loadToolDirectory)
+const mockLoadToolFiles = vi.mocked(loadToolFiles)
 
 function makeConfig(agents: any[]) {
   return {
@@ -35,38 +35,43 @@ describe("AgentRegistry (file tools)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mockLoadToolDirectory.mockResolvedValue([])
+    mockLoadToolFiles.mockResolvedValue([])
     registry = new AgentRegistry()
   })
 
-  it("loads file tools from <configDir>/agents/<id>/tools", async () => {
+  it("does not load tool files when customTools is not configured", async () => {
     const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
     await registry.loadFromConfig(config, "/cfg")
-    expect(mockLoadToolDirectory).toHaveBeenCalledWith("/cfg/agents/agent-a/tools")
+    expect(mockLoadToolFiles).not.toHaveBeenCalled()
   })
 
-  it("uses toolsDir from config when provided, resolved against configDir", async () => {
+  it("resolves customTools entries against configDir", async () => {
     const config = makeConfig([
-      { id: "agent-a", model: "gpt-4", toolsDir: "shared/tools" },
+      { id: "agent-a", model: "gpt-4", customTools: ["tools/a.ts", "tools/b.mjs"] },
     ])
     await registry.loadFromConfig(config, "/cfg")
-    expect(mockLoadToolDirectory).toHaveBeenCalledWith("/cfg/shared/tools")
+    expect(mockLoadToolFiles).toHaveBeenCalledWith([
+      "/cfg/tools/a.ts",
+      "/cfg/tools/b.mjs",
+    ])
   })
 
-  it("accepts absolute toolsDir as-is", async () => {
+  it("accepts absolute customTools paths as-is", async () => {
     const config = makeConfig([
-      { id: "agent-a", model: "gpt-4", toolsDir: "/opt/zerone/tools" },
+      { id: "agent-a", model: "gpt-4", customTools: ["/opt/zerone/tools/a.ts"] },
     ])
     await registry.loadFromConfig(config, "/cfg")
-    expect(mockLoadToolDirectory).toHaveBeenCalledWith("/opt/zerone/tools")
+    expect(mockLoadToolFiles).toHaveBeenCalledWith(["/opt/zerone/tools/a.ts"])
   })
 
   it("passes loaded file tools to createAgent as customTools", async () => {
     const fileTool = { name: "say_hello", description: "hi" }
-    mockLoadToolDirectory.mockResolvedValue([fileTool as any])
+    mockLoadToolFiles.mockResolvedValue([fileTool as any])
     mockCreateAgent.mockReturnValue({ close: vi.fn() } as any)
 
-    const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
+    const config = makeConfig([
+      { id: "agent-a", model: "gpt-4", customTools: ["tools/a.ts"] },
+    ])
     await registry.loadFromConfig(config, "/cfg")
     registry.create("agent-a")
 
@@ -75,14 +80,14 @@ describe("AgentRegistry (file tools)", () => {
   })
 
   it("marks only the failing agent unavailable when tool loading throws", async () => {
-    mockLoadToolDirectory.mockImplementation(async (dir: string) => {
-      if (dir.includes("bad-agent")) throw new Error("invalid tool file")
+    mockLoadToolFiles.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("bad"))) throw new Error("invalid tool file")
       return []
     })
 
     const config = makeConfig([
-      { id: "bad-agent", model: "gpt-4" },
-      { id: "good-agent", model: "gpt-4" },
+      { id: "bad-agent", model: "gpt-4", customTools: ["tools/bad.ts"] },
+      { id: "good-agent", model: "gpt-4", customTools: ["tools/good.ts"] },
     ])
     await registry.loadFromConfig(config, "/cfg")
 
@@ -91,12 +96,14 @@ describe("AgentRegistry (file tools)", () => {
   })
 
   it("exposes loaded file tool names in agent detail", async () => {
-    mockLoadToolDirectory.mockResolvedValue([
+    mockLoadToolFiles.mockResolvedValue([
       { name: "say_hello" },
       { name: "get_weather" },
     ] as any)
 
-    const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
+    const config = makeConfig([
+      { id: "agent-a", model: "gpt-4", customTools: ["tools/a.ts"] },
+    ])
     await registry.loadFromConfig(config, "/cfg")
 
     expect(registry.getDetail("agent-a")?.fileTools).toEqual([
@@ -105,7 +112,7 @@ describe("AgentRegistry (file tools)", () => {
     ])
   })
 
-  it("omits fileTools in detail when the agent has no tool directory", async () => {
+  it("omits fileTools in detail when customTools is not configured", async () => {
     const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
     await registry.loadFromConfig(config, "/cfg")
     expect(registry.getDetail("agent-a")?.fileTools).toBeUndefined()
