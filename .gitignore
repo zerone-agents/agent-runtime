@@ -8,3 +8,6 @@ dist/
 .zerone-uploads/
 .yione-uploads/
 .superpowers/
+
+# Development process artifacts (specs/plans), kept local only
+docs/superpowers/
