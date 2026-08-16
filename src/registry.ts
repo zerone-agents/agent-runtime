@@ -110,9 +110,9 @@ export class AgentRegistry {
         // into the `agent` field (AgentDefinition).
         const opts: CreateOpts = {
           model: process.env.ZERONE_AGENT_MODEL ?? def.model,
-          apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? undefined,
-          apiKey: process.env.ZERONE_AGENT_API_KEY ?? undefined,
-          baseURL: process.env.ZERONE_AGENT_BASE_URL ?? undefined,
+          apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? (def.apiType as any) ?? undefined,
+          apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
+          baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
           agent: {
             description: def.name ?? def.id,
             prompt: systemPrompt ?? "",
