@@ -1,7 +1,9 @@
 import { createAgent, type Agent } from "@zerone-agent/agent-sdk"
+import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 import { scanSkills, type SkillSummary } from "./skills.js"
+import { loadToolDirectory } from "./tools/loader.js"
 
 function convertMcpServers(
   mcpServers: Record<string, any> | undefined,
@@ -49,6 +51,7 @@ export interface AgentDetail {
   mcpServers?: Record<string, McpServerSummary>
   subagents?: Record<string, { description: string }>
   datasets?: Record<string, string>
+  fileTools?: string[]
 }
 
 type CreateOpts = Parameters<typeof createAgent>[0]
@@ -58,6 +61,7 @@ export class AgentRegistry {
   private createOpts = new Map<string, CreateOpts>()
   private statuses = new Map<string, "ready" | "unavailable">()
   private scannedSkills = new Map<string, SkillSummary[]>()
+  private fileToolNames = new Map<string, string[]>()
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
     this.defs.set(id, def)
@@ -89,6 +93,15 @@ export class AgentRegistry {
           this.scannedSkills.set(def.id, availableSkills)
         }
 
+        // Load file-based custom tools from <configDir>/agents/<id>/tools.
+        // Failures mark this agent unavailable (existing per-agent fallback).
+        const fileTools = await loadToolDirectory(
+          resolve(configDir, "agents", def.id, "tools"),
+        )
+        if (fileTools.length > 0) {
+          this.fileToolNames.set(def.id, fileTools.map((t) => t.name))
+        }
+
         // NOTE: do not pass `allowedSkills` to SDK. New SDK semantics:
         // omitting it means "no filter" — every scanned skill is exposed.
         // SDK 1.0.0 API: systemPrompt/allowedTools/disallowedTools/maxTurns moved
@@ -112,6 +125,7 @@ export class AgentRegistry {
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
           subAgents: def.subagents as any,
+          customTools: fileTools.length > 0 ? fileTools : undefined,
         }
 
         this.defs.set(def.id, def)
@@ -175,6 +189,8 @@ export class AgentRegistry {
       detail.subagents = sub
     }
     if (def.datasets !== undefined) detail.datasets = def.datasets
+    const fileTools = this.fileToolNames.get(def.id)
+    if (fileTools && fileTools.length > 0) detail.fileTools = fileTools
     return detail
   }
 
@@ -200,6 +216,7 @@ export class AgentRegistry {
     this.createOpts.clear()
     this.statuses.clear()
     this.scannedSkills.clear()
+    this.fileToolNames.clear()
   }
 }
 
