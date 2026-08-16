@@ -62,6 +62,10 @@ const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
   model: z.string().default("claude-sonnet-4-6"),
+  /** Provider credentials; env vars (ZERONE_AGENT_API_KEY/BASE_URL/API_TYPE) take precedence. Never exposed via the detail endpoint. */
+  apiKey: z.string().min(1).optional(),
+  baseURL: z.string().min(1).optional(),
+  apiType: z.string().min(1).optional(),
   systemPrompt: z.string().optional(),
   systemPromptFile: z.string().optional(),
   maxTurns: z.number().default(10),

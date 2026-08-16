@@ -60,6 +60,24 @@ Subagents are defined under an agent's `subagents` key (see the README for a YAM
 | `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
 | `maxTurns` | No | `10` | Max agentic loop turns |
 
+## Provider Credentials
+
+Each agent accepts optional `apiKey`, `baseURL`, and `apiType` fields, so different agents can use different providers:
+
+```yaml
+agents:
+  - id: assistant
+    model: claude-sonnet-4-6
+    apiKey: sk-ant-...
+  - id: coder
+    model: deepseek-v3
+    apiType: openai
+    baseURL: https://api.deepseek.com
+    apiKey: sk-ds-...
+```
+
+Environment variables `ZERONE_AGENT_API_KEY` / `ZERONE_AGENT_BASE_URL` / `ZERONE_AGENT_API_TYPE` take precedence over config values when set (they apply to all agents). Credentials are never exposed via the agent detail endpoint.
+
 ## Custom File Tools
 
 Each agent can load custom tools from a directory — by default `<configDir>/agents/<id>/tools/`, overridable per agent with the optional `toolsDir` field (relative paths resolve against the config directory). See [tools.md](tools.md).
