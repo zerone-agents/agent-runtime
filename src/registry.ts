@@ -1,4 +1,4 @@
-import { createAgent, type Agent } from "@zerone-agent/agent-sdk"
+import { createAgent, type Agent, type AgentDefinition as SdkAgentDefinition } from "@zerone-agent/agent-sdk"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -15,6 +15,33 @@ function convertMcpServers(
       return [name, { ...rest, type: transport }]
     }),
   )
+}
+
+/**
+ * Materialize SDK subAgents from id references. Only the 5 fields the SDK
+ * actually consumes are mapped; credentials, skills, customTools, datasets
+ * and the mounted agent's own subagents do NOT apply in mounted context
+ * (delegation depth is 1, matching the SDK's spawn-subagent design).
+ */
+function buildSubAgents(
+  def: AgentDefinition,
+  defsById: Map<string, AgentDefinition>,
+  configDir: string,
+): Record<string, SdkAgentDefinition> | undefined {
+  if (!def.subagents?.length) return undefined
+  const result: Record<string, SdkAgentDefinition> = {}
+  for (const id of def.subagents) {
+    const sub = defsById.get(id)
+    if (!sub) continue // refs validated at config load; defensive skip
+    result[id] = {
+      description: sub.description,
+      prompt: resolveSystemPrompt(sub, configDir) ?? "",
+      allowedTools: sub.allowedTools,
+      disallowedTools: sub.disallowedTools,
+      maxTurns: sub.maxTurns,
+    }
+  }
+  return result
 }
 
 export interface AgentInfo {
@@ -49,7 +76,7 @@ export interface AgentDetail {
   settingSources?: string[]
   extraUserSkillDirs?: string[]
   mcpServers?: Record<string, McpServerSummary>
-  subagents?: Record<string, { description: string }>
+  subagents?: Array<{ agent_id: string; description: string }>
   datasets?: Record<string, string>
   fileTools?: string[]
 }
@@ -70,6 +97,7 @@ export class AgentRegistry {
   }
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
+    const defsById = new Map(config.agents.map((a) => [a.id, a] as const))
     for (const def of config.agents) {
       try {
         const systemPrompt = resolveSystemPrompt(def, configDir)
@@ -115,7 +143,7 @@ export class AgentRegistry {
           apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
           baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
           agent: {
-            description: def.name ?? def.id,
+            description: def.description,
             prompt: systemPrompt ?? "",
             allowedTools: def.allowedTools,
             disallowedTools: def.disallowedTools,
@@ -127,7 +155,7 @@ export class AgentRegistry {
           extraUserSkillDirs: def.extraUserSkillDirs,
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
-          subAgents: def.subagents as any,
+          subAgents: buildSubAgents(def, defsById, configDir),
           customTools: fileTools.length > 0 ? fileTools : undefined,
         }
 
@@ -185,11 +213,10 @@ export class AgentRegistry {
     const mcp = sanitizeMcpServers(def.mcpServers)
     if (mcp !== undefined) detail.mcpServers = mcp
     if (def.subagents !== undefined) {
-      const sub: Record<string, { description: string }> = {}
-      for (const [id, s] of Object.entries(def.subagents)) {
-        sub[id] = { description: s.description }
-      }
-      detail.subagents = sub
+      detail.subagents = def.subagents.map((id) => ({
+        agent_id: id,
+        description: this.defs.get(id)?.description ?? "",
+      }))
     }
     if (def.datasets !== undefined) detail.datasets = def.datasets
     const fileTools = this.fileToolNames.get(def.id)

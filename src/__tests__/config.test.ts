@@ -8,6 +8,7 @@ import {
   loadYamlConfig,
   findConfigDir,
   discoverConfig,
+  validateSubagentRefs,
   type AgentDefinition,
 } from "../config.js"
 
@@ -47,6 +48,7 @@ describe("RuntimeConfigSchema", () => {
         {
           id: "agent-1",
           name: "Test Agent",
+          description: "full-feature test agent",
           model: "gpt-4o",
           systemPrompt: "You are helpful.",
           maxTurns: 20,
@@ -71,6 +73,7 @@ describe("RuntimeConfigSchema", () => {
       agents: [
         {
           id: "dataset-agent",
+          description: "agent with datasets",
           datasets: {
             "dataset-1": "Primary dataset",
             "dataset-2": "Secondary dataset",
@@ -87,7 +90,7 @@ describe("RuntimeConfigSchema", () => {
 
   it("accepts a minimal config with only agents", () => {
     const config = {
-      agents: [{ id: "minimal" }],
+      agents: [{ id: "minimal", description: "minimal agent" }],
     }
     const result = RuntimeConfigSchema.parse(config)
     expect(result.agents).toHaveLength(1)
@@ -110,7 +113,7 @@ describe("RuntimeConfigSchema", () => {
         produceIdPrefix: "prod-",
         modelCodes: { "qwen-max": "0002" },
       },
-      agents: [{ id: "a" }],
+      agents: [{ id: "a", description: "aigc test agent" }],
     })
     expect(result.aigc?.enabled).toBe(true)
     expect(result.aigc?.contentProducer).toBe("001191320118MAK93FC72D10001")
@@ -118,7 +121,7 @@ describe("RuntimeConfigSchema", () => {
   })
 
   it("leaves aigc undefined when omitted", () => {
-    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a" }] })
+    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a", description: "agent" }] })
     expect(result.aigc).toBeUndefined()
   })
 
@@ -126,7 +129,7 @@ describe("RuntimeConfigSchema", () => {
     expect(() =>
       RuntimeConfigSchema.parse({
         aigc: { enabled: true, contentProducer: "x".repeat(27), label: "9" },
-        agents: [{ id: "a" }],
+        agents: [{ id: "a", description: "agent" }],
       }),
     ).toThrow()
   })
@@ -136,6 +139,7 @@ describe("RuntimeConfigSchema", () => {
       agents: [
         {
           id: "skill-agent",
+          description: "agent with skill config",
           settingSources: ["user", "project"],
           extraUserSkillDirs: ["/mnt/shared/skills"],
         },
@@ -152,6 +156,7 @@ describe("RuntimeConfigSchema", () => {
         agents: [
           {
             id: "bad",
+            description: "agent",
             settingSources: ["global"],
           },
         ],
@@ -165,6 +170,7 @@ describe("RuntimeConfigSchema", () => {
         agents: [
           {
             id: "bad-local",
+            description: "agent",
             settingSources: ["user", "local"],
           },
         ],
@@ -174,7 +180,7 @@ describe("RuntimeConfigSchema", () => {
 
   it("provides correct defaults", () => {
     const result = RuntimeConfigSchema.parse({
-      agents: [{ id: "defaults-test" }],
+      agents: [{ id: "defaults-test", description: "defaults agent" }],
     })
     expect(result.server).toEqual({ host: "0.0.0.0", port: 3000 })
     expect(result.agents[0].maxTurns).toBe(10)
@@ -197,6 +203,7 @@ describe("RuntimeConfigSchema", () => {
         agents: [
           {
             id: "conflict",
+            description: "agent",
             systemPrompt: "hello",
             systemPromptFile: "prompt.md",
           },
@@ -205,72 +212,36 @@ describe("RuntimeConfigSchema", () => {
     ).toThrow(/mutually exclusive/)
   })
 
-  it("accepts agents with subagent definitions", () => {
-    const config = {
+  it("accepts subagents as an id reference list", () => {
+    const config = RuntimeConfigSchema.parse({
+      server: { host: "0.0.0.0", port: 3000 },
       agents: [
-        {
-          id: "coordinator",
-          systemPrompt: "Delegate to subagents.",
-          allowedTools: ["Task"],
-          subagents: {
-            coder: {
-              description: "Coder subagent",
-              prompt: "You are a coder.",
-              tools: ["Read", "Write", "Edit"],
-              model: "claude-sonnet-4-6",
-              maxTurns: 30,
-            },
-            researcher: {
-              description: "Researcher subagent",
-              prompt: "You are a researcher.",
-              tools: ["WebSearch", "WebFetch"],
-              mcpServers: [{ name: "github", tools: ["search_issues"] }],
-              maxTurns: 15,
-            },
-          },
-        },
+        { id: "general", description: "main agent", model: "gpt-4", subagents: ["coder"] },
+        { id: "coder", description: "writes code", model: "gpt-4" },
       ],
-    }
-    const result = RuntimeConfigSchema.parse(config)
-    const agent = result.agents[0]
-    expect(agent.subagents).toBeDefined()
-    expect(agent.subagents?.coder.description).toBe("Coder subagent")
-    expect(agent.subagents?.coder.maxTurns).toBe(30)
-    expect(agent.subagents?.researcher.mcpServers).toEqual([
-      { name: "github", tools: ["search_issues"] },
-    ])
+    })
+    expect(config.agents[0].subagents).toEqual(["coder"])
   })
 
-  it("rejects subagent definition missing required description", () => {
+  it("rejects legacy inline subagent Record form", () => {
     expect(() =>
       RuntimeConfigSchema.parse({
         agents: [
           {
-            id: "coordinator",
-            subagents: {
-              bad: {
-                prompt: "missing description",
-              },
-            },
+            id: "a",
+            description: "x",
+            model: "gpt-4",
+            subagents: { coder: { description: "d", prompt: "p" } },
           },
         ],
       }),
     ).toThrow()
   })
 
-  it("rejects subagent definition missing required prompt", () => {
+  it("rejects agent missing description", () => {
     expect(() =>
       RuntimeConfigSchema.parse({
-        agents: [
-          {
-            id: "coordinator",
-            subagents: {
-              bad: {
-                description: "missing prompt",
-              },
-            },
-          },
-        ],
+        agents: [{ id: "a", model: "gpt-4" }],
       }),
     ).toThrow()
   })
@@ -278,14 +249,14 @@ describe("RuntimeConfigSchema", () => {
   describe("maxSessionTurns", () => {
     it("parses maxSessionTurns when provided", () => {
       const result = RuntimeConfigSchema.parse({
-        agents: [{ id: "assistant", maxSessionTurns: 50 }],
+        agents: [{ id: "assistant", description: "assistant", maxSessionTurns: 50 }],
       })
       expect(result.agents[0].maxSessionTurns).toBe(50)
     })
 
     it("leaves maxSessionTurns undefined when not provided", () => {
       const result = RuntimeConfigSchema.parse({
-        agents: [{ id: "assistant" }],
+        agents: [{ id: "assistant", description: "assistant" }],
       })
       expect(result.agents[0].maxSessionTurns).toBeUndefined()
     })
@@ -295,20 +266,20 @@ describe("RuntimeConfigSchema", () => {
 describe("AuthConfigSchema", () => {
   it("accepts config with auth.apiKey", () => {
     const result = RuntimeConfigSchema.parse({
-      agents: [{ id: "a1" }],
+      agents: [{ id: "a1", description: "agent" }],
       auth: { apiKey: "my-secret" },
     })
     expect(result.auth?.apiKey).toBe("my-secret")
   })
 
   it("accepts config without auth field", () => {
-    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a1" }] })
+    const result = RuntimeConfigSchema.parse({ agents: [{ id: "a1", description: "agent" }] })
     expect(result.auth).toBeUndefined()
   })
 
   it("accepts auth object with no apiKey (optional)", () => {
     const result = RuntimeConfigSchema.parse({
-      agents: [{ id: "a1" }],
+      agents: [{ id: "a1", description: "agent" }],
       auth: {},
     })
     expect(result.auth).toEqual({})
@@ -317,7 +288,7 @@ describe("AuthConfigSchema", () => {
   it("rejects empty string apiKey", () => {
     expect(() =>
       RuntimeConfigSchema.parse({
-        agents: [{ id: "a1" }],
+        agents: [{ id: "a1", description: "agent" }],
         auth: { apiKey: "" },
       }),
     ).toThrow()
@@ -328,6 +299,7 @@ describe("resolveSystemPrompt", () => {
   it("returns inline systemPrompt", () => {
     const agent: AgentDefinition = {
       id: "a",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       systemPrompt: "Be helpful.",
@@ -339,6 +311,7 @@ describe("resolveSystemPrompt", () => {
     const filePath = tmpFile("prompt.md", "# You are a coder\nWrite clean code.")
     const agent: AgentDefinition = {
       id: "b",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       systemPromptFile: "prompt.md",
@@ -349,6 +322,7 @@ describe("resolveSystemPrompt", () => {
   it("returns undefined when neither systemPrompt nor systemPromptFile is set", () => {
     const agent: AgentDefinition = {
       id: "c",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
     }
@@ -358,6 +332,7 @@ describe("resolveSystemPrompt", () => {
   it("appends formatted datasets to systemPrompt", () => {
     const agent: AgentDefinition = {
       id: "a",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       systemPrompt: "Be helpful.",
@@ -374,6 +349,7 @@ describe("resolveSystemPrompt", () => {
   it("returns only datasets block when systemPrompt is not set", () => {
     const agent: AgentDefinition = {
       id: "b",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       datasets: {
@@ -388,6 +364,7 @@ describe("resolveSystemPrompt", () => {
   it("returns empty datasets block when datasets is empty object", () => {
     const agent: AgentDefinition = {
       id: "c",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       datasets: {},
@@ -398,6 +375,7 @@ describe("resolveSystemPrompt", () => {
   it("returns unchanged systemPrompt when datasets is not configured", () => {
     const agent: AgentDefinition = {
       id: "d",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       systemPrompt: "Be helpful.",
@@ -409,6 +387,7 @@ describe("resolveSystemPrompt", () => {
     const filePath = tmpFile("prompt.md", "File prompt.")
     const agent: AgentDefinition = {
       id: "e",
+      description: "agent",
       model: "claude-sonnet-4-6",
       maxTurns: 10,
       systemPromptFile: "prompt.md",
@@ -428,6 +407,7 @@ server:
   port: 8080
 agents:
   - id: yaml-agent
+    description: yaml test agent
     model: gpt-4o
     systemPrompt: Hello from YAML
 `)
@@ -436,31 +416,49 @@ agents:
     expect(config.server.port).toBe(8080)
   })
 
-  it("loads YAML config with subagent definitions", () => {
-    const path = tmpFile("agents-with-subagents.yaml", `
+  it("loads YAML config with subagent references", () => {
+    const path = tmpFile(
+      "agents-with-subagents.yaml",
+      `
+server:
+  port: 3000
 agents:
-  - id: coordinator
-    systemPrompt: Delegate tasks.
-    allowedTools:
-      - Task
+  - id: general
+    description: main agent
+    model: gpt-4
     subagents:
-      coder:
-        description: Code writer
-        prompt: You write code.
-        tools:
-          - Read
-          - Write
-        maxTurns: 25
-`)
+      - coder
+  - id: coder
+    description: code writer
+    model: gpt-4
+`,
+    )
     const config = loadYamlConfig(path)
-    expect(config.agents[0].id).toBe("coordinator")
-    expect(config.agents[0].subagents?.coder.description).toBe("Code writer")
-    expect(config.agents[0].subagents?.coder.maxTurns).toBe(25)
+    expect(config.agents[0].subagents).toEqual(["coder"])
   })
 
   it("throws for missing file", () => {
     expect(() => loadYamlConfig("/nonexistent/path/agents.yaml")).toThrow(
       /Config file not found/,
+    )
+  })
+
+  it("throws a migration hint for the legacy inline subagent Record form", () => {
+    const path = tmpFile(
+      "agents-legacy-inline-subagents.yaml",
+      `
+agents:
+  - id: general
+    description: main agent
+    model: gpt-4
+    subagents:
+      coder:
+        description: code writer
+        prompt: write code
+`,
+    )
+    expect(() => loadYamlConfig(path)).toThrow(
+      'Agent "general": inline subagent definitions were removed in 2.0. Define the subagent in the top-level agents list and reference it by id, e.g. subagents: ["coder"]',
     )
   })
 
@@ -517,6 +515,7 @@ describe("discoverConfig", () => {
     tmpFile("agents.yaml", `
 agents:
   - id: discovered
+    description: discovered agent
     systemPrompt: hi
 `)
     const config = await discoverConfig(TMP)
@@ -527,12 +526,87 @@ agents:
     tmpFile("agent.config.ts", `
 export default {
   server: { port: 4000 },
-  agents: [{ id: "ts-agent", systemPrompt: "hello from ts" }],
+  agents: [{ id: "ts-agent", description: "ts agent", systemPrompt: "hello from ts" }],
 }
 `)
     const config = await discoverConfig(TMP)
     expect(config.agents[0].id).toBe("ts-agent")
     expect(config.server.port).toBe(4000)
+  })
+})
+
+describe("validateSubagentRefs", () => {
+  const base = (agents: any[]) =>
+    ({ server: { host: "0.0.0.0", port: 3000 }, agents }) as any
+
+  it("passes for valid references", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["b", "c"] },
+          { id: "b", description: "y" },
+          { id: "c", description: "z" },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it("throws listing available ids for unknown reference", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["ghost"] },
+          { id: "b", description: "y" },
+        ]),
+      ),
+    ).toThrow('Agent "a" references unknown subagent "ghost". Available agent ids: a, b')
+  })
+
+  it("throws for duplicate reference", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["b", "b"] },
+          { id: "b", description: "y" },
+        ]),
+      ),
+    ).toThrow('Agent "a" duplicates subagent reference "b"')
+  })
+
+  it("allows self and cyclic references", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["a", "b"] },
+          { id: "b", description: "y", subagents: ["a"] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it("throws for duplicate agent ids", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "coder", description: "first definition" },
+          { id: "coder", description: "second definition" },
+        ]),
+      ),
+    ).toThrow('Duplicate agent id "coder" in agents list')
+  })
+
+  it("is enforced by loadYamlConfig", () => {
+    const path = tmpFile(
+      "agents-bad-ref.yaml",
+      `
+agents:
+  - id: a
+    description: x
+    model: gpt-4
+    subagents: [ghost]
+`,
+    )
+    expect(() => loadYamlConfig(path)).toThrow('unknown subagent "ghost"')
   })
 })
 

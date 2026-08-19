@@ -37,6 +37,7 @@ export default defineConfig({
   agents: [
     {
       id: "smart",
+      description: "智能助手，可读写文件、执行命令、查询天气和计算",
       model: "claude-sonnet-4-6",
       systemPrompt: "You are a smart assistant with weather and calculator tools.",
       maxTurns: 15,
@@ -46,19 +47,28 @@ export default defineConfig({
 })
 ```
 
-## Subagent Fields
+## Subagents (Reference Mounting)
 
-Subagents are defined under an agent's `subagents` key (see the README for a YAML example).
+Subagents are not defined separately — every agent lives in the flat `agents` list (with a required `description`). Mount agents by id under `subagents`:
 
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `description` | Yes | — | Short description shown to the parent agent |
-| `prompt` | Yes | — | System prompt for the subagent |
-| `tools` | No | all tools | Whitelist of tool names |
-| `disallowedTools` | No | — | Blacklist of tool names |
-| `model` | No | inherits parent | LLM model name |
-| `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
-| `maxTurns` | No | `10` | Max agentic loop turns |
+```yaml
+agents:
+  - id: "coordinator"
+    description: "Delegates to specialists"
+    subagents: ["coder", "researcher"]
+  - id: "coder"
+    description: "Writes code"
+    systemPrompt: "You are an expert programmer."
+  - id: "researcher"
+    description: "Researches topics"
+```
+
+Rules:
+
+- `description` is required on every agent — it drives Task routing and the detail endpoint.
+- Mounting maps only `description`, `systemPrompt`/`systemPromptFile` (resolved, including `datasets` concatenation), `allowedTools`, `disallowedTools`, `maxTurns`.
+- Unknown or duplicate ids in `subagents` fail at config load (the error lists available agent ids). Self/cyclic references are allowed.
+- Delegation depth is 1 — a mounted agent's own `subagents` apply only when that agent is run directly, never in the mounted context.
 
 ## Provider Credentials
 
@@ -67,9 +77,11 @@ Each agent accepts optional `apiKey`, `baseURL`, and `apiType` fields, so differ
 ```yaml
 agents:
   - id: assistant
+    description: "General-purpose assistant"
     model: claude-sonnet-4-6
     apiKey: sk-ant-...
   - id: coder
+    description: "Writes code"
     model: deepseek-v3
     apiType: openai
     baseURL: https://api.deepseek.com

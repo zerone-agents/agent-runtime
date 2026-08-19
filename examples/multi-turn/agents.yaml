@@ -1,6 +1,7 @@
 agents:
   - id: "chatbot"
     name: "聊天助手"
+    description: "友好的聊天助手"
     model: "claude-sonnet-4-6"
     systemPrompt: |
       你是一个友好的聊天助手。

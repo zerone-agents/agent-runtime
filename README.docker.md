@@ -33,6 +33,7 @@ mkdir config
 cat > config/agents.yaml << 'EOF'
 agents:
   - id: "assistant"
+    description: "通用助手"
     model: "claude-sonnet-4-6"
     systemPrompt: "You are a helpful assistant."
     maxTurns: 10

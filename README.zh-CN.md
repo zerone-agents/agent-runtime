@@ -33,6 +33,7 @@ npm install
 cat > agents.yaml << 'EOF'
 agents:
   - id: "assistant"
+    description: "通用助手"
     model: "claude-sonnet-4-6"
     systemPrompt: "You are a helpful assistant."
     maxTurns: 10
@@ -176,6 +177,7 @@ agents:
 | 字段 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
 | `id` | 是 | — | 唯一标识，用于 API 路由 |
+| `description` | 是 | — | 一行描述；用于 detail 端点与 `Task` 路由 |
 | `model` | 否 | `claude-sonnet-4-6` | LLM 模型名 |
 | `systemPrompt` | 否 | — | 内联 system prompt |
 | `systemPromptFile` | 否 | — | `.md` 文件路径（相对配置目录） |
@@ -187,7 +189,7 @@ agents:
 | `extraUserSkillDirs` | 否 | — | 额外的 user 级 skill 目录（在默认目录之后扫描） |
 | `mcpServers` | 否 | — | MCP server 配置 |
 | `permissionMode` | 否 | `default` | `default`、`acceptEdits`、`bypassPermissions`、`plan`、`dontAsk`、`auto` |
-| `subagents` | 否 | — | 供 `Task` 工具使用的 subagent 定义 |
+| `subagents` | 否 | — | 供 `Task` 工具挂载的 agent id 列表 |
 | `datasets` | 否 | — | dataset-id 到描述的映射，以 `<datasets>` 块注入 system prompt |
 
 `systemPrompt` 与 `systemPromptFile` 互斥。
@@ -200,36 +202,35 @@ agents:
 
 Skill **完全由文件系统驱动**——无白名单。通过 `settingSources` 选择扫描目录（`~/.openagent/skills/`、`<cwd>/.openagent/skills/`，外加 `extraUserSkillDirs`）；发现的每个 `SKILL.md` 都会暴露给 agent。Skill 在启动时扫描一次，修改文件系统后需重启生效。`GET /v1/agents/:id` 返回的 `availableSkills` 字段可查看实际加载的列表。
 
-### Subagent
+### Subagents
 
-在 agent 的 `subagents` 键下定义 subagent；父 agent 通过 `Task` 工具委派任务：
+所有 agent 都扁平定义在 `agents` 列表中，都是一等公民——出现在 `GET /v1/agents` 列表、可直接 run。通过 id 列表把其他 agent 挂载为 subagent，父 agent 经 `Task` 工具委派任务：
 
 ```yaml
 agents:
-  - id: "coordinator"
+  - id: "coder"
+    description: "编写和修改代码"
     model: "claude-sonnet-4-6"
-    systemPrompt: "Delegate complex tasks to the appropriate subagent using the Task tool."
-    allowedTools:
-      - Task
-      - Read
-    subagents:
-      coder:
-        description: "Write and edit code"
-        prompt: "You are an expert programmer. Write clean, working code."
-        tools:
-          - Read
-          - Write
-          - Edit
-          - Bash
-        maxTurns: 30
-      researcher:
-        description: "Research topics on the web"
-        prompt: "You are a research assistant. Search and summarize information."
-        tools:
-          - WebSearch
-          - WebFetch
-        maxTurns: 15
+    systemPrompt: "你是专业程序员，编写简洁、可运行的代码。"
+    allowedTools: ["Read", "Write", "Edit", "Bash"]
+    maxTurns: 30
+
+  - id: "researcher"
+    description: "网络搜索与研究"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "你是研究员，搜索并总结信息。"
+    allowedTools: ["WebSearch", "WebFetch"]
+    maxTurns: 15
+
+  - id: "coordinator"
+    description: "协调者，向专家委派任务"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "使用 Task 工具把复杂任务委派给合适的 subagent。"
+    allowedTools: ["Task", "Read"]
+    subagents: ["coder", "researcher"]
 ```
+
+挂载时只映射 `description`、`systemPrompt`（解析后）、`allowedTools`、`disallowedTools`、`maxTurns` 五个字段——凭证、skills、自定义工具、datasets 在挂载上下文中不生效。委派深度为 1：subagent 不能再挂载 subagent。`subagents` 中的未知 id 或重复 id 会在启动时报错。
 
 字段参考与 TypeScript 模式：[`docs/configuration.md`](docs/configuration.md)。
 

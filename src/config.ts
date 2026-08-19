@@ -43,24 +43,11 @@ const ThinkingConfigSchema = z.object({
   budgetTokens: z.number().optional(),
 })
 
-const SubagentMcpServerConfigSchema = z.union([
-  z.string(),
-  z.object({ name: z.string(), tools: z.array(z.string()).optional() }),
-])
-
-const SubagentDefinitionSchema = z.object({
-  description: z.string(),
-  prompt: z.string(),
-  tools: z.array(z.string()).optional(),
-  disallowedTools: z.array(z.string()).optional(),
-  model: z.string().optional(),
-  mcpServers: z.array(SubagentMcpServerConfigSchema).optional(),
-  maxTurns: z.number().optional(),
-})
-
 const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
+  /** Human-readable capability summary. Used for SDK agent.description and Task routing when mounted. */
+  description: z.string().min(1),
   model: z.string().default("claude-sonnet-4-6"),
   /** Provider credentials; env vars (ZERONE_AGENT_API_KEY/BASE_URL/API_TYPE) take precedence. Never exposed via the detail endpoint. */
   apiKey: z.string().min(1).optional(),
@@ -80,7 +67,8 @@ const AgentDefinitionSchema = z.object({
   datasets: z.record(z.string()).optional(),
   /** File-based custom tool scripts; relative paths resolve against configDir. Tool names derive from file names. */
   customTools: z.array(z.string().min(1)).optional(),
-  subagents: z.record(SubagentDefinitionSchema).optional(),
+  /** Agent ids to mount as subagents (Task tool). References are validated by validateSubagentRefs. */
+  subagents: z.array(z.string().min(1)).optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },
@@ -122,13 +110,63 @@ export function resolveSystemPrompt(agent: AgentDefinition, configDir: string): 
   return base
 }
 
+/** Validate subagents id references: unknown ids and duplicates are config errors. Self/cyclic refs are allowed (delegation depth is 1). */
+export function validateSubagentRefs(config: RuntimeConfig): void {
+  const ids = new Set<string>()
+  for (const agent of config.agents) {
+    if (ids.has(agent.id)) {
+      throw new Error(`Duplicate agent id "${agent.id}" in agents list`)
+    }
+    ids.add(agent.id)
+  }
+  for (const agent of config.agents) {
+    if (!agent.subagents?.length) continue
+    const seen = new Set<string>()
+    for (const ref of agent.subagents) {
+      if (!ids.has(ref)) {
+        throw new Error(
+          `Agent "${agent.id}" references unknown subagent "${ref}". Available agent ids: ${[...ids].join(", ")}`,
+        )
+      }
+      if (seen.has(ref)) {
+        throw new Error(`Agent "${agent.id}" duplicates subagent reference "${ref}"`)
+      }
+      seen.add(ref)
+    }
+  }
+}
+
+/**
+ * Pre-schema migration hint: the legacy inline subagent Record form was removed
+ * in 2.0. Without this check users get a raw Zod error ("Expected array,
+ * received object") with no pointer to the new id-reference syntax. Works on
+ * raw parsed YAML and on plain TS config exports alike.
+ */
+function assertNoInlineSubagents(raw: unknown): void {
+  if (!raw || typeof raw !== "object") return
+  const agents = (raw as { agents?: unknown }).agents
+  if (!Array.isArray(agents)) return
+  for (const agent of agents) {
+    if (!agent || typeof agent !== "object") continue
+    const { id, subagents } = agent as { id?: unknown; subagents?: unknown }
+    if (subagents === undefined || Array.isArray(subagents)) continue
+    const label = typeof id === "string" && id ? `Agent "${id}"` : "An agent"
+    throw new Error(
+      `${label}: inline subagent definitions were removed in 2.0. Define the subagent in the top-level agents list and reference it by id, e.g. subagents: ["coder"]`,
+    )
+  }
+}
+
 export function loadYamlConfig(configPath: string): RuntimeConfig {
   if (!existsSync(configPath)) {
     throw new Error(`Config file not found: ${configPath}`)
   }
   const raw = readFileSync(configPath, "utf-8")
   const parsed = parseYaml(raw)
-  return RuntimeConfigSchema.parse(parsed)
+  assertNoInlineSubagents(parsed)
+  const config = RuntimeConfigSchema.parse(parsed)
+  validateSubagentRefs(config)
+  return config
 }
 
 export function findConfigDir(explicitPath?: string): string {
@@ -173,5 +211,8 @@ async function loadTsConfig(path: string): Promise<RuntimeConfig> {
   if (!config) {
     throw new Error(`agent.config.ts must export a config object (export default defineConfig({...}))`)
   }
-  return RuntimeConfigSchema.parse(config)
+  assertNoInlineSubagents(config)
+  const parsedConfig = RuntimeConfigSchema.parse(config)
+  validateSubagentRefs(parsedConfig)
+  return parsedConfig
 }
