@@ -443,6 +443,25 @@ agents:
     )
   })
 
+  it("throws a migration hint for the legacy inline subagent Record form", () => {
+    const path = tmpFile(
+      "agents-legacy-inline-subagents.yaml",
+      `
+agents:
+  - id: general
+    description: main agent
+    model: gpt-4
+    subagents:
+      coder:
+        description: code writer
+        prompt: write code
+`,
+    )
+    expect(() => loadYamlConfig(path)).toThrow(
+      'Agent "general": inline subagent definitions were removed in 2.0. Define the subagent in the top-level agents list and reference it by id, e.g. subagents: ["coder"]',
+    )
+  })
+
   it("throws for malformed YAML parsed to invalid config", () => {
     const path = tmpFile("bad.yaml", `
 agents: []
@@ -563,6 +582,17 @@ describe("validateSubagentRefs", () => {
         ]),
       ),
     ).not.toThrow()
+  })
+
+  it("throws for duplicate agent ids", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "coder", description: "first definition" },
+          { id: "coder", description: "second definition" },
+        ]),
+      ),
+    ).toThrow('Duplicate agent id "coder" in agents list')
   })
 
   it("is enforced by loadYamlConfig", () => {

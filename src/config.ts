@@ -112,7 +112,13 @@ export function resolveSystemPrompt(agent: AgentDefinition, configDir: string): 
 
 /** Validate subagents id references: unknown ids and duplicates are config errors. Self/cyclic refs are allowed (delegation depth is 1). */
 export function validateSubagentRefs(config: RuntimeConfig): void {
-  const ids = new Set(config.agents.map((a) => a.id))
+  const ids = new Set<string>()
+  for (const agent of config.agents) {
+    if (ids.has(agent.id)) {
+      throw new Error(`Duplicate agent id "${agent.id}" in agents list`)
+    }
+    ids.add(agent.id)
+  }
   for (const agent of config.agents) {
     if (!agent.subagents?.length) continue
     const seen = new Set<string>()
@@ -130,12 +136,34 @@ export function validateSubagentRefs(config: RuntimeConfig): void {
   }
 }
 
+/**
+ * Pre-schema migration hint: the legacy inline subagent Record form was removed
+ * in 2.0. Without this check users get a raw Zod error ("Expected array,
+ * received object") with no pointer to the new id-reference syntax. Works on
+ * raw parsed YAML and on plain TS config exports alike.
+ */
+function assertNoInlineSubagents(raw: unknown): void {
+  if (!raw || typeof raw !== "object") return
+  const agents = (raw as { agents?: unknown }).agents
+  if (!Array.isArray(agents)) return
+  for (const agent of agents) {
+    if (!agent || typeof agent !== "object") continue
+    const { id, subagents } = agent as { id?: unknown; subagents?: unknown }
+    if (subagents === undefined || Array.isArray(subagents)) continue
+    const label = typeof id === "string" && id ? `Agent "${id}"` : "An agent"
+    throw new Error(
+      `${label}: inline subagent definitions were removed in 2.0. Define the subagent in the top-level agents list and reference it by id, e.g. subagents: ["coder"]`,
+    )
+  }
+}
+
 export function loadYamlConfig(configPath: string): RuntimeConfig {
   if (!existsSync(configPath)) {
     throw new Error(`Config file not found: ${configPath}`)
   }
   const raw = readFileSync(configPath, "utf-8")
   const parsed = parseYaml(raw)
+  assertNoInlineSubagents(parsed)
   const config = RuntimeConfigSchema.parse(parsed)
   validateSubagentRefs(config)
   return config
@@ -183,6 +211,7 @@ async function loadTsConfig(path: string): Promise<RuntimeConfig> {
   if (!config) {
     throw new Error(`agent.config.ts must export a config object (export default defineConfig({...}))`)
   }
+  assertNoInlineSubagents(config)
   const parsedConfig = RuntimeConfigSchema.parse(config)
   validateSubagentRefs(parsedConfig)
   return parsedConfig
