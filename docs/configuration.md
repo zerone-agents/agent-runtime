@@ -37,6 +37,7 @@ export default defineConfig({
   agents: [
     {
       id: "smart",
+      description: "智能助手，可读写文件、执行命令、查询天气和计算",
       model: "claude-sonnet-4-6",
       systemPrompt: "You are a smart assistant with weather and calculator tools.",
       maxTurns: 15,
@@ -76,6 +77,7 @@ Each agent accepts optional `apiKey`, `baseURL`, and `apiType` fields, so differ
 ```yaml
 agents:
   - id: assistant
+    description: "General-purpose assistant"
     model: claude-sonnet-4-6
     apiKey: sk-ant-...
   - id: coder
