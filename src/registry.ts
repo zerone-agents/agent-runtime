@@ -1,4 +1,4 @@
-import { createAgent, type Agent } from "@zerone-agent/agent-sdk"
+import { createAgent, type Agent, type AgentDefinition as SdkAgentDefinition } from "@zerone-agent/agent-sdk"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -17,14 +17,6 @@ function convertMcpServers(
   )
 }
 
-type SdkSubAgent = {
-  description: string
-  prompt: string
-  allowedTools?: string[]
-  disallowedTools?: string[]
-  maxTurns?: number
-}
-
 /**
  * Materialize SDK subAgents from id references. Only the 5 fields the SDK
  * actually consumes are mapped; credentials, skills, customTools, datasets
@@ -35,9 +27,9 @@ function buildSubAgents(
   def: AgentDefinition,
   defsById: Map<string, AgentDefinition>,
   configDir: string,
-): Record<string, SdkSubAgent> | undefined {
+): Record<string, SdkAgentDefinition> | undefined {
   if (!def.subagents?.length) return undefined
-  const result: Record<string, SdkSubAgent> = {}
+  const result: Record<string, SdkAgentDefinition> = {}
   for (const id of def.subagents) {
     const sub = defsById.get(id)
     if (!sub) continue // refs validated at config load; defensive skip
@@ -163,7 +155,7 @@ export class AgentRegistry {
           extraUserSkillDirs: def.extraUserSkillDirs,
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
-          subAgents: buildSubAgents(def, defsById, configDir) as any,
+          subAgents: buildSubAgents(def, defsById, configDir),
           customTools: fileTools.length > 0 ? fileTools : undefined,
         }
 

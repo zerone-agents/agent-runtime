@@ -622,6 +622,7 @@ describe("AgentRegistry (factory)", () => {
       registry.create("a")
       const call = mockCreateAgent.mock.calls[0]![0]!
       expect(call.subAgents!.b).toBeDefined()
+      // SDK's mounted-agent type carries no `subagents`; the cast types this negative assertion.
       expect((call.subAgents!.b as { subagents?: string[] }).subagents).toBeUndefined()
       expect(call.subAgents!.c).toBeUndefined()
     })

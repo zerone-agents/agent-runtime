@@ -251,7 +251,7 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 
 每个条目为 `{ "agent_id": string, "description": string }`——保留让父 agent 选择子代理的"招牌"信息。
 
-不返回：`prompt`、`tools`、`disallowedTools`、`model`、`mcpServers`、`skills`、`maxTurns`。
+条目仅包含 `agent_id` 与 `description` 两个字段，agent 的其余配置（`model`、`systemPrompt`、`allowedTools`、`mcpServers`、`maxTurns` 等）不随父 agent 返回。
 
 被挂载的 agent 本身是一等公民，其完整信息可经 `GET /v1/agents/{agent_id}` 获取。
 
