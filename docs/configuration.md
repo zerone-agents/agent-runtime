@@ -81,6 +81,7 @@ agents:
     model: claude-sonnet-4-6
     apiKey: sk-ant-...
   - id: coder
+    description: "Writes code"
     model: deepseek-v3
     apiType: openai
     baseURL: https://api.deepseek.com
