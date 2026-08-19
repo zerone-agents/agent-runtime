@@ -110,13 +110,35 @@ export function resolveSystemPrompt(agent: AgentDefinition, configDir: string): 
   return base
 }
 
+/** Validate subagents id references: unknown ids and duplicates are config errors. Self/cyclic refs are allowed (delegation depth is 1). */
+export function validateSubagentRefs(config: RuntimeConfig): void {
+  const ids = new Set(config.agents.map((a) => a.id))
+  for (const agent of config.agents) {
+    if (!agent.subagents?.length) continue
+    const seen = new Set<string>()
+    for (const ref of agent.subagents) {
+      if (!ids.has(ref)) {
+        throw new Error(
+          `Agent "${agent.id}" references unknown subagent "${ref}". Available agent ids: ${[...ids].join(", ")}`,
+        )
+      }
+      if (seen.has(ref)) {
+        throw new Error(`Agent "${agent.id}" duplicates subagent reference "${ref}"`)
+      }
+      seen.add(ref)
+    }
+  }
+}
+
 export function loadYamlConfig(configPath: string): RuntimeConfig {
   if (!existsSync(configPath)) {
     throw new Error(`Config file not found: ${configPath}`)
   }
   const raw = readFileSync(configPath, "utf-8")
   const parsed = parseYaml(raw)
-  return RuntimeConfigSchema.parse(parsed)
+  const config = RuntimeConfigSchema.parse(parsed)
+  validateSubagentRefs(config)
+  return config
 }
 
 export function findConfigDir(explicitPath?: string): string {
@@ -161,5 +183,7 @@ async function loadTsConfig(path: string): Promise<RuntimeConfig> {
   if (!config) {
     throw new Error(`agent.config.ts must export a config object (export default defineConfig({...}))`)
   }
-  return RuntimeConfigSchema.parse(config)
+  const parsedConfig = RuntimeConfigSchema.parse(config)
+  validateSubagentRefs(parsedConfig)
+  return parsedConfig
 }

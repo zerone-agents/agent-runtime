@@ -8,6 +8,7 @@ import {
   loadYamlConfig,
   findConfigDir,
   discoverConfig,
+  validateSubagentRefs,
   type AgentDefinition,
 } from "../config.js"
 
@@ -512,6 +513,70 @@ export default {
     const config = await discoverConfig(TMP)
     expect(config.agents[0].id).toBe("ts-agent")
     expect(config.server.port).toBe(4000)
+  })
+})
+
+describe("validateSubagentRefs", () => {
+  const base = (agents: any[]) =>
+    ({ server: { host: "0.0.0.0", port: 3000 }, agents }) as any
+
+  it("passes for valid references", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["b", "c"] },
+          { id: "b", description: "y" },
+          { id: "c", description: "z" },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it("throws listing available ids for unknown reference", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["ghost"] },
+          { id: "b", description: "y" },
+        ]),
+      ),
+    ).toThrow('Agent "a" references unknown subagent "ghost". Available agent ids: a, b')
+  })
+
+  it("throws for duplicate reference", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["b", "b"] },
+          { id: "b", description: "y" },
+        ]),
+      ),
+    ).toThrow('Agent "a" duplicates subagent reference "b"')
+  })
+
+  it("allows self and cyclic references", () => {
+    expect(() =>
+      validateSubagentRefs(
+        base([
+          { id: "a", description: "x", subagents: ["a", "b"] },
+          { id: "b", description: "y", subagents: ["a"] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it("is enforced by loadYamlConfig", () => {
+    const path = tmpFile(
+      "agents-bad-ref.yaml",
+      `
+agents:
+  - id: a
+    description: x
+    model: gpt-4
+    subagents: [ghost]
+`,
+    )
+    expect(() => loadYamlConfig(path)).toThrow('unknown subagent "ghost"')
   })
 })
 
