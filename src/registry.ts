@@ -84,7 +84,7 @@ export interface AgentDetail {
   settingSources?: string[]
   extraUserSkillDirs?: string[]
   mcpServers?: Record<string, McpServerSummary>
-  subagents?: string[]
+  subagents?: Array<{ agent_id: string; description: string }>
   datasets?: Record<string, string>
   fileTools?: string[]
 }
@@ -220,7 +220,12 @@ export class AgentRegistry {
     if (def.extraUserSkillDirs !== undefined) detail.extraUserSkillDirs = def.extraUserSkillDirs
     const mcp = sanitizeMcpServers(def.mcpServers)
     if (mcp !== undefined) detail.mcpServers = mcp
-    if (def.subagents !== undefined) detail.subagents = def.subagents
+    if (def.subagents !== undefined) {
+      detail.subagents = def.subagents.map((id) => ({
+        agent_id: id,
+        description: this.defs.get(id)?.description ?? "",
+      }))
+    }
     if (def.datasets !== undefined) detail.datasets = def.datasets
     const fileTools = this.fileToolNames.get(def.id)
     if (fileTools && fileTools.length > 0) detail.fileTools = fileTools
