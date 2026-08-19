@@ -550,6 +550,77 @@ describe("AgentRegistry (factory)", () => {
     })
   })
 
+  describe("subagent mounting", () => {
+    const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
+
+    beforeEach(() => {
+      mockCreateAgent.mockReturnValue(mockAgent as any)
+    })
+
+    it("materializes subAgents from id references with 5-field mapping", async () => {
+      const config = makeConfig([
+        { id: "parent", description: "coordinator", model: "gpt-4", subagents: ["coder"] },
+        {
+          id: "coder",
+          description: "writes code",
+          model: "gpt-4",
+          systemPrompt: "You are a coder.",
+          allowedTools: ["Read", "Write"],
+          disallowedTools: ["Bash"],
+          maxTurns: 30,
+        },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("parent")
+
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subAgents: {
+            coder: {
+              description: "writes code",
+              prompt: "test-prompt",
+              allowedTools: ["Read", "Write"],
+              disallowedTools: ["Bash"],
+              maxTurns: 30,
+            },
+          },
+        }),
+      )
+    })
+
+    it("uses def.description for the main agent SDK description", async () => {
+      const config = makeConfig([
+        { id: "a", name: "Display Name", description: "the description", model: "gpt-4" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("a")
+      const call = mockCreateAgent.mock.calls[0][0]
+      expect(call.agent.description).toBe("the description")
+    })
+
+    it("keeps delegation depth at 1 (mounted agent own subagents not expanded)", async () => {
+      const config = makeConfig([
+        { id: "a", description: "da", model: "gpt-4", subagents: ["b"] },
+        { id: "b", description: "db", model: "gpt-4", subagents: ["c"] },
+        { id: "c", description: "dc", model: "gpt-4" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("a")
+      const call = mockCreateAgent.mock.calls[0][0]
+      expect(call.subAgents.b).toBeDefined()
+      expect(call.subAgents.b.subagents).toBeUndefined()
+      expect(call.subAgents.c).toBeUndefined()
+    })
+
+    it("passes no subAgents when subagents is unset", async () => {
+      const config = makeConfig([{ id: "solo", description: "x", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("solo")
+      const call = mockCreateAgent.mock.calls[0][0]
+      expect(call.subAgents).toBeUndefined()
+    })
+  })
+
   describe("closeAll", () => {
     it("is a no-op (no live instances)", async () => {
       const config = makeConfig([{ id: "a1", model: "gpt-4" }])

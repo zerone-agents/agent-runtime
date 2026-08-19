@@ -17,6 +17,41 @@ function convertMcpServers(
   )
 }
 
+type SdkSubAgent = {
+  description: string
+  prompt: string
+  allowedTools?: string[]
+  disallowedTools?: string[]
+  maxTurns?: number
+}
+
+/**
+ * Materialize SDK subAgents from id references. Only the 5 fields the SDK
+ * actually consumes are mapped; credentials, skills, customTools, datasets
+ * and the mounted agent's own subagents do NOT apply in mounted context
+ * (delegation depth is 1, matching the SDK's spawn-subagent design).
+ */
+function buildSubAgents(
+  def: AgentDefinition,
+  defsById: Map<string, AgentDefinition>,
+  configDir: string,
+): Record<string, SdkSubAgent> | undefined {
+  if (!def.subagents?.length) return undefined
+  const result: Record<string, SdkSubAgent> = {}
+  for (const id of def.subagents) {
+    const sub = defsById.get(id)
+    if (!sub) continue // refs validated at config load; defensive skip
+    result[id] = {
+      description: sub.description,
+      prompt: resolveSystemPrompt(sub, configDir) ?? "",
+      allowedTools: sub.allowedTools,
+      disallowedTools: sub.disallowedTools,
+      maxTurns: sub.maxTurns,
+    }
+  }
+  return result
+}
+
 export interface AgentInfo {
   id: string
   name: string
@@ -70,6 +105,7 @@ export class AgentRegistry {
   }
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
+    const defsById = new Map(config.agents.map((a) => [a.id, a] as const))
     for (const def of config.agents) {
       try {
         const systemPrompt = resolveSystemPrompt(def, configDir)
@@ -115,7 +151,7 @@ export class AgentRegistry {
           apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
           baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
           agent: {
-            description: def.name ?? def.id,
+            description: def.description,
             prompt: systemPrompt ?? "",
             allowedTools: def.allowedTools,
             disallowedTools: def.disallowedTools,
@@ -127,7 +163,7 @@ export class AgentRegistry {
           extraUserSkillDirs: def.extraUserSkillDirs,
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
-          subAgents: def.subagents as any,
+          subAgents: buildSubAgents(def, defsById, configDir) as any,
           customTools: fileTools.length > 0 ? fileTools : undefined,
         }
 
