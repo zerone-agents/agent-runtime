@@ -319,27 +319,16 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.hasSystemPrompt).toBe(true)
     })
 
-    it("returns subagents with only { description }", async () => {
+    it("returns subagents as an id reference list", async () => {
       const config = makeConfig([{
         id: "parent",
         model: "gpt-4",
-        subagents: {
-          coder: {
-            description: "writes code",
-            prompt: "secret prompt",
-            tools: ["Read"],
-            model: "gpt-4",
-          },
-          writer: { description: "writes docs", prompt: "secret" },
-        },
+        subagents: ["coder", "writer"],
       }])
       await registry.loadFromConfig(config, "/tmp")
 
       const detail = registry.getDetail("parent")!
-      expect(detail.subagents).toEqual({
-        coder: { description: "writes code" },
-        writer: { description: "writes docs" },
-      })
+      expect(detail.subagents).toEqual(["coder", "writer"])
     })
 
     it("returns status='unavailable' detail for unavailable agent", async () => {

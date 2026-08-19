@@ -6,7 +6,7 @@ import type { RuntimeConfig } from "../config.js"
 function createTestConfig(auth?: { apiKey?: string }): RuntimeConfig {
   return {
     server: { host: "0.0.0.0", port: 3000 },
-    agents: [{ id: "assistant", model: "claude-sonnet-4-6", maxTurns: 10 }],
+    agents: [{ id: "assistant", description: "assistant", model: "claude-sonnet-4-6", maxTurns: 10 }],
     auth,
   }
 }

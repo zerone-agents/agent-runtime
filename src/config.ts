@@ -43,24 +43,11 @@ const ThinkingConfigSchema = z.object({
   budgetTokens: z.number().optional(),
 })
 
-const SubagentMcpServerConfigSchema = z.union([
-  z.string(),
-  z.object({ name: z.string(), tools: z.array(z.string()).optional() }),
-])
-
-const SubagentDefinitionSchema = z.object({
-  description: z.string(),
-  prompt: z.string(),
-  tools: z.array(z.string()).optional(),
-  disallowedTools: z.array(z.string()).optional(),
-  model: z.string().optional(),
-  mcpServers: z.array(SubagentMcpServerConfigSchema).optional(),
-  maxTurns: z.number().optional(),
-})
-
 const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
+  /** Human-readable capability summary. Used for SDK agent.description and Task routing when mounted. */
+  description: z.string().min(1),
   model: z.string().default("claude-sonnet-4-6"),
   /** Provider credentials; env vars (ZERONE_AGENT_API_KEY/BASE_URL/API_TYPE) take precedence. Never exposed via the detail endpoint. */
   apiKey: z.string().min(1).optional(),
@@ -80,7 +67,8 @@ const AgentDefinitionSchema = z.object({
   datasets: z.record(z.string()).optional(),
   /** File-based custom tool scripts; relative paths resolve against configDir. Tool names derive from file names. */
   customTools: z.array(z.string().min(1)).optional(),
-  subagents: z.record(SubagentDefinitionSchema).optional(),
+  /** Agent ids to mount as subagents (Task tool). References are validated by validateSubagentRefs. */
+  subagents: z.array(z.string().min(1)).optional(),
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },
