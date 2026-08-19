@@ -1,6 +1,6 @@
 # Complex — 多 Agent 示例
 
-三个专业 Agent 各司其职：研究助手、编程助手、写作助手。
+四个 Agent 各司其职：研究助手、编程助手、写作助手，外加一个通过 `subagents` 复用挂载的协调者。
 
 ## 启动
 
@@ -13,7 +13,7 @@ node --import tsx src/index.ts --config examples/complex
 ```
 complex/
 ├── runtime.yaml            # 服务器配置
-├── agents.yaml             # 3 个 Agent 定义
+├── agents.yaml             # 4 个 Agent 定义
 └── prompts/
     ├── researcher.md       # 研究助手提示词
     ├── coder.md            # 编程助手提示词
@@ -27,6 +27,7 @@ complex/
 | `researcher` | 研究助手 | WebSearch, WebFetch, Read, Glob, Grep | 搜索信息、分析资料 |
 | `coder` | 编程助手 | Bash, Read, Write, Edit, Glob, Grep, LSP, TaskTool | 编写/修改/调试代码 |
 | `writer` | 写作助手 | Read, Write, Edit, WebSearch | 撰写/编辑文本 |
+| `coordinator` | 协调助手 | Task, Read | 通过 `subagents: [coder, researcher]` 挂载并委派任务 |
 
 ## 环境变量
 

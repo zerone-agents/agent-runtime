@@ -33,6 +33,7 @@ npm install
 cat > agents.yaml << 'EOF'
 agents:
   - id: "assistant"
+    description: "A helpful general-purpose assistant."
     model: "claude-sonnet-4-6"
     systemPrompt: "You are a helpful assistant."
     maxTurns: 10
@@ -180,6 +181,7 @@ agents:
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `id` | Yes | — | Unique identifier, used in API routes |
+| `description` | Yes | — | One-line description; drives the detail endpoint and `Task` routing |
 | `model` | No | `claude-sonnet-4-6` | LLM model name |
 | `systemPrompt` | No | — | Inline system prompt |
 | `systemPromptFile` | No | — | Path to `.md` file (relative to config dir) |
@@ -191,7 +193,7 @@ agents:
 | `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
-| `subagents` | No | — | Subagent definitions for the `Task` tool |
+| `subagents` | No | — | Agent ids to mount as subagents for the `Task` tool |
 | `datasets` | No | — | Map of dataset-id to description, injected into the system prompt as a `<datasets>` block |
 
 `systemPrompt` and `systemPromptFile` are mutually exclusive.
@@ -206,34 +208,33 @@ Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to
 
 ### Subagents
 
-Define subagents under an agent's `subagents` key; the parent delegates via the `Task` tool:
+Every agent is defined flat in the `agents` list and is a full citizen — it shows up in `GET /v1/agents` and can be run directly. Mount other agents as subagents by listing their ids; the parent delegates via the `Task` tool:
 
 ```yaml
 agents:
+  - id: "coder"
+    description: "Write and edit code"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "You are an expert programmer. Write clean, working code."
+    allowedTools: ["Read", "Write", "Edit", "Bash"]
+    maxTurns: 30
+
+  - id: "researcher"
+    description: "Research topics on the web"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "You are a research assistant. Search and summarize information."
+    allowedTools: ["WebSearch", "WebFetch"]
+    maxTurns: 15
+
   - id: "coordinator"
+    description: "Coordinates work by delegating to specialists"
     model: "claude-sonnet-4-6"
     systemPrompt: "Delegate complex tasks to the appropriate subagent using the Task tool."
-    allowedTools:
-      - Task
-      - Read
-    subagents:
-      coder:
-        description: "Write and edit code"
-        prompt: "You are an expert programmer. Write clean, working code."
-        tools:
-          - Read
-          - Write
-          - Edit
-          - Bash
-        maxTurns: 30
-      researcher:
-        description: "Research topics on the web"
-        prompt: "You are a research assistant. Search and summarize information."
-        tools:
-          - WebSearch
-          - WebFetch
-        maxTurns: 15
+    allowedTools: ["Task", "Read"]
+    subagents: ["coder", "researcher"]
 ```
+
+Mounting maps only `description`, `systemPrompt` (resolved), `allowedTools`, `disallowedTools` and `maxTurns` — credentials, skills, custom tools and datasets do not apply in the mounted context. Delegation depth is 1: a subagent cannot mount further subagents. Unknown or duplicate ids in `subagents` fail at startup.
 
 Field reference and TypeScript mode: [`docs/configuration.md`](docs/configuration.md).
 

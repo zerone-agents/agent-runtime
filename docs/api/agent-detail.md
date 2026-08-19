@@ -137,14 +137,14 @@ curl -H "x-api-key: your-secret-key" \
   "status": "ready",
   "maxTurns": 10,
   "hasSystemPrompt": true,
-  "subagents": {
-    "coder": { "description": "Write and edit code" },
-    "researcher": { "description": "Research topics on the web" }
-  }
+  "subagents": [
+    { "agent_id": "coder", "description": "Write and edit code" },
+    { "agent_id": "researcher", "description": "Research topics on the web" }
+  ]
 }
 ```
 
-子代理只返回 `{ description }`，不返回 prompt / tools / model 等内部字段。详见 [subagents 字段](#subagents)。
+每个子代理条目为 `{ agent_id, description }`，不返回 prompt / tools / model 等内部字段。详见 [subagents 字段](#subagents)。
 
 #### 示例 5：unavailable 状态
 
@@ -195,7 +195,7 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 | `settingSources` | (`"user"` \| `"project"` \| `"local"`)[] | **配置层**：技能扫描来源：`user`→`~/.openagent/skills/`，`project`→`<cwd>/.openagent/skills/`，`local`→SDK 类型里有但 loader 未实现（no-op） |
 | `extraUserSkillDirs` | string[] | 额外用户级技能目录 |
 | `mcpServers` | Record\<string, `McpServerSummary`\> | MCP servers，已脱敏，详见 [McpServerSummary](#mcpserversummary-字段说明) |
-| `subagents` | Record\<string, \{ `description`: string \}\> | 子代理，仅含 description，详见 [subagents](#subagents) |
+| `subagents` | Array\<\{ `agent_id`: string, `description`: string \}\> | 子代理 id + description 列表，详见 [subagents](#subagents) |
 | `datasets` | Record\<string, string\> | 数据集 ID → 描述映射（运行时会被注入到 systemPrompt） |
 
 ### Skill 模型说明
@@ -249,11 +249,11 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 
 ## subagents
 
-每个 subagent 仅返回 `{ "description": string }`——保留让父 agent 选择子代理的"招牌"信息。
+每个条目为 `{ "agent_id": string, "description": string }`——保留让父 agent 选择子代理的"招牌"信息。
 
 不返回：`prompt`、`tools`、`disallowedTools`、`model`、`mcpServers`、`skills`、`maxTurns`。
 
-如需查看子代理完整配置，目前没有单独端点（2026-07-06 状态）。
+被挂载的 agent 本身是一等公民，其完整信息可经 `GET /v1/agents/{agent_id}` 获取。
 
 ---
 

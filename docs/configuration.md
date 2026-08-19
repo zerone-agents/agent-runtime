@@ -46,19 +46,28 @@ export default defineConfig({
 })
 ```
 
-## Subagent Fields
+## Subagents (Reference Mounting)
 
-Subagents are defined under an agent's `subagents` key (see the README for a YAML example).
+Subagents are not defined separately — every agent lives in the flat `agents` list (with a required `description`). Mount agents by id under `subagents`:
 
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `description` | Yes | — | Short description shown to the parent agent |
-| `prompt` | Yes | — | System prompt for the subagent |
-| `tools` | No | all tools | Whitelist of tool names |
-| `disallowedTools` | No | — | Blacklist of tool names |
-| `model` | No | inherits parent | LLM model name |
-| `mcpServers` | No | — | MCP server names or `{ name, tools? }` objects |
-| `maxTurns` | No | `10` | Max agentic loop turns |
+```yaml
+agents:
+  - id: "coordinator"
+    description: "Delegates to specialists"
+    subagents: ["coder", "researcher"]
+  - id: "coder"
+    description: "Writes code"
+    systemPrompt: "You are an expert programmer."
+  - id: "researcher"
+    description: "Researches topics"
+```
+
+Rules:
+
+- `description` is required on every agent — it drives Task routing and the detail endpoint.
+- Mounting maps only `description`, `systemPrompt`/`systemPromptFile` (resolved, including `datasets` concatenation), `allowedTools`, `disallowedTools`, `maxTurns`.
+- Unknown or duplicate ids in `subagents` fail at config load (the error lists available agent ids). Self/cyclic references are allowed.
+- Delegation depth is 1 — a mounted agent's own `subagents` apply only when that agent is run directly, never in the mounted context.
 
 ## Provider Credentials
 

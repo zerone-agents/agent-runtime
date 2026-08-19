@@ -1,6 +1,7 @@
 agents:
   - id: "researcher"
     name: "研究助手"
+    description: "网络搜索与研究"
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/researcher.md"
     maxTurns: 15
@@ -17,6 +18,7 @@ agents:
 
   - id: "coder"
     name: "编程助手"
+    description: "编写和修改代码"
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/coder.md"
     maxTurns: 20
@@ -36,6 +38,7 @@ agents:
 
   - id: "writer"
     name: "写作助手"
+    description: "撰写技术文档"
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/writer.md"
     maxTurns: 10
@@ -47,3 +50,19 @@ agents:
     thinking:
       type: "enabled"
       budgetTokens: 4000
+
+  - id: "coordinator"
+    name: "协调助手"
+    description: "把复杂任务委派给专业 subagent 的协调者"
+    model: "claude-sonnet-4-6"
+    systemPrompt: |
+      你是协调者。使用 Task 工具把任务委派给合适的 subagent：
+      - coder：编写、修改代码
+      - researcher：网络搜索与研究
+    maxTurns: 15
+    allowedTools:
+      - Task
+      - Read
+    subagents:
+      - coder
+      - researcher
