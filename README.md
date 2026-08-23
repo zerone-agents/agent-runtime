@@ -67,7 +67,7 @@ See [`docs/api/runs.md`](docs/api/runs.md) for the SSE event sequence, block mod
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Health check (unauthenticated) |
+| `GET` | `/health` | Health check with runtime version (unauthenticated) |
 | `GET` | `/v1/metrics` | Token usage, request counts, costs |
 | `GET` | `/v1/agents` | List registered agents |
 | `GET` | `/v1/agents/:id` | Agent detail |

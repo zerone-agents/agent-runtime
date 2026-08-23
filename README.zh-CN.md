@@ -67,7 +67,7 @@ SSE 事件序列、block 模式及 legacy `stream` 字段兼容性见 [`docs/api
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/health` | 健康检查（无需认证） |
+| `GET` | `/health` | 健康检查，含 runtime 版本号（无需认证） |
 | `GET` | `/v1/metrics` | Token 用量、请求数、成本 |
 | `GET` | `/v1/agents` | 列出已注册 agent |
 | `GET` | `/v1/agents/:id` | Agent 详情 |

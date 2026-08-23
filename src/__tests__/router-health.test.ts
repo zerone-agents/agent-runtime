@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest"
+import { createRequire } from "node:module"
 import { Hono } from "hono"
 import { createHealthRouter, createMetricsRouter } from "../router/health.js"
+
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string }
 
 function createHealthApp(registry: any) {
   const app = new Hono()
@@ -29,6 +32,7 @@ describe("Health Router", () => {
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.status).toBe("ok")
+      expect(body.version).toBe(version)
       expect(body.agents).toBe(2)
     })
 
@@ -56,6 +60,7 @@ describe("Health Router", () => {
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.status).toBe("ok")
+      expect(body.version).toBe(version)
       expect(body.agents).toBe(0)
     })
   })
