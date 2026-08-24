@@ -1,3 +1,13 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+
+cors:
+  origins: ["*"]
+
+logging:
+  level: "info"
+
 agents:
   - id: "researcher"
     name: "研究助手"

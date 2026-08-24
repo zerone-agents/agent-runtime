@@ -12,8 +12,7 @@ node --import tsx src/index.ts --config examples/complex
 
 ```
 complex/
-├── runtime.yaml            # 服务器配置
-├── agents.yaml             # 4 个 Agent 定义
+├── agents.yaml             # 4 个 Agent 定义 + 服务器配置（顶层 server/cors/logging 段）
 └── prompts/
     ├── researcher.md       # 研究助手提示词
     ├── coder.md            # 编程助手提示词
