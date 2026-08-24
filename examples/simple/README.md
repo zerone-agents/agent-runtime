@@ -12,8 +12,7 @@ node --import tsx src/index.ts --config examples/simple
 
 ```
 simple/
-├── runtime.yaml        # 服务器配置（端口、CORS）
-├── agents.yaml         # Agent 定义
+├── agents.yaml         # Agent 定义 + 服务器配置（端口、CORS，顶层字段）
 └── prompts/
     └── assistant.md    # 系统提示词
 ```
@@ -60,6 +59,6 @@ curl -X POST http://localhost:3000/v1/agents/assistant/runs \
 
 ## 关键点
 
-- 最小配置：只需 `agents.yaml`，`runtime.yaml` 可省略（使用默认端口 3000）
+- 最小配置：只需 `agents.yaml`（`server`/`cors` 顶层段可省略，使用默认端口 3000）
 - `systemPromptFile` 引用外部 `.md` 文件，提示词长时推荐使用
 - 不指定 `allowedTools` 时默认使用 SDK 全部内置工具
