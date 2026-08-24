@@ -981,3 +981,199 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
     expect(runsRegistry.get(callerRunId)?.state).toBe("cancelled")
   })
 })
+
+describe("hub chat push wiring", () => {
+  let registry: any
+  let metrics: any
+
+  beforeEach(() => {
+    registry = {
+      list: vi.fn(),
+      create: vi.fn(),
+      getStatus: vi.fn().mockReturnValue("ready"),
+      getDetail: vi.fn(),
+      getModel: vi.fn().mockReturnValue("glm-4.5"),
+    }
+    metrics = {
+      recordRun: vi.fn(),
+    }
+    vi.mocked(streamAgentResponse).mockClear()
+  })
+
+  function makePusher() {
+    return { pushSession: vi.fn().mockResolvedValue(undefined) }
+  }
+
+  function setupReadyAgent() {
+    const agent = makeReadyAgent()
+    registry.create.mockReturnValue(agent)
+    return agent
+  }
+
+  it("pushes after a successful blocking JSON run, with identity headers", async () => {
+    const hubPusher = makePusher()
+    setupReadyAgent()
+    const app = createApp(registry, metrics, { hubPusher })
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-User-Name": "alice",
+        "X-Org": "acme",
+      },
+      body: JSON.stringify({ message: "hello" }),
+    })
+    expect(res.status).toBe(200)
+    await res.json()
+    // fire-and-forget：等一个 microtask 让 pushSession 被调用
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "sess-new",
+        agentId: "test-agent",
+        model: "glm-4.5",
+        identity: { userName: "alice", org: "acme" },
+      })
+    )
+  })
+
+  it("omits identity fields when headers are absent", async () => {
+    const hubPusher = makePusher()
+    setupReadyAgent()
+    const app = createApp(registry, metrics, { hubPusher })
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    })
+    expect(res.status).toBe(200)
+    await res.json()
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        identity: { userName: undefined, org: undefined },
+      })
+    )
+  })
+
+  it("pushes when SSE run terminates as completed", async () => {
+    const hubPusher = makePusher()
+    const agent = setupReadyAgent()
+    agent.query = vi.fn().mockImplementation(async function* () {
+      yield { type: "text", text: "hi" }
+    })
+    const app = createApp(registry, metrics, { hubPusher })
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "hello", stream: true }),
+    })
+    expect(res.status).toBe(200)
+    // sse.js is mocked: trigger the terminal callback the router passed in,
+    // same pattern as the existing stream tests above.
+    const opts = vi.mocked(streamAgentResponse).mock.calls[0][3]
+    expect(typeof opts?.onTerminal).toBe("function")
+    opts?.onTerminal?.("completed", "stream_end", undefined)
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).toHaveBeenCalledTimes(1)
+    expect(hubPusher.pushSession).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "test-agent", sessionId: "sess-new" })
+    )
+  })
+
+  it("does not push when SSE run terminates as failed", async () => {
+    const hubPusher = makePusher()
+    const agent = setupReadyAgent()
+    agent.query = vi.fn().mockImplementation(async function* () {
+      yield { type: "text", text: "hi" }
+    })
+    const app = createApp(registry, metrics, { hubPusher })
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "hello", stream: true }),
+    })
+    expect(res.status).toBe(200)
+    const opts = vi.mocked(streamAgentResponse).mock.calls[0][3]
+    opts?.onTerminal?.("failed", "error", undefined)
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).not.toHaveBeenCalled()
+  })
+
+  it("does not push when blocking JSON run is cancelled", async () => {
+    const hubPusher = makePusher()
+    const runsRegistry = new RunRegistry()
+    const agent = makeReadyAgent({
+      interrupt: vi.fn().mockResolvedValue(undefined),
+    })
+    registry.create.mockReturnValue(agent)
+    const app = createAppWithRuns(registry, runsRegistry, metrics, { hubPusher })
+
+    const callerRunId = "11111111-2222-3333-4444-555555555555"
+    // Prompt never resolves on its own; we cancel via the runs router and
+    // let the cancel path drive the response.
+    let resolvePrompt!: (v: any) => void
+    agent.prompt = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolvePrompt = resolve
+      })
+    )
+    const runsRouter = createRunsRouter(runsRegistry)
+    app.route("/v1/runs", runsRouter)
+
+    const runPromise = app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", runId: callerRunId }),
+    })
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setImmediate(r))
+    }
+    const cancelRes = await app.request(`/v1/runs/${callerRunId}/cancel`, { method: "POST" })
+    expect(cancelRes.status).toBe(202)
+    resolvePrompt({
+      text: "partial",
+      usage: { input_tokens: 5 },
+      num_turns: 1,
+      duration_ms: 10,
+    })
+    const runRes = await runPromise
+    expect(runRes.status).toBe(200)
+    expect((await runRes.json()).state).toBe("cancelled")
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).not.toHaveBeenCalled()
+  })
+
+  it("run response is unaffected when pushSession rejects", async () => {
+    const hubPusher = { pushSession: vi.fn().mockRejectedValue(new Error("hub down")) }
+    setupReadyAgent()
+    const app = createApp(registry, metrics, { hubPusher })
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    })
+    expect(res.status).toBe(200)
+    await res.json()
+    await new Promise((r) => setImmediate(r))
+    expect(hubPusher.pushSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not push when hubPusher is not configured", async () => {
+    setupReadyAgent()
+    const app = createApp(registry, metrics) // 无 hubPusher
+
+    const res = await app.request("/v1/agents/test-agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    })
+    expect(res.status).toBe(200) // 无 pusher 时静默跳过，不报错
+  })
+})
