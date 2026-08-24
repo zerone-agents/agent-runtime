@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest"
-import { buildSessionPayload, resolveHubConfig } from "../hub-push.js"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { buildSessionPayload, HubChatPusher, resolveHubConfig } from "../hub-push.js"
 
 // buildSessionPayload 走 SDK 真实磁盘 transcript（~/.agents/sessions/<id>/），
 // 测试用唯一 sessionId + saveSession 造数据，afterEach 用 deleteSession 清理。
@@ -123,9 +123,6 @@ describe("buildSessionPayload", () => {
     expect(p2!.title).toBeUndefined()
   })
 })
-
-import { HubChatPusher } from "../hub-push.js"
-import { vi } from "vitest"
 
 const PUSHER_SESSION = "hub-push-pusher-test-0001"
 afterEach(async () => { await deleteSession(PUSHER_SESSION).catch(() => {}) })
