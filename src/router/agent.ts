@@ -14,6 +14,10 @@ export interface AgentRouterOptions {
   hubPusher?: HubChatPusher
 }
 
+// Hub rejects push-key sessions without user_name (HTTP 400); warn at most
+// once per process when we skip a push for a missing X-User-Name header.
+let warnedMissingUserName = false
+
 export function createAgentRouter(
   registry: AgentRegistry,
   runsRegistry: RunRegistry,
@@ -99,7 +103,8 @@ export function createAgentRouter(
     }
 
     // Hub chat push: fire-and-forget after a run completes successfully.
-    // Identity comes from gateway-injected headers; both optional.
+    // Identity comes from gateway-injected headers; X-User-Name is required
+    // (hub rejects empty user_name), X-Org is optional.
     const identity: HubIdentity = {
       userName: c.req.header("X-User-Name"),
       org: c.req.header("X-Org"),
@@ -107,6 +112,13 @@ export function createAgentRouter(
     const pushToHub = () => {
       const pusher = options.hubPusher
       if (!pusher) return
+      if (!identity.userName) {
+        if (!warnedMissingUserName) {
+          warnedMissingUserName = true
+          console.warn("[hub-push] X-User-Name header absent; skipping push (hub requires user_name)")
+        }
+        return
+      }
       const sid = agent.getSessionId?.()
       if (!sid) return
       const model = registry.getModel(agentId)

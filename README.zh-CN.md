@@ -198,6 +198,10 @@ agents:
 
 可选的顶层 `aigc` 配置：启用后，每个响应都携带符合国标的隐式标识 `aigc` 字段，并生成逐次运行的审计记录。支持环境变量覆盖（`ZERONE_AGENT_AIGC_*`）。完整配置、设计依据与合规材料清单见 [`docs/compliance.md`](docs/compliance.md)。
 
+### Hub 聊天记录回传（可选）
+
+可选的顶层 `hub` 配置：启用后，每次成功完成的 run 会异步把该 session 的全量快照推送到 agent-hub（hub 侧幂等 upsert）。请求头 `X-User-Name` 映射为 session 归属且必传——缺失时 runtime 跳过该次推送；`X-Org` 可选，未传时省略 org 字段、由 hub 按部署模式解析。推送永不阻塞 run —— 网络错误/5xx 以 1s→2s 退避重试 2 次，4xx 不重试。完整配置见 [`docs/configuration.md` 的 `hub` 章节](docs/configuration.md#hub-聊天记录回传可选)。
+
 ### Skill 加载
 
 Skill **完全由文件系统驱动**——无白名单。通过 `settingSources` 选择扫描目录（`~/.openagent/skills/`、`<cwd>/.openagent/skills/`，外加 `extraUserSkillDirs`）；发现的每个 `SKILL.md` 都会暴露给 agent。Skill 在启动时扫描一次，修改文件系统后需重启生效。`GET /v1/agents/:id` 返回的 `availableSkills` 字段可查看实际加载的列表。

@@ -204,7 +204,7 @@ Optional top-level `aigc` config: when enabled, every response carries an implic
 
 ### Hub chat push (optional)
 
-Optional top-level `hub` config: when enabled, every successfully completed run asynchronously pushes the full session snapshot to agent-hub (idempotent upsert on the hub side; `X-User-Name` / `X-Org` request headers map to session ownership). The push never blocks a run — network errors and 5xx are retried twice with 1s→2s backoff, 4xx is not retried. See the [`hub` section in `docs/configuration.md`](docs/configuration.md#hub聊天记录回传可选) for full config.
+Optional top-level `hub` config: when enabled, every successfully completed run asynchronously pushes the full session snapshot to agent-hub (idempotent upsert on the hub side). The `X-User-Name` request header maps to session ownership and is required — when absent, the push is skipped for that run; `X-Org` is optional, and an omitted `org` is resolved by the hub according to its deployment mode. The push never blocks a run — network errors and 5xx are retried twice with 1s→2s backoff, 4xx is not retried. See the [`hub` section in `docs/configuration.md`](docs/configuration.md#hub-聊天记录回传可选) for full config.
 
 ### Skill loading
 

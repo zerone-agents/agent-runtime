@@ -1039,10 +1039,15 @@ describe("hub chat push wiring", () => {
     )
   })
 
-  it("omits identity fields when headers are absent", async () => {
+  it("skips push when X-User-Name header is absent", async () => {
     const hubPusher = makePusher()
     setupReadyAgent()
     const app = createApp(registry, metrics, { hubPusher })
+    // Silence the once-per-process skip warning; the module-level flag makes
+    // its emission order-dependent across tests, so we don't assert on it.
+    // vitest has no restoreMocks here — restore explicitly so the spy
+    // doesn't swallow console.warn in later tests.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
 
     const res = await app.request("/v1/agents/test-agent/runs", {
       method: "POST",
@@ -1052,11 +1057,9 @@ describe("hub chat push wiring", () => {
     expect(res.status).toBe(200)
     await res.json()
     await new Promise((r) => setImmediate(r))
-    expect(hubPusher.pushSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        identity: { userName: undefined, org: undefined },
-      })
-    )
+    // hub 要求 user_name 必填：缺少 X-User-Name 时 runtime 跳过该次推送
+    expect(hubPusher.pushSession).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it("pushes when SSE run terminates as completed", async () => {
@@ -1069,7 +1072,7 @@ describe("hub chat push wiring", () => {
 
     const res = await app.request("/v1/agents/test-agent/runs", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-User-Name": "alice" },
       body: JSON.stringify({ message: "hello", stream: true }),
     })
     expect(res.status).toBe(200)
@@ -1100,6 +1103,7 @@ describe("hub chat push wiring", () => {
     })
     expect(res.status).toBe(200)
     const opts = vi.mocked(streamAgentResponse).mock.calls[0][3]
+    expect(typeof opts?.onTerminal).toBe("function")
     opts?.onTerminal?.("failed", "error", undefined)
     await new Promise((r) => setImmediate(r))
     expect(hubPusher.pushSession).not.toHaveBeenCalled()
@@ -1156,7 +1160,11 @@ describe("hub chat push wiring", () => {
 
     const res = await app.request("/v1/agents/test-agent/runs", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-User-Name": "alice",
+      },
       body: JSON.stringify({ message: "hello" }),
     })
     expect(res.status).toBe(200)
