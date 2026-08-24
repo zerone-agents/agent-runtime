@@ -6,11 +6,17 @@ import type { MetricsCollector } from "../metrics.js"
 import { streamAgentResponse } from "../sse.js"
 import { buildAigcLabel, type AigcConfig } from "../aigc.js"
 import type { AigcAuditLog } from "../audit-log.js"
+import type { HubChatPusher, HubIdentity } from "../hub-push.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
   auditLog?: AigcAuditLog
+  hubPusher?: HubChatPusher
 }
+
+// Hub rejects push-key sessions without user_name (HTTP 400); warn at most
+// once per process when we skip a push for a missing X-User-Name header.
+let warnedMissingUserName = false
 
 export function createAgentRouter(
   registry: AgentRegistry,
@@ -96,6 +102,35 @@ export function createAgentRouter(
       })
     }
 
+    // Hub chat push: fire-and-forget after a run completes successfully.
+    // Identity comes from gateway-injected headers; X-User-Name is required
+    // (hub rejects empty user_name), X-Org is optional.
+    const identity: HubIdentity = {
+      userName: c.req.header("X-User-Name"),
+      org: c.req.header("X-Org"),
+    }
+    const pushToHub = () => {
+      const pusher = options.hubPusher
+      if (!pusher) return
+      if (!identity.userName) {
+        if (!warnedMissingUserName) {
+          warnedMissingUserName = true
+          console.warn("[hub-push] X-User-Name header absent; skipping push (hub requires user_name)")
+        }
+        return
+      }
+      const sid = agent.getSessionId?.()
+      if (!sid) return
+      const model = registry.getModel(agentId)
+      if (!model) return // agent 已过 getStatus/create 校验，此分支仅类型防御
+      void pusher.pushSession({
+        sessionId: sid,
+        agentId,
+        model,
+        identity,
+      }).catch(() => {}) // pushSession 契约上永不 reject；此处仅防御
+    }
+
     // Streamable HTTP: Accept header content negotiation
     const accept = c.req.header("Accept") ?? ""
     const wantsJson = accept.includes("application/json") && !accept.includes("text/event-stream")
@@ -124,6 +159,7 @@ export function createAgentRouter(
     const handleTerminal = (state: "cancelled" | "completed" | "failed", reason?: string, usage?: any) => {
       if (usage) metrics.recordRun(agentId, usage, undefined)
       runsRegistry.markTerminal(runId, state, reason)
+      if (state === "completed") pushToHub()
     }
 
     if (responseMode === "sse-block") {
@@ -201,6 +237,7 @@ export function createAgentRouter(
       }
 
       metrics.recordRun(agentId, result.usage, undefined)
+      pushToHub()
       return c.json({
         runId,
         sessionId: agent.getSessionId(),

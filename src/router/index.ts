@@ -12,6 +12,7 @@ import { createRunsRouter } from "./runs.js"
 import { createAuthMiddleware } from "../auth.js"
 import { resolveAigcConfig } from "../aigc.js"
 import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
+import { resolveHubConfig, HubChatPusher } from "../hub-push.js"
 
 export interface CreateAppOptions {
   /** External persistence hook for the in-memory AIGC audit log. */
@@ -48,10 +49,14 @@ export function createApp(
   const aigc = resolveAigcConfig(config.aigc)
   const auditLog = aigc ? new AigcAuditLog({ onRecord: options.onAigcRecord }) : undefined
 
+  // enabled 但缺字段时 resolveHubConfig 会 throw，启动 fail-fast（有意为之）
+  const hubConfig = resolveHubConfig(config.hub)
+  const hubPusher = hubConfig ? new HubChatPusher(hubConfig) : undefined
+
   // Use injected RunRegistry if provided (orchestrator-managed lifecycle);
   // otherwise instantiate internally. Single instance serves all agent runs.
   const runsRegistry = options.runsRegistry ?? new RunRegistry()
-  app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog }))
+  app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog, hubPusher }))
   app.route("/v1/runs", createRunsRouter(runsRegistry))
   app.route("/v1/sessions", createSessionRouter())
   app.route("/v1/files", createFilesRouter())

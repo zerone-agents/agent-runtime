@@ -32,6 +32,12 @@ const AigcConfigSchema = z.object({
   modelCodes: z.record(z.string(), z.string().length(4)).optional(),
 })
 
+export const HubConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  baseUrl: z.string().url().optional(),
+  chatPushKey: z.string().optional(),
+})
+
 const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
   z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional() }),
@@ -80,11 +86,13 @@ export const RuntimeConfigSchema = z.object({
   logging: LoggingConfigSchema.optional(),
   auth: AuthConfigSchema.optional(),
   aigc: AigcConfigSchema.optional(),
+  hub: HubConfigSchema.optional(),
   agents: z.array(AgentDefinitionSchema).min(1),
 })
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
+export type HubConfig = z.infer<typeof HubConfigSchema>
 
 export function formatDatasets(datasets: Record<string, string>): string {
   const lines = Object.entries(datasets)
