@@ -123,3 +123,92 @@ describe("buildSessionPayload", () => {
     expect(p2!.title).toBeUndefined()
   })
 })
+
+import { HubChatPusher } from "../hub-push.js"
+import { vi } from "vitest"
+
+const PUSHER_SESSION = "hub-push-pusher-test-0001"
+afterEach(async () => { await deleteSession(PUSHER_SESSION).catch(() => {}) })
+
+function makePusher(fetchImpl: ReturnType<typeof vi.fn>) {
+  return new HubChatPusher(
+    { baseUrl: "https://hub.example.com", chatPushKey: "secret-key" },
+    fetchImpl as unknown as typeof fetch,
+  )
+}
+
+async function seedSession(id = PUSHER_SESSION) {
+  await saveSession(id, [{ role: "user", content: "hello" }], { model: "m" })
+}
+
+describe("HubChatPusher", () => {
+  it("POSTs the session snapshot with the push key header", async () => {
+    await seedSession()
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, synced_sessions: 1, skipped_sessions: 0, synced_messages: 1, conflicts: [] }), { status: 200 }),
+    )
+    await makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: { userName: "alice" } })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe("https://hub.example.com/api/v1/chat/push")
+    expect((init.headers as Record<string, string>)["X-Chat-Push-Key"]).toBe("secret-key")
+    const body = JSON.parse(init.body as string)
+    expect(body.sessions).toHaveLength(1)
+    expect(body.sessions[0].id).toBe(PUSHER_SESSION)
+    expect(body.sessions[0].user_name).toBe("alice")
+  })
+
+  it("does nothing when the session does not exist", async () => {
+    const fetchMock = vi.fn()
+    await makePusher(fetchMock).pushSession({ sessionId: "not-exists-9999", agentId: "a", model: "m", identity: {} })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("retries on network error then succeeds; never rejects on exhaustion", async () => {
+    await seedSession()
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
+        .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      const p = makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      // buildSessionPayload 走真实磁盘 I/O：等首次 fetch 发出、首个 backoff sleep 入队后再推进定时器，
+      // 否则 runAllTimersAsync 在定时器队列为空时立即返回，之后的 fake setTimeout 无人推进而挂死
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      await vi.runAllTimersAsync() // 推进 1s + 2s 退避
+      await p
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+
+      // 全部失败：promise 正常 resolve，不 reject
+      const failMock = vi.fn().mockRejectedValue(new Error("down"))
+      const p2 = makePusher(failMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      await vi.waitFor(() => expect(failMock).toHaveBeenCalledTimes(1))
+      await vi.runAllTimersAsync()
+      await expect(p2).resolves.toBeUndefined()
+      expect(failMock).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not retry on 4xx but retries on 5xx", async () => {
+    await seedSession()
+    const mock401 = vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 }))
+    await makePusher(mock401).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+    expect(mock401).toHaveBeenCalledTimes(1)
+
+    vi.useFakeTimers()
+    try {
+      const mock500 = vi.fn().mockResolvedValue(new Response("oops", { status: 500 }))
+      const p = makePusher(mock500).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      await vi.waitFor(() => expect(mock500).toHaveBeenCalledTimes(1))
+      await vi.runAllTimersAsync()
+      await p
+      expect(mock500).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

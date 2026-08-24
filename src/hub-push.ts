@@ -115,3 +115,63 @@ export async function buildSessionPayload(input: PushSessionInput): Promise<Reco
   })
   return out
 }
+
+const PUSH_TIMEOUT_MS = 10_000
+const RETRY_DELAYS_MS = [1_000, 2_000] // 首次 + 2 次重试 = 最多 3 次尝试
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export class HubChatPusher {
+  constructor(
+    private readonly config: ResolvedHubConfig,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  /** Fire-and-forget 推送；永不 reject，失败仅记日志。 */
+  async pushSession(input: PushSessionInput): Promise<void> {
+    try {
+      const session = await buildSessionPayload(input)
+      if (!session) return
+      const body = JSON.stringify({ sessions: [session] })
+      const url = `${this.config.baseUrl}/api/v1/chat/push`
+
+      for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+        let retryable = false
+        try {
+          const res = await this.fetchImpl(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Chat-Push-Key": this.config.chatPushKey },
+            body,
+            signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
+          })
+          if (res.ok) {
+            const result = await res.json().catch(() => null) as { skipped_sessions?: number; conflicts?: unknown[] } | null
+            if (result && ((result.skipped_sessions ?? 0) > 0 || (result.conflicts?.length ?? 0) > 0)) {
+              console.warn("[hub-push] pushed with skips", { sessionId: input.sessionId, skipped: result.skipped_sessions, conflicts: result.conflicts?.length })
+            }
+            return
+          }
+          const snippet = await res.text().then((t) => t.slice(0, 200)).catch(() => "")
+          if (res.status >= 400 && res.status < 500) {
+            console.error("[hub-push] push rejected (no retry)", { sessionId: input.sessionId, status: res.status, body: snippet })
+            return
+          }
+          retryable = true // 5xx
+          console.error("[hub-push] push failed, will retry", { sessionId: input.sessionId, status: res.status, body: snippet, attempt })
+        } catch (err) {
+          retryable = true // 网络错误 / 超时
+          console.error("[hub-push] push error, will retry", { sessionId: input.sessionId, error: (err as Error).message, attempt })
+        }
+        if (retryable && attempt < RETRY_DELAYS_MS.length) {
+          await sleep(RETRY_DELAYS_MS[attempt])
+        }
+      }
+      console.error("[hub-push] push failed after all retries", { sessionId: input.sessionId })
+    } catch (err) {
+      // buildSessionPayload 等意外错误：吞掉，绝不影响 run
+      console.error("[hub-push] unexpected error", { sessionId: input.sessionId, error: (err as Error).message })
+    }
+  }
+}
