@@ -129,7 +129,12 @@ export class HubChatPusher {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  /** Fire-and-forget 推送；永不 reject，失败仅记日志。 */
+  /**
+   * Fire-and-forget 推送；永不 reject，失败仅记日志。
+   *
+   * 取舍：进程退出时 in-flight 推送会丢失（不 drain）——最坏丢该 session
+   * 最后一次 run 的快照，下次 run 的全量重推（hub 幂等 upsert）可补。
+   */
   async pushSession(input: PushSessionInput): Promise<void> {
     try {
       const session = await buildSessionPayload(input)
