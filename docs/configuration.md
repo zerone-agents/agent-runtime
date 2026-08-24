@@ -94,6 +94,21 @@ Environment variables `ZERONE_AGENT_API_KEY` / `ZERONE_AGENT_BASE_URL` / `ZERONE
 
 Each agent can load custom tools from script files listed under `customTools` (relative paths resolve against the config directory). See [tools.md](tools.md).
 
+## hub（聊天记录回传，可选）
+
+把每次成功完成的 run 的会话快照回传到 agent-hub。默认关闭。
+
+```yaml
+hub:
+  enabled: true            # 显式开启；缺省 false
+  baseUrl: "https://hub.example.com"   # enabled 时必填，缺失启动报错
+  chatPushKey: "..."                    # enabled 时必填，与 hub 侧 CHAT_PUSH_API_KEY 相同
+```
+
+- 触发时机：run 终态为 completed 时异步推送该 session 全量快照（hub 幂等 upsert，可安全重试）
+- 归属：请求头 `X-User-Name` / `X-Org` 映射为 session 的 `user_name` / `org`；未传则省略，hub 按部署模式兜底
+- 失败处理：推送永不阻塞 run；网络错误/5xx 指数退避重试 2 次（1s、2s），4xx 不重试；失败仅记日志
+
 ## Config Discovery
 
 Search order:

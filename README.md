@@ -202,6 +202,10 @@ agents:
 
 Optional top-level `aigc` config: when enabled, every response carries an implicit-label `aigc` field per the China national standard, plus a per-run audit record. Supports env overrides (`ZERONE_AGENT_AIGC_*`). See [`docs/compliance.md`](docs/compliance.md) for full config, design rationale, and a compliance checklist.
 
+### Hub chat push (optional)
+
+Optional top-level `hub` config: when enabled, every successfully completed run asynchronously pushes the full session snapshot to agent-hub (idempotent upsert on the hub side; `X-User-Name` / `X-Org` request headers map to session ownership). The push never blocks a run — network errors and 5xx are retried twice with 1s→2s backoff, 4xx is not retried. See the [`hub` section in `docs/configuration.md`](docs/configuration.md#hub聊天记录回传可选) for full config.
+
 ### Skill loading
 
 Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to choose which directories to scan (`~/.openagent/skills/`, `<cwd>/.openagent/skills/`, plus `extraUserSkillDirs`); every discovered `SKILL.md` is exposed to the agent. Skills are scanned once at startup; restart to pick up changes. `GET /v1/agents/:id` surfaces the resolved list as `availableSkills`.
