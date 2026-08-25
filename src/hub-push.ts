@@ -118,6 +118,9 @@ export async function buildSessionPayload(input: PushSessionInput): Promise<Reco
 
 const PUSH_TIMEOUT_MS = 10_000
 const RETRY_DELAYS_MS = [1_000, 2_000] // 首次 + 2 次重试 = 最多 3 次尝试
+// #30：transcript 落盘竞态的短重试——250ms × 4 次尝试，覆盖毫秒级窗口
+const PAYLOAD_RETRY_ATTEMPTS = 4
+const PAYLOAD_RETRY_DELAY_MS = 250
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -137,8 +140,18 @@ export class HubChatPusher {
    */
   async pushSession(input: PushSessionInput): Promise<void> {
     try {
-      const session = await buildSessionPayload(input)
-      if (!session) return
+      // #30：SSE 模式下 transcript 落盘与 onTerminal 存在毫秒级竞态，
+      // buildSessionPayload 可能暂读不到刚结束的会话——短重试等待文件就位。
+      let session: Record<string, unknown> | null = null
+      for (let attempt = 1; attempt <= PAYLOAD_RETRY_ATTEMPTS; attempt++) {
+        session = await buildSessionPayload(input)
+        if (session) break
+        if (attempt < PAYLOAD_RETRY_ATTEMPTS) await sleep(PAYLOAD_RETRY_DELAY_MS)
+      }
+      if (!session) {
+        console.warn("[hub-push] session transcript not found, giving up", { sessionId: input.sessionId, attempts: PAYLOAD_RETRY_ATTEMPTS })
+        return
+      }
       const body = JSON.stringify({ sessions: [session] })
       const url = `${this.config.baseUrl}/api/v1/chat/push`
 
@@ -152,8 +165,23 @@ export class HubChatPusher {
             signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
           })
           if (res.ok) {
-            const result = await res.json().catch(() => null) as { skipped_sessions?: number; conflicts?: unknown[] } | null
-            if (result && ((result.skipped_sessions ?? 0) > 0 || (result.conflicts?.length ?? 0) > 0)) {
+            // #29：200 + 非 JSON / 缺 success 字段 = 大概率 baseUrl 打到了错误服务
+            // （如 SPA 反代的 catch-all 200 index.html）。配置错误不重试，但必须告警。
+            const text = await res.text().catch(() => "")
+            let result: { success?: unknown; skipped_sessions?: number; conflicts?: unknown[] } | null = null
+            try {
+              result = JSON.parse(text) as { success?: unknown; skipped_sessions?: number; conflicts?: unknown[] }
+            } catch { /* 非 JSON body */ }
+            if (!result || typeof result !== "object" || result.success === undefined) {
+              console.warn("[hub-push] unexpected 2xx response shape (is baseUrl pointing at the wrong service?)", {
+                sessionId: input.sessionId,
+                status: res.status,
+                contentType: res.headers.get("content-type") ?? "",
+                body: text.slice(0, 200),
+              })
+              return
+            }
+            if ((result.skipped_sessions ?? 0) > 0 || (result.conflicts?.length ?? 0) > 0) {
               console.warn("[hub-push] pushed with skips", { sessionId: input.sessionId, skipped: result.skipped_sessions, conflicts: result.conflicts?.length })
             }
             return
