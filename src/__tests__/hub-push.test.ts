@@ -156,10 +156,84 @@ describe("HubChatPusher", () => {
     expect(body.sessions[0].user_name).toBe("alice")
   })
 
-  it("does nothing when the session does not exist", async () => {
-    const fetchMock = vi.fn()
-    await makePusher(fetchMock).pushSession({ sessionId: "not-exists-9999", agentId: "a", model: "m", identity: {} })
-    expect(fetchMock).not.toHaveBeenCalled()
+  it("does nothing when the session does not exist, warns after retries (#30)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const fetchMock = vi.fn()
+      await makePusher(fetchMock).pushSession({ sessionId: "not-exists-9999", agentId: "a", model: "m", identity: {} })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[hub-push] session transcript not found, giving up",
+        expect.objectContaining({ sessionId: "not-exists-9999" }),
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("retries transcript build until the file appears, then pushes (#30)", async () => {
+    // 模拟 SSE 竞态：transcript 晚于 pushSession 启动 ~400ms 落盘
+    const lateSession = "hub-push-late-transcript-0001"
+    setTimeout(() => { void saveSession(lateSession, [{ role: "user", content: "late" }], { model: "m" }) }, 400)
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, synced_sessions: 1 }), { status: 200 }),
+    )
+    await makePusher(fetchMock).pushSession({ sessionId: lateSession, agentId: "a", model: "m", identity: { userName: "u" } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
+    expect(body.sessions[0].id).toBe(lateSession)
+    await deleteSession(lateSession).catch(() => {})
+  })
+
+  it("warns on 200 with non-JSON body without retrying (#29)", async () => {
+    await seedSession()
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response("<html><body>index</body></html>", { status: 200, headers: { "Content-Type": "text/html" } }),
+      )
+      await makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      expect(fetchMock).toHaveBeenCalledTimes(1) // 配置错误不重试
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const [msg, detail] = warnSpy.mock.calls[0] as unknown as [string, { status: number; contentType: string; body: string }]
+      expect(msg).toContain("unexpected 2xx response shape")
+      expect(detail.status).toBe(200)
+      expect(detail.contentType).toContain("text/html")
+      expect(detail.body).toContain("<html>")
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("warns on 200 with JSON missing the success field (#29)", async () => {
+    await seedSession()
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ foo: 1 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      )
+      await makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0][0]).toContain("unexpected 2xx response shape")
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("does not warn on a well-formed success response", async () => {
+    await seedSession()
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true, synced_sessions: 1, skipped_sessions: 0, conflicts: [] }), { status: 200 }),
+      )
+      await makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it("retries on network error then succeeds; never rejects on exhaustion", async () => {
