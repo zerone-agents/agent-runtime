@@ -95,7 +95,8 @@ describe("buildSessionPayload", () => {
     expect(JSON.parse(msgs[3].content as string)).toEqual([{ type: "text", text: "今天晴，25°C" }])
   })
 
-  it("assigns ids and omits identity fields when absent", async () => {    await saveSession(TEST_SESSION, [
+  it("assigns ids and omits identity fields when absent", async () => {
+    await saveSession(TEST_SESSION, [
       { role: "user", content: "hi" },
       { role: "assistant", content: [] },  // 空 content → 省略 content 字段
     ], { model: "m" })
