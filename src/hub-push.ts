@@ -18,7 +18,6 @@ export function resolveHubConfig(cfg?: HubConfig): ResolvedHubConfig | undefined
 
 export interface HubIdentity {
   userName?: string
-  org?: string
 }
 
 export interface PushSessionInput {
@@ -85,7 +84,11 @@ function firstUserText(messages: NormalizedMessageParam[]): string | undefined {
   return undefined
 }
 
-export async function buildSessionPayload(input: PushSessionInput): Promise<Record<string, unknown> | null> {
+/**
+ * 组装 hub 回传快照。租户只经 `org` 参数（部署级 hub.org）进入 payload，
+ * identity 不携带租户——类型边界上不存在第二个注入 seam。
+ */
+export async function buildSessionPayload(input: PushSessionInput, org?: string): Promise<Record<string, unknown> | null> {
   const info = await getSessionInfo(input.sessionId)
   if (!info) return null
   const messages = await getSessionMessages(input.sessionId)
@@ -97,7 +100,7 @@ export async function buildSessionPayload(input: PushSessionInput): Promise<Reco
     model: input.model,
     agent_id: input.agentId,
     ...(input.identity.userName ? { user_name: input.identity.userName } : {}),
-    ...(input.identity.org ? { org: input.identity.org } : {}),
+    ...(org ? { org } : {}),
   }
   const title = firstUserText(messages)
   if (title) out.title = title
@@ -148,10 +151,7 @@ export class HubChatPusher {
       // hub 按部署模式解析默认租户（builtin 恒落 default；casdoor 解析 default 租户）。
       let session: Record<string, unknown> | null = null
       for (let attempt = 1; attempt <= PAYLOAD_RETRY_ATTEMPTS; attempt++) {
-        session = await buildSessionPayload({
-          ...input,
-          identity: { userName: input.identity.userName, ...(this.config.org ? { org: this.config.org } : {}) },
-        })
+        session = await buildSessionPayload(input, this.config.org)
         if (session) break
         if (attempt < PAYLOAD_RETRY_ATTEMPTS) await sleep(PAYLOAD_RETRY_DELAY_MS)
       }
