@@ -65,8 +65,8 @@ describe("buildSessionPayload", () => {
 
     const payload = await buildSessionPayload({
       sessionId: TEST_SESSION, agentId: "weather-bot", model: "claude-sonnet-4-6",
-      identity: { userName: "alice", org: "acme" },
-    })
+      identity: { userName: "alice" },
+    }, "acme")
 
     expect(payload).toMatchObject({
       id: TEST_SESSION, title: "帮我查一下天气", model: "claude-sonnet-4-6",
@@ -115,6 +115,24 @@ describe("buildSessionPayload", () => {
     expect(msgs[1].content).toBeUndefined()
     // 每条 message 都有 created_at（session createdAt 兜底）
     expect(typeof msgs[0].created_at).toBe("string")
+  })
+
+  it("takes tenant only from the org parameter, ignoring smuggled identity.org (#28 regression)", async () => {
+    await saveSession(TEST_SESSION, [{ role: "user", content: "hi" }], { model: "m" })
+    // HubIdentity 已无 org 字段（类型边界封闭）；这里运行时走私一个遗留 org，
+    // 证明 buildSessionPayload 只读独立参数、identity 不再是租户注入口
+    const smuggled = { userName: "alice", org: "spoofed-tenant" } as never
+    const payload = await buildSessionPayload(
+      { sessionId: TEST_SESSION, agentId: "a", model: "m", identity: smuggled },
+      "tenant-a",
+    )
+    expect(payload!.org).toBe("tenant-a")
+
+    // 参数缺省时：即使 identity 走私了 org，payload 也省略 org 字段
+    const noOrg = await buildSessionPayload(
+      { sessionId: TEST_SESSION, agentId: "a", model: "m", identity: smuggled },
+    )
+    expect(noOrg!.org).toBeUndefined()
   })
 
   it("truncates title to 50 chars and omits title when no user message", async () => {
