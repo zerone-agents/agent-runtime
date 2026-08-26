@@ -103,11 +103,13 @@ hub:
   enabled: true            # 显式开启；缺省 false
   baseUrl: "https://hub.example.com"   # enabled 时必填，缺失启动报错
   chatPushKey: "..."                    # enabled 时必填，与 hub 侧 CHAT_PUSH_API_KEY 相同
+  org: "tenant-a"                       # 可选：部署级租户，写入回传 session 的 org 字段
 ```
 
 - 触发时机：run 终态为 completed 时异步推送该 session 全量快照（hub 幂等 upsert，可安全重试）
-- 归属：请求头 `X-User-Name` / `X-Org` 映射为 session 的 `user_name` / `org`；未传 `X-User-Name` 时 runtime 跳过该次推送（hub 要求 user_name 必填），`X-Org` 未传则省略 org 字段、hub 按部署模式解析默认租户
-- 信任模型：身份头 `X-User-Name`/`X-Org` 由 runtime 直接信任、无法校验——开启 hub 回传时，runtime 应部署在 deployer/网关之后（或配置 HTTP API key），否则身份可被伪造
+- 用户归属：请求头 `X-User-Name` 映射为 session 的 `user_name`；未传时 runtime 跳过该次推送（hub 要求 user_name 必填）
+- 租户归属：只来自部署级配置 `hub.org`（由 agent-hub 经 agent-deployer 下发），**请求头 `X-Org` 已删除、不再读取**；未配置 `hub.org` 时省略 org 字段，hub 按部署模式解析默认租户（builtin 恒落 default；casdoor 解析 default 租户）
+- 信任模型：`X-User-Name` 头由 runtime 直接信任、无法校验——开启 hub 回传时，runtime 应部署在 deployer/网关之后（或配置 HTTP API key），否则用户归属可被伪造；租户归属不受请求影响
 - 失败处理：推送永不阻塞 run；网络错误/5xx 指数退避重试 2 次（1s、2s），4xx 不重试；失败仅记日志
 
 ## Config Discovery

@@ -1021,7 +1021,8 @@ describe("hub chat push wiring", () => {
         "Content-Type": "application/json",
         Accept: "application/json",
         "X-User-Name": "alice",
-        "X-Org": "acme",
+        // #28：X-Org 已删除，仍发送以验证它被忽略（租户只来自 hub.org 部署配置）
+        "X-Org": "spoofed-tenant",
       },
       body: JSON.stringify({ message: "hello" }),
     })
@@ -1034,7 +1035,7 @@ describe("hub chat push wiring", () => {
         sessionId: "sess-new",
         agentId: "test-agent",
         model: "glm-4.5",
-        identity: { userName: "alice", org: "acme" },
+        identity: { userName: "alice" },
       })
     )
   })

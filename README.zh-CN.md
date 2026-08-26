@@ -200,7 +200,7 @@ agents:
 
 ### Hub 聊天记录回传（可选）
 
-可选的顶层 `hub` 配置：启用后，每次成功完成的 run 会异步把该 session 的全量快照推送到 agent-hub（hub 侧幂等 upsert）。请求头 `X-User-Name` 映射为 session 归属且必传——缺失时 runtime 跳过该次推送；`X-Org` 可选，未传时省略 org 字段、由 hub 按部署模式解析。推送永不阻塞 run —— 网络错误/5xx 以 1s→2s 退避重试 2 次，4xx 不重试。完整配置见 [`docs/configuration.md` 的 `hub` 章节](docs/configuration.md#hub-聊天记录回传可选)。
+可选的顶层 `hub` 配置：启用后，每次成功完成的 run 会异步把该 session 的全量快照推送到 agent-hub（hub 侧幂等 upsert）。请求头 `X-User-Name` 映射为 session 用户归属且必传——缺失时 runtime 跳过该次推送；租户归属只来自部署级配置 `hub.org`（经 agent-hub/agent-deployer 下发），**请求头 `X-Org` 已删除、不再读取**，未配置 `hub.org` 时省略 org 字段、由 hub 按部署模式解析默认租户。推送永不阻塞 run —— 网络错误/5xx 以 1s→2s 退避重试 2 次，4xx 不重试。完整配置见 [`docs/configuration.md` 的 `hub` 章节](docs/configuration.md#hub-聊天记录回传可选)。
 
 ### Skill 加载
 

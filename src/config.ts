@@ -36,6 +36,8 @@ export const HubConfigSchema = z.object({
   enabled: z.boolean().default(false),
   baseUrl: z.string().url().optional(),
   chatPushKey: z.string().optional(),
+  /** 部署级租户：写入回传 session 的 org 字段。缺省时省略该字段，hub 按部署模式解析默认租户。 */
+  org: z.string().optional(),
 })
 
 const McpServerConfigSchema = z.discriminatedUnion("transport", [

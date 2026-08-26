@@ -31,6 +31,13 @@ describe("resolveHubConfig", () => {
     expect(resolveHubConfig({ enabled: true, baseUrl: "https://hub.example.com/", chatPushKey: "k" }))
       .toEqual({ baseUrl: "https://hub.example.com", chatPushKey: "k" })
   })
+
+  it("passes deployment org through, omits when absent (#28)", () => {
+    expect(resolveHubConfig({ enabled: true, baseUrl: "https://hub.example.com", chatPushKey: "k", org: "tenant-a" }))
+      .toEqual({ baseUrl: "https://hub.example.com", chatPushKey: "k", org: "tenant-a" })
+    expect(resolveHubConfig({ enabled: true, baseUrl: "https://hub.example.com", chatPushKey: "k" })?.org)
+      .toBeUndefined()
+  })
 })
 
 describe("buildSessionPayload", () => {
@@ -153,6 +160,23 @@ describe("HubChatPusher", () => {
     const body = JSON.parse(init.body as string)
     expect(body.sessions).toHaveLength(1)
     expect(body.sessions[0].id).toBe(PUSHER_SESSION)
+    expect(body.sessions[0].user_name).toBe("alice")
+    expect(body.sessions[0].org).toBeUndefined() // 无部署 org 配置时省略字段
+  })
+
+  it("fills org from deployment config regardless of request identity (#28)", async () => {
+    await seedSession()
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, synced_sessions: 1 }), { status: 200 }),
+    )
+    const pusher = new HubChatPusher(
+      { baseUrl: "https://hub.example.com", chatPushKey: "secret-key", org: "tenant-a" },
+      fetchMock as unknown as typeof fetch,
+    )
+    await pusher.pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: { userName: "alice" } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
+    expect(body.sessions[0].org).toBe("tenant-a")
     expect(body.sessions[0].user_name).toBe("alice")
   })
 

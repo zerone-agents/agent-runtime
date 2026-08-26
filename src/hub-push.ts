@@ -5,13 +5,15 @@ import type { NormalizedContentBlock, NormalizedMessageParam } from "@zerone-age
 export interface ResolvedHubConfig {
   baseUrl: string
   chatPushKey: string
+  /** 部署级租户（#28）：回传 session 的 org 唯一来源；请求头 X-Org 已删除。缺省时省略 org 字段。 */
+  org?: string
 }
 
 export function resolveHubConfig(cfg?: HubConfig): ResolvedHubConfig | undefined {
   if (cfg?.enabled !== true) return undefined
   if (!cfg.baseUrl) throw new Error("hub is enabled but baseUrl is not configured")
   if (!cfg.chatPushKey) throw new Error("hub is enabled but chatPushKey is not configured")
-  return { baseUrl: cfg.baseUrl.replace(/\/+$/, ""), chatPushKey: cfg.chatPushKey }
+  return { baseUrl: cfg.baseUrl.replace(/\/+$/, ""), chatPushKey: cfg.chatPushKey, ...(cfg.org ? { org: cfg.org } : {}) }
 }
 
 export interface HubIdentity {
@@ -142,9 +144,14 @@ export class HubChatPusher {
     try {
       // #30：SSE 模式下 transcript 落盘与 onTerminal 存在毫秒级竞态，
       // buildSessionPayload 可能暂读不到刚结束的会话——短重试等待文件就位。
+      // #28：租户来自部署级配置（hub.org），不来自请求头。缺省时省略 org 字段，
+      // hub 按部署模式解析默认租户（builtin 恒落 default；casdoor 解析 default 租户）。
       let session: Record<string, unknown> | null = null
       for (let attempt = 1; attempt <= PAYLOAD_RETRY_ATTEMPTS; attempt++) {
-        session = await buildSessionPayload(input)
+        session = await buildSessionPayload({
+          ...input,
+          identity: { userName: input.identity.userName, ...(this.config.org ? { org: this.config.org } : {}) },
+        })
         if (session) break
         if (attempt < PAYLOAD_RETRY_ATTEMPTS) await sleep(PAYLOAD_RETRY_DELAY_MS)
       }
