@@ -103,11 +103,10 @@ export function createAgentRouter(
     }
 
     // Hub chat push: fire-and-forget after a run completes successfully.
-    // Identity comes from gateway-injected headers; X-User-Name is required
-    // (hub rejects empty user_name), X-Org is optional.
+    // 用户归属来自网关注入的 X-User-Name 头（必填，缺失跳过推送）；
+    // 租户归属来自部署级配置 hub.org（#28），请求头 X-Org 已删除。
     const identity: HubIdentity = {
       userName: c.req.header("X-User-Name"),
-      org: c.req.header("X-Org"),
     }
     const pushToHub = () => {
       const pusher = options.hubPusher
