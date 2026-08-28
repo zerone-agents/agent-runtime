@@ -9,6 +9,7 @@ import { createAgentRouter } from "./agent.js"
 import { createSessionRouter } from "./session.js"
 import { createFilesRouter } from "./files.js"
 import { createRunsRouter } from "./runs.js"
+import { createCronRouter, type CronRouterDeps } from "./cron.js"
 import { createAuthMiddleware } from "../auth.js"
 import { resolveAigcConfig } from "../aigc.js"
 import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
@@ -23,6 +24,8 @@ export interface CreateAppOptions {
    * call closeAll() on SIGTERM or query run state outside the HTTP API.
    */
   runsRegistry?: RunRegistry
+  /** Cron router deps (service + status provider). Omitted → status-only mount reporting enabled:false. */
+  cron?: CronRouterDeps
 }
 
 export function createApp(
@@ -60,6 +63,17 @@ export function createApp(
   app.route("/v1/runs", createRunsRouter(runsRegistry))
   app.route("/v1/sessions", createSessionRouter())
   app.route("/v1/files", createFilesRouter())
+  app.route(
+    "/v1/cron",
+    createCronRouter(
+      options.cron ?? {
+        getStatus: async () => ({
+          enabled: false, running: false, runtimeId: "", configId: "", dataId: "",
+          taskCount: 0, activeExecutionCount: 0,
+        }),
+      },
+    ),
+  )
 
   return app
 }
