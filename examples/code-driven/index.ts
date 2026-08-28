@@ -1,4 +1,4 @@
-import { createRuntime } from "../../src/index.js"
+import { buildShutdown, closeHttpServer, createRuntime } from "../../src/index.js"
 import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
@@ -13,8 +13,8 @@ const weatherTool = defineTool({
     },
     required: ["city"],
   },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
+  isReadOnly: true,
+  isConcurrencySafe: true,
   async call(input: { city: string }) {
     const cnToEn: Record<string, string> = { "北京": "beijing", "上海": "shanghai", "东京": "tokyo", "伦敦": "london", "纽约": "new york" }
     const temps: Record<string, { temp: number; desc: string }> = {
@@ -53,7 +53,7 @@ async function main() {
       cors: { origins: ["*"] },
       // 声明会被下方 host.agents.register 的代码构建版本覆盖
       // （自定义工具 / Hook 实例无法来自配置文件）
-      agents: [{ id: "smart", description: "smart assistant", model: "claude-sonnet-4-6" }],
+      agents: [{ id: "smart", description: "smart assistant", model: "claude-sonnet-4-6", maxTurns: 15 }],
     },
     { configDir },
   )
@@ -112,14 +112,12 @@ async function main() {
     console.log("Hooks: PreToolUse(Bash), PostToolUse(all)")
   })
 
-  // 优雅停机：先停止接受新连接，再排水 runs/cron、关闭所有 agents
-  const shutdown = () => {
-    const closed = new Promise<void>((resolve) => {
-      server.close(() => resolve())
-      server.closeIdleConnections?.()
-    })
-    Promise.allSettled([closed, host.stop()]).then(() => process.exit(0))
-  }
+  // 优雅停机：先拒绝新变更请求（quiesce），再停接流、排水 runs/cron、关闭 agents
+  const shutdown = buildShutdown({
+    closeServer: () => { host.quiesce(); return closeHttpServer(server) },
+    stopHost: () => host.stop(),
+    exit: (code) => process.exit(code),
+  })
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
 }

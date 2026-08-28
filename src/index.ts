@@ -37,7 +37,8 @@ export {
   createRuntime, resolveCronDataRoot,
   type AgentRuntimeHost, type CreateRuntimeOptions,
 } from "./runtime.js"
-export { runCli, CLI_EXIT } from "./cli.js"
+export { ShutdownGate, createShutdownGateMiddleware } from "./shutdown-gate.js"
+export { runCli, CLI_EXIT, buildShutdown, closeHttpServer } from "./cli.js"
 export { CronConfigSchema, type CronConfig } from "./config.js"
 
 if (import.meta.filename === process.argv[1]) {

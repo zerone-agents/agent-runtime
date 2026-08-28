@@ -10,6 +10,7 @@ import { RuntimeCronService } from "./cron-service.js"
 import {
   disabledCronStatus, newRuntimeId, pathIdentity, type CronStatusPayload,
 } from "./cron-identity.js"
+import { ShutdownGate } from "./shutdown-gate.js"
 import type { AigcRunRecord } from "./audit-log.js"
 
 export interface AgentRuntimeHost {
@@ -20,6 +21,8 @@ export interface AgentRuntimeHost {
   cron?: RuntimeCronService
   start(): Promise<void>
   stop(): Promise<void>
+  /** Begin application quiescing: reject new mutating /v1 requests (503 shutting_down) before drain. */
+  quiesce(): void
 }
 
 export interface CreateRuntimeOptions {
@@ -52,6 +55,9 @@ export async function createRuntime(
   const configId = pathIdentity(configDir)
   const dataRoot = resolveCronDataRoot(config, configDir)
   const dataId = pathIdentity(dataRoot)
+
+  // Rejects new mutations on already-accepted connections during shutdown drain.
+  const shutdownGate = new ShutdownGate()
 
   // 4. Optional cron service, wrapped with the Runtime agent policy.
   let cron: RuntimeCronService | undefined
@@ -96,6 +102,7 @@ export async function createRuntime(
     onAigcRecord: options.onAigcRecord,
     runsRegistry: runs,
     cron: { cron, getStatus },
+    shutdownGate,
   })
 
   let started = false
@@ -106,6 +113,7 @@ export async function createRuntime(
     agents,
     runs,
     ...(cron ? { cron } : {}),
+    quiesce(): void { shutdownGate.begin() },
     async start() {
       if (started) return
       // 6. Directory lock, execution recovery, scheduler init. Failure here

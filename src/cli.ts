@@ -41,6 +41,19 @@ function fail(msg: string, code: number): number {
 }
 
 /**
+ * Stop an HTTP server: stops accepting new connections and closes idle
+ * keep-alive ones; resolves when all connections have closed. Structural
+ * feature-detect because @hono/node-server returns an http1/http2
+ * ServerType union and closeIdleConnections is not declared on every arm.
+ */
+export function closeHttpServer(server: { close(cb?: () => void): unknown }): Promise<void> {
+  return new Promise<void>((resolve) => {
+    ;(server as { closeIdleConnections?: () => void }).closeIdleConnections?.()
+    server.close(() => resolve())
+  })
+}
+
+/**
  * Graceful-shutdown orchestrator: stop accepting new connections FIRST
  * (closeServer), then drain runs + cron (stopHost) in parallel with the
  * connection close-out, and exit only after both settle. Exported for testing.
@@ -56,7 +69,17 @@ export function buildShutdown(opts: {
     called = true
     const serverClosed = opts.closeServer() // FIRST: stop accepting new connections
     const hostStopped = opts.stopHost() // then drain runs + cron in parallel with connection close-out
-    Promise.allSettled([serverClosed, hostStopped]).then(() => opts.exit(0))
+    Promise.allSettled([serverClosed, hostStopped]).then((results) => {
+      const failed = results.filter((r) => r.status === "rejected")
+      if (failed.length > 0) {
+        for (const r of failed as PromiseRejectedResult[]) {
+          console.error(`Shutdown step failed: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
+        }
+        opts.exit(1)
+        return
+      }
+      opts.exit(0)
+    })
   }
 }
 
@@ -89,14 +112,12 @@ async function serveCommand(argv: string[]): Promise<number> {
   )
 
   const shutdown = buildShutdown({
-    closeServer: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve())
-        // ServerType is an http1/http2 union; closeIdleConnections (Node ≥18.2)
-        // is not declared on every member, so feature-detect via structural cast.
-        const closeIdle = (server as { closeIdleConnections?: () => void }).closeIdleConnections
-        closeIdle?.call(server)
-      }),
+    // quiesce() flips the shutdown gate synchronously FIRST: already-accepted
+    // connections get 503 for new mutations before host.stop() starts draining.
+    closeServer: () => {
+      host.quiesce()
+      return closeHttpServer(server)
+    },
     stopHost: () => host.stop(),
     exit: (code) => process.exit(code),
   })

@@ -10,6 +10,7 @@ import { createSessionRouter } from "./session.js"
 import { createFilesRouter } from "./files.js"
 import { createRunsRouter } from "./runs.js"
 import { createCronRouter, type CronRouterDeps } from "./cron.js"
+import { createShutdownGateMiddleware, type ShutdownGate } from "../shutdown-gate.js"
 import { createAuthMiddleware } from "../auth.js"
 import { resolveAigcConfig } from "../aigc.js"
 import { AigcAuditLog, type AigcRunRecord } from "../audit-log.js"
@@ -26,6 +27,8 @@ export interface CreateAppOptions {
   runsRegistry?: RunRegistry
   /** Cron router deps (service + status provider). Omitted → status-only mount reporting enabled:false. */
   cron?: CronRouterDeps
+  /** When provided, mounted on /v1/* ahead of all routers: after begin() it rejects mutating requests with 503. */
+  shutdownGate?: ShutdownGate
 }
 
 export function createApp(
@@ -45,6 +48,10 @@ export function createApp(
   const apiKey = process.env.ZERONE_AGENT_HTTP_API_KEY ?? config.auth?.apiKey
   if (apiKey) {
     app.use("/v1/*", createAuthMiddleware(apiKey))
+  }
+
+  if (options.shutdownGate) {
+    app.use("/v1/*", createShutdownGateMiddleware(options.shutdownGate))
   }
 
   app.route("/v1/metrics", createMetricsRouter(metrics))

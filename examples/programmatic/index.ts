@@ -17,7 +17,7 @@ import { serve } from "@hono/node-server"
 import { z } from "zod"
 
 import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
-import { createRuntime, type RuntimeConfig } from "../../src/index.js"
+import { buildShutdown, closeHttpServer, createRuntime, type RuntimeConfig } from "../../src/index.js"
 
 // ─── 自定义工具 ────────────────────────────────────────────
 
@@ -31,8 +31,8 @@ const stockTool = defineTool({
     },
     required: ["symbol"],
   },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
+  isReadOnly: true,
+  isConcurrencySafe: true,
   async call(input: { symbol: string }) {
     const prices: Record<string, { price: number; change: string }> = {
       AAPL: { price: 198.5, change: "+1.2%" },
@@ -108,8 +108,8 @@ async function main() {
     // agents 声明会被下方 host.agents.register 的代码构建版本覆盖
     // （hooks / 自定义工具实例无法来自配置文件）
     agents: [
-      { id: "analyst", description: "financial analyst", model: "claude-sonnet-4-6" },
-      { id: "ops", description: "ops assistant", model: "claude-sonnet-4-6" },
+      { id: "analyst", description: "financial analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
+      { id: "ops", description: "ops assistant", model: "claude-sonnet-4-6", maxTurns: 15 },
     ],
   }
 
@@ -182,17 +182,12 @@ async function main() {
     console.log()
   })
 
-  // 优雅停机：先停止接受新连接，再排水 runs/cron、关闭所有 agents
-  const shutdown = () => {
-    const closed = new Promise<void>((resolve) => {
-      server.close(() => resolve())
-      server.closeIdleConnections?.()
-    })
-    Promise.allSettled([closed, host.stop()]).then(() => {
-      console.log("\n  Programmatic Agent Server stopped")
-      process.exit(0)
-    })
-  }
+  // 优雅停机：先拒绝新变更请求（quiesce），再停接流、排水 runs/cron、关闭 agents
+  const shutdown = buildShutdown({
+    closeServer: () => { host.quiesce(); return closeHttpServer(server) },
+    stopHost: () => host.stop(),
+    exit: (code) => process.exit(code),
+  })
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
 }

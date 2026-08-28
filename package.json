@@ -26,7 +26,8 @@
     "dev": "tsc --watch",
     "start": "node --import tsx src/index.ts",
     "prepublishOnly": "npm run build",
-    "test": "vitest"
+    "test": "vitest",
+    "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json"
   },
   "engines": {
     "node": ">=22.0.0"

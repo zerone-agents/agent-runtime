@@ -278,18 +278,34 @@ describe("buildShutdown", () => {
     expect(order[order.length - 1]).toBe("exit:0")
   })
 
-  it("still exits 0 when either step rejects", async () => {
+  it("exits 1 and logs a diagnostic when either step rejects", async () => {
     for (const rejectClose of [true, false]) {
       let exited!: (code: number) => void
       const exitCode = new Promise<number>((r) => { exited = r })
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
       const shutdown = buildShutdown({
         closeServer: () => (rejectClose ? Promise.reject(new Error("close boom")) : Promise.resolve()),
         stopHost: () => (rejectClose ? Promise.resolve() : Promise.reject(new Error("stop boom"))),
         exit: exited,
       })
       shutdown()
-      await expect(exitCode).resolves.toBe(0)
+      await expect(exitCode).resolves.toBe(1)
+      // Assert before mockRestore(): restoring clears mock.calls state.
+      expect(String(errSpy.mock.calls)).toContain(rejectClose ? "close boom" : "stop boom")
+      errSpy.mockRestore()
     }
+  })
+
+  it("exits 0 when both steps resolve", async () => {
+    let exited!: (code: number) => void
+    const exitCode = new Promise<number>((r) => { exited = r })
+    const shutdown = buildShutdown({
+      closeServer: () => Promise.resolve(),
+      stopHost: () => Promise.resolve(),
+      exit: exited,
+    })
+    shutdown()
+    await expect(exitCode).resolves.toBe(0)
   })
 
   it("second invocation is a no-op: each function called exactly once", async () => {
