@@ -186,4 +186,15 @@ describe("cron CLI (online)", () => {
     errSpy.mockRestore()
     expect(code).toBe(CLI_EXIT.USAGE)
   })
+
+  it("--help/-h print usage and exit 0 before serve flag fallback", async () => {
+    for (const args of [["--help"], ["-h"]]) {
+      const logs: string[] = []
+      const spy = vi.spyOn(console, "log").mockImplementation((m) => logs.push(String(m)))
+      const code = await runCli(args)
+      spy.mockRestore()
+      expect(code).toBe(CLI_EXIT.OK)
+      expect(logs.join("\n")).toContain("Usage:")
+    }
+  })
 })

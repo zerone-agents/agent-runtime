@@ -291,12 +291,14 @@ async function cronCommand(argv: string[]): Promise<number> {
 
 export async function runCli(argv: string[]): Promise<number> {
   const [cmd] = argv
-  if (cmd === undefined || cmd === "serve" || cmd.startsWith("-")) {
-    return serveCommand(argv)
-  }
+  // Help must be checked before the serve flag fallback: "--help"/"-h" also
+  // start with "-", so the fallback would otherwise swallow them into serve.
   if (cmd === "help" || cmd === "--help" || cmd === "-h") {
     console.log(USAGE)
     return CLI_EXIT.OK
+  }
+  if (cmd === undefined || cmd === "serve" || cmd.startsWith("-")) {
+    return serveCommand(argv)
   }
   if (cmd === "cron") {
     return cronCommand(argv.slice(1))
