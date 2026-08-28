@@ -135,6 +135,20 @@ describe("buildSessionPayload", () => {
     expect(noOrg!.org).toBeUndefined()
   })
 
+  it("uses per-message timestamps when present, falls back to session createdAt", async () => {
+    await saveSession(TEST_SESSION, [
+      { role: "user", content: "first", id: "t1", timestamp: "2026-08-28T10:00:00.000Z" },
+      { role: "assistant", content: "second", id: "t2", timestamp: "2026-08-28T10:00:05.000Z" },
+      { role: "user", content: "no timestamp", id: "t3" }, // 旧 transcript 风格 → 兜底
+    ], { model: "m" })
+
+    const payload = await buildSessionPayload({ sessionId: TEST_SESSION, agentId: "a", model: "m", identity: {} })
+    const msgs = payload!.messages as Array<Record<string, unknown>>
+    expect(msgs[0].created_at).toBe("2026-08-28T10:00:00.000Z")
+    expect(msgs[1].created_at).toBe("2026-08-28T10:00:05.000Z")
+    expect(msgs[2].created_at).toBe(payload!.created_at) // session createdAt 兜底
+  })
+
   it("truncates title to 50 chars and omits title when no user message", async () => {
     await saveSession(TEST_SESSION, [
       { role: "user", content: "x".repeat(80) },
