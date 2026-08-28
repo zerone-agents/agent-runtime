@@ -112,9 +112,10 @@ async function main() {
     console.log("Hooks: PreToolUse(Bash), PostToolUse(all)")
   })
 
-  // 优雅停机：先拒绝新变更请求（quiesce），再停接流、排水 runs/cron、关闭 agents
+  // 优雅停机：先停接流，host.stop() 会先拒绝新变更请求（503）、
+  // 等待在途变更完成，再排水 runs/cron、关闭 agents
   const shutdown = buildShutdown({
-    closeServer: () => { host.quiesce(); return closeHttpServer(server) },
+    closeServer: () => closeHttpServer(server),
     stopHost: () => host.stop(),
     exit: (code) => process.exit(code),
   })

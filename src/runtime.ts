@@ -21,8 +21,6 @@ export interface AgentRuntimeHost {
   cron?: RuntimeCronService
   start(): Promise<void>
   stop(): Promise<void>
-  /** Begin application quiescing: reject new mutating /v1 requests (503 shutting_down) before drain. */
-  quiesce(): void
 }
 
 export interface CreateRuntimeOptions {
@@ -113,7 +111,6 @@ export async function createRuntime(
     agents,
     runs,
     ...(cron ? { cron } : {}),
-    quiesce(): void { shutdownGate.begin() },
     async start() {
       if (started) return
       // 6. Directory lock, execution recovery, scheduler init. Failure here
@@ -127,8 +124,13 @@ export async function createRuntime(
     async stop() {
       if (!stopPromise) {
         stopPromise = (async () => {
-          // HTTP server stop is the caller's job (it owns serve()).
-          // Parallel: drain runs + drain/interrupt cron, then registry.
+          // Quiesce FIRST, synchronously: reject new mutations, then wait for
+          // in-flight ones to finish before touching Run/Cron state. All shutdown
+          // paths (signals, programmatic, orchestrators) converge here (issue #21).
+          // Outer server owners may still close their listener first — this gate
+          // is independent of socket state.
+          shutdownGate.begin()
+          await shutdownGate.drained()
           const jobs: Promise<void>[] = [runs.closeAll()]
           if (cron) {
             jobs.push(

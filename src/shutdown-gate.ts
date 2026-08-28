@@ -2,22 +2,72 @@ import type { MiddlewareHandler } from "hono"
 
 /**
  * Application-level shutdown gate: once begun, mutating requests (/v1/*)
- * are rejected with 503 shutting_down so accepted connections cannot start
- * new run/cron work while the host drains (server.close() alone waits on
- * in-flight requests, which streaming responses can hold open indefinitely).
- * GET/HEAD remain served so health/status probes stay truthful during drain.
+ * are rejected with 503 shutting_down, and in-flight mutations are tracked
+ * so shutdown can await their completion (drained()) BEFORE touching Run or
+ * Cron state — server.close() alone cannot establish that boundary because
+ * streaming responses can hold accepted connections open indefinitely.
+ * GET/HEAD are neither rejected nor tracked (status probes stay truthful,
+ * SSE streams must not block shutdown).
  */
 export class ShutdownGate {
   private down = false
-  begin(): void { this.down = true }
-  get shuttingDown(): boolean { return this.down }
+  private active = 0
+  private idleResolvers: Array<() => void> = []
+
+  begin(): void {
+    this.down = true
+    this.notifyIfIdle()
+  }
+
+  get shuttingDown(): boolean {
+    return this.down
+  }
+
+  /** Track an in-flight mutating request. Must pair with leave(). */
+  enter(): void {
+    this.active++
+  }
+
+  leave(): void {
+    this.active = Math.max(0, this.active - 1)
+    this.notifyIfIdle()
+  }
+
+  /**
+   * Resolves when no tracked mutating request remains in flight. Call after
+   * begin(): later mutations are rejected by the middleware, in-flight ones
+   * finish first — the drain boundary for Host stop.
+   */
+  drained(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.active === 0) resolve()
+      else this.idleResolvers.push(resolve)
+    })
+  }
+
+  private notifyIfIdle(): void {
+    if (this.active === 0) {
+      const waiters = this.idleResolvers
+      this.idleResolvers = []
+      for (const w of waiters) w()
+    }
+  }
 }
 
 export function createShutdownGateMiddleware(gate: ShutdownGate): MiddlewareHandler {
   return async (c, next) => {
-    if (gate.shuttingDown && c.req.method !== "GET" && c.req.method !== "HEAD") {
+    const mutating = c.req.method !== "GET" && c.req.method !== "HEAD"
+    if (mutating && gate.shuttingDown) {
       return c.json({ error: "Runtime is shutting down", code: "shutting_down" }, 503)
     }
-    await next()
+    if (!mutating) return next()
+    // Track in-flight mutations: a request that entered before begin() must
+    // hold drained() until its handler finishes.
+    gate.enter()
+    try {
+      await next()
+    } finally {
+      gate.leave()
+    }
   }
 }

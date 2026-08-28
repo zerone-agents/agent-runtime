@@ -112,12 +112,10 @@ async function serveCommand(argv: string[]): Promise<number> {
   )
 
   const shutdown = buildShutdown({
-    // quiesce() flips the shutdown gate synchronously FIRST: already-accepted
-    // connections get 503 for new mutations before host.stop() starts draining.
-    closeServer: () => {
-      host.quiesce()
-      return closeHttpServer(server)
-    },
+    // host.stop() owns the shutdown gate: it begins rejecting new mutations
+    // synchronously (503 shutting_down) and drains in-flight ones before
+    // touching Run/Cron state.
+    closeServer: () => closeHttpServer(server),
     stopHost: () => host.stop(),
     exit: (code) => process.exit(code),
   })

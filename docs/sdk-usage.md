@@ -42,8 +42,9 @@ const server = serve(
   (info) => console.log(`runtime listening on http://${info.address}:${info.port}`),
 )
 
-// Graceful shutdown: stop accepting connections first, then drain active
-// runs + cron and close all agents (host.stop()).
+// Graceful shutdown: stop accepting connections first, then host.stop().
+// `stop()` begins rejecting new mutations, awaits in-flight ones, then
+// drains runs and cron.
 const shutdown = () => {
   const closed = new Promise<void>((resolve) => {
     server.close(() => resolve())
