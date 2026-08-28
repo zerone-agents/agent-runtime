@@ -1,4 +1,5 @@
 import { createAgent, type Agent, type AgentDefinition as SdkAgentDefinition } from "@zerone-agent/agent-sdk"
+import type { CronService } from "@zerone-agent/agent-sdk"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -89,6 +90,7 @@ export class AgentRegistry {
   private statuses = new Map<string, "ready" | "unavailable">()
   private scannedSkills = new Map<string, SkillSummary[]>()
   private fileToolNames = new Map<string, string[]>()
+  private cronService?: CronService
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
     this.defs.set(id, def)
@@ -175,8 +177,30 @@ export class AgentRegistry {
     if (!opts) return undefined
     if (this.statuses.get(agentId) !== "ready") return undefined
 
-    const merged = sessionId ? { ...opts, resume: sessionId } : opts
+    const base = this.cronService ? { ...opts, cronService: this.cronService } : opts
+    const merged = sessionId ? { ...base, resume: sessionId } : base
     return createAgent(merged)
+  }
+
+  /** Single RuntimeCronService shared by HTTP runs, CLI and Agent Tools. Set by the runtime host after wrapping. */
+  setCronService(service: CronService | undefined): void {
+    this.cronService = service
+  }
+
+  /**
+   * Latest AgentOptions for an agent, with cronService injected (issue #21).
+   * Used by the SDK default cron executor's resolveAgent on every fire so
+   * long-lived tasks always run the current config; credentials/models are
+   * never persisted in tasks. Returns undefined when unknown or unavailable.
+   */
+  async resolveOptions(
+    agentId: string,
+    options?: { cronService?: CronService },
+  ): Promise<CreateOpts | undefined> {
+    const opts = this.createOpts.get(agentId)
+    if (!opts || this.statuses.get(agentId) !== "ready") return undefined
+    const cronService = options?.cronService ?? this.cronService
+    return cronService ? { ...opts, cronService } : { ...opts }
   }
 
   getStatus(agentId: string): "ready" | "unavailable" | "not_found" {
@@ -247,6 +271,7 @@ export class AgentRegistry {
     this.statuses.clear()
     this.scannedSkills.clear()
     this.fileToolNames.clear()
+    this.cronService = undefined
   }
 }
 
