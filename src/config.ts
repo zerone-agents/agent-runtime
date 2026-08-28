@@ -40,6 +40,15 @@ export const HubConfigSchema = z.object({
   org: z.string().optional(),
 })
 
+export const CronConfigSchema = z.object({
+  /** Opt-in: cron runs agents on a schedule and incurs model calls. */
+  enabled: z.boolean().default(false),
+  /** Data root passed to SDK createDefaultCronService({ dataDir }); cron files live under <dataRoot>/cron/. Relative paths resolve against configDir. */
+  dataRoot: z.string().min(1).default(".zerone"),
+  executionTimeoutMs: z.number().int().positive().optional(),
+  drainMs: z.number().int().positive().optional(),
+})
+
 const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
   z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional() }),
@@ -89,12 +98,14 @@ export const RuntimeConfigSchema = z.object({
   auth: AuthConfigSchema.optional(),
   aigc: AigcConfigSchema.optional(),
   hub: HubConfigSchema.optional(),
+  cron: CronConfigSchema.optional(),
   agents: z.array(AgentDefinitionSchema).min(1),
 })
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
 export type HubConfig = z.infer<typeof HubConfigSchema>
+export type CronConfig = z.infer<typeof CronConfigSchema>
 
 export function formatDatasets(datasets: Record<string, string>): string {
   const lines = Object.entries(datasets)
