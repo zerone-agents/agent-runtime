@@ -314,7 +314,7 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 ## 作为库使用
 
-运行时也可以作为库嵌入（`createApp`、`AgentRegistry`、`MetricsCollector`）——见 [`docs/sdk-usage.md`](docs/sdk-usage.md)。
+运行时也可以作为库嵌入（`createRuntime`、`AgentRuntimeHost`）——见 [`docs/sdk-usage.md`](docs/sdk-usage.md)。
 
 ## License
 

@@ -318,7 +318,7 @@ See [`docs/api/files.md`](docs/api/files.md) for the full API reference.
 
 ## Library Usage
 
-The runtime can also be embedded as a library (`createApp`, `AgentRegistry`, `MetricsCollector`) — see [`docs/sdk-usage.md`](docs/sdk-usage.md).
+The runtime can also be embedded as a library (`createRuntime`, `AgentRuntimeHost`) — see [`docs/sdk-usage.md`](docs/sdk-usage.md).
 
 ## License
 

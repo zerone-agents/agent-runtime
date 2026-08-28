@@ -1,4 +1,4 @@
-import { createApp, AgentRegistry, MetricsCollector } from "../../src/index.js"
+import { createRuntime } from "../../src/index.js"
 import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
 import { z } from "zod"
 import { serve } from "@hono/node-server"
@@ -36,15 +36,31 @@ const calcTool = tool("Calculator", "计算数学表达式（支持 ^ 表示幂�
     const result = Function(`'use strict'; return (${safe})`)()
     return { content: [{ type: "text" as const, text: `${expression} = ${result}` }] }
   } catch (e: any) {
-    return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true }
+    return { content: [{ type: "text" as const, text: `Error: ${e.message}` }] , isError: true }
   }
 })
 
 async function main() {
-  const registry = new AgentRegistry()
-  registry.register(
+  const PORT = Number(process.env.PORT ?? 3100)
+  const HOST = process.env.HOST ?? "0.0.0.0"
+  // 锚定相对路径与 cron dataRoot（本示例未启用 cron）
+  const configDir = process.cwd()
+
+  // createRuntime 组装 AgentRegistry + RunRegistry + MetricsCollector（+ cron，若启用）
+  const host = await createRuntime(
+    {
+      server: { host: HOST, port: PORT },
+      cors: { origins: ["*"] },
+      // 声明会被下方 host.agents.register 的代码构建版本覆盖
+      // （自定义工具 / Hook 实例无法来自配置文件）
+      agents: [{ id: "smart", description: "smart assistant", model: "claude-sonnet-4-6" }],
+    },
+    { configDir },
+  )
+
+  host.agents.register(
     "smart",
-    { id: "smart", model: "claude-sonnet-4-6", maxTurns: 15 },
+    { id: "smart", description: "smart assistant", model: "claude-sonnet-4-6", maxTurns: 15 },
     {
       // SDK 1.0 reads ZERONE_AGENT_* env vars natively — only override when set.
       model: process.env.ZERONE_AGENT_MODEL ?? "claude-sonnet-4-6",
@@ -86,26 +102,26 @@ async function main() {
     },
   )
 
-  const metrics = new MetricsCollector()
+  // cron 锁 + 执行恢复 + 调度器在 listen 之前启动；cron 未启用时为 no-op
+  await host.start()
 
-  const PORT = Number(process.env.PORT ?? 3100)
-  const HOST = process.env.HOST ?? "0.0.0.0"
-  const app = createApp(
-    {
-      server: { host: HOST, port: PORT },
-      cors: { origins: ["*"] },
-      agents: [{ id: "smart", model: "claude-sonnet-4-6" }],
-    },
-    registry,
-    metrics,
-  )
-
-  serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
+  const server = serve({ fetch: host.app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`Code-driven agent running on http://${info.address}:${info.port}`)
     console.log("Agent: smart")
     console.log("Custom tools: GetWeather, Calculator")
     console.log("Hooks: PreToolUse(Bash), PostToolUse(all)")
   })
+
+  // 优雅停机：先停止接受新连接，再排水 runs/cron、关闭所有 agents
+  const shutdown = () => {
+    const closed = new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeIdleConnections?.()
+    })
+    Promise.allSettled([closed, host.stop()]).then(() => process.exit(0))
+  }
+  process.on("SIGINT", shutdown)
+  process.on("SIGTERM", shutdown)
 }
 
 main().catch((err) => {

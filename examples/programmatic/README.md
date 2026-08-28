@@ -16,9 +16,10 @@ npx tsx examples/programmatic/index.ts
 | 自定义工具 `tool()` (Zod) | `noteTool` — 保存笔记 |
 | Hook 系统 | `createLoggingHooks()` — PreToolUse/PostToolUse 日志 |
 | 多 Agent + 工具隔离 | analyst（搜索+文件）、ops（Bash+读写编辑） |
-| `AgentRegistry.register()` | 手动注册已创建的 Agent |
-| `createApp()` | 组装 Hono 路由 |
-| 自定义扩展路由 | `GET /custom/status` — 运行时状态 |
+| `host.agents.register()` | 手动注册代码构建的 Agent（覆盖 config 中同 id 条目） |
+| `createRuntime()` | 组装 Host（registry + runs + metrics + 可选 cron）并托管生命周期 |
+| 自定义扩展路由 | `GET /custom/status` — 运行时状态（agents + cron） |
+| 优雅停机 | SIGINT/SIGTERM → `server.close` + `host.stop()`（排水 runs/cron，关闭 agents） |
 
 ## 环境变量
 
