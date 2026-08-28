@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
-import { resolve } from "node:path"
+import { basename, dirname, resolve } from "node:path"
 
 export interface CronStatusPayload {
   enabled: boolean
@@ -22,13 +22,22 @@ export function sha256Hex(input: string): string {
 /** Canonical-realpath identity of a directory; tolerates not-yet-created dirs. */
 export function pathIdentity(dir: string): string {
   const abs = resolve(dir)
-  let real = abs
-  try {
-    real = realpathSync(abs)
-  } catch {
-    // not created yet — resolve() is the best canonical form available
+  // Canonicalize the deepest existing ancestor (symlink-safe) and re-append
+  // the missing suffix, so the digest is stable whether or not the dir
+  // exists yet — server pre-creation and CLI post-creation must agree.
+  let current = abs
+  const suffix: string[] = []
+  for (;;) {
+    try {
+      const canonical = realpathSync(current)
+      return sha256Hex(suffix.length ? resolve(canonical, ...suffix) : canonical)
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return sha256Hex(abs) // no existing ancestor at all
+      suffix.unshift(basename(current))
+      current = parent
+    }
   }
-  return sha256Hex(real)
 }
 
 export function newRuntimeId(): string {

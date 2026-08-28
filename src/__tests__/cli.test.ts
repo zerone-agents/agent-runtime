@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from "vitest"
-import { runCli, CLI_EXIT } from "../cli.js"
+import { runCli, CLI_EXIT, buildShutdown } from "../cli.js"
 import { Hono } from "hono"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -48,7 +48,8 @@ function makeFakeServer(statusOverrides: Record<string, unknown> = {}) {
     })
   })
   app.get("/v1/cron/tasks", async (c) => {
-    calls.push({ method: "GET", path: "/v1/cron/tasks" })
+    const url = new URL(c.req.url)
+    calls.push({ method: "GET", path: url.pathname + url.search })
     return c.json({
       items: [{ id: "t1", name: "Daily", cron: "0 18 * * *", prompt: "p", createdAt: 1, agentId: "assistant" }],
       limit: 50, offset: 0, total: 1,
@@ -96,6 +97,16 @@ describe("cron CLI (online)", () => {
     expect(parsed.items[0].id).toBe("t1")
   })
 
+  it("list --agent forwards agentId query parameter", async () => {
+    const { app, calls } = makeFakeServer()
+    stubFetch(app)
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "list", "--agent", "assistant"])
+    spy.mockRestore()
+    expect(code).toBe(CLI_EXIT.OK)
+    expect(calls.find((c) => c.method === "GET")?.path).toContain("agentId=assistant")
+  })
+
   it("create sends x-api-key and body; exits 0", async () => {
     process.env.ZERONE_AGENT_HTTP_API_KEY = "secret"
     const { app, calls } = makeFakeServer()
@@ -134,6 +145,17 @@ describe("cron CLI (online)", () => {
     expect(logs.join("\n")).toContain("e1")
   })
 
+  it("delete --json prints machine-readable payload", async () => {
+    const { app } = makeFakeServer()
+    stubFetch(app)
+    const logs: string[] = []
+    const spy = vi.spyOn(console, "log").mockImplementation((m) => logs.push(String(m)))
+    const code = await runCli([...baseArgs, "delete", "t1", "--json"])
+    spy.mockRestore()
+    expect(code).toBe(CLI_EXIT.OK)
+    expect(JSON.parse(logs.join("\n"))).toEqual({ deleted: true, id: "t1" })
+  })
+
   it("write with mismatched instance identity exits MISMATCH", async () => {
     const { app } = makeFakeServer({ configId: "cfg-REMOTE" })
     stubFetch(app)
@@ -161,6 +183,18 @@ describe("cron CLI (online)", () => {
     expect(code).toBe(CLI_EXIT.SERVER)
     // Assert before mockRestore(): restoring clears mock.calls state.
     expect(String(errSpy.mock.calls)).toContain("HTTP 401")
+    errSpy.mockRestore()
+  })
+
+  it("reachable server returning non-JSON status body exits SERVER, not CONNECT", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/status", (c) => c.text("not json", 200))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "delete", "t1"])
+    expect(code).toBe(CLI_EXIT.SERVER)
+    // Assert before mockRestore(): restoring clears mock.calls state.
+    expect(String(errSpy.mock.calls)).toContain("invalid status payload")
     errSpy.mockRestore()
   })
 
@@ -208,5 +242,66 @@ describe("cron CLI (online)", () => {
       expect(code).toBe(CLI_EXIT.OK)
       expect(logs.join("\n")).toContain("Usage:")
     }
+  })
+})
+
+describe("buildShutdown", () => {
+  it("closes the server synchronously before stopping the host; exit(0) only after both settle", async () => {
+    const order: string[] = []
+    const counts = { close: 0, stop: 0, exit: 0 }
+    let resolveClose!: () => void
+    let resolveStop!: () => void
+    const shutdown = buildShutdown({
+      closeServer: () => {
+        counts.close++
+        order.push("closeServer")
+        return new Promise<void>((r) => { resolveClose = r })
+      },
+      stopHost: () => {
+        counts.stop++
+        order.push("stopHost")
+        return new Promise<void>((r) => { resolveStop = r })
+      },
+      exit: (code) => { counts.exit++; order.push(`exit:${code}`) },
+    })
+    shutdown()
+    // (a) closeServer is invoked synchronously BEFORE stopHost
+    expect(order).toEqual(["closeServer", "stopHost"])
+    expect(counts.exit).toBe(0)
+    // (b) exit(0) fires only after BOTH promises settle — one is not enough
+    resolveStop()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(counts.exit).toBe(0)
+    resolveClose()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(counts.exit).toBe(1)
+    expect(order[order.length - 1]).toBe("exit:0")
+  })
+
+  it("still exits 0 when either step rejects", async () => {
+    for (const rejectClose of [true, false]) {
+      let exited!: (code: number) => void
+      const exitCode = new Promise<number>((r) => { exited = r })
+      const shutdown = buildShutdown({
+        closeServer: () => (rejectClose ? Promise.reject(new Error("close boom")) : Promise.resolve()),
+        stopHost: () => (rejectClose ? Promise.resolve() : Promise.reject(new Error("stop boom"))),
+        exit: exited,
+      })
+      shutdown()
+      await expect(exitCode).resolves.toBe(0)
+    }
+  })
+
+  it("second invocation is a no-op: each function called exactly once", async () => {
+    const counts = { close: 0, stop: 0, exit: 0 }
+    const shutdown = buildShutdown({
+      closeServer: () => { counts.close++; return Promise.resolve() },
+      stopHost: () => { counts.stop++; return Promise.resolve() },
+      exit: () => { counts.exit++ },
+    })
+    shutdown()
+    shutdown()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(counts).toEqual({ close: 1, stop: 1, exit: 1 })
   })
 })

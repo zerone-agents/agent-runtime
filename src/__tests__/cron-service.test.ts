@@ -6,7 +6,7 @@ import type {
   CronService, CronTask, CronExecution, CreateCronTaskInput,
   CronTaskChanges, CronExecutionQuery,
 } from "@zerone-agent/agent-sdk"
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -130,6 +130,24 @@ describe("cron identity helpers", () => {
       expect(pathIdentity(missing)).toMatch(/^[0-9a-f]{64}$/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("pathIdentity below a symlink is stable before and after the dir exists", () => {
+    const base = mkdtempSync(join(tmpdir(), "cron-symlink-"))
+    try {
+      mkdirSync(join(base, "a"))
+      symlinkSync(join(base, "a"), join(base, "link"))
+      const viaLink = join(base, "link", "b")
+      const viaReal = join(base, "a", "b")
+      // b does NOT exist yet: server (pre-creation, lexical fallback) and CLI
+      // (post-creation, realpath through the symlink) must derive the same digest.
+      expect(pathIdentity(viaLink)).toBe(pathIdentity(viaReal))
+      mkdirSync(join(base, "a", "b"))
+      // Now both sides resolve through full realpath — still equal.
+      expect(pathIdentity(viaLink)).toBe(pathIdentity(viaReal))
+    } finally {
+      rmSync(base, { recursive: true, force: true })
     }
   })
 

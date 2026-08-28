@@ -40,6 +40,26 @@ function fail(msg: string, code: number): number {
   return code
 }
 
+/**
+ * Graceful-shutdown orchestrator: stop accepting new connections FIRST
+ * (closeServer), then drain runs + cron (stopHost) in parallel with the
+ * connection close-out, and exit only after both settle. Exported for testing.
+ */
+export function buildShutdown(opts: {
+  closeServer: () => Promise<void>
+  stopHost: () => Promise<void>
+  exit: (code: number) => void
+}): () => void {
+  let called = false
+  return () => {
+    if (called) return
+    called = true
+    const serverClosed = opts.closeServer() // FIRST: stop accepting new connections
+    const hostStopped = opts.stopHost() // then drain runs + cron in parallel with connection close-out
+    Promise.allSettled([serverClosed, hostStopped]).then(() => opts.exit(0))
+  }
+}
+
 async function serveCommand(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     options: {
@@ -68,12 +88,18 @@ async function serveCommand(argv: string[]): Promise<number> {
     },
   )
 
-  let shuttingDown = false
-  const shutdown = () => {
-    if (shuttingDown) return
-    shuttingDown = true
-    host.stop().finally(() => server.close(() => process.exit(0)))
-  }
+  const shutdown = buildShutdown({
+    closeServer: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve())
+        // ServerType is an http1/http2 union; closeIdleConnections (Node ≥18.2)
+        // is not declared on every member, so feature-detect via structural cast.
+        const closeIdle = (server as { closeIdleConnections?: () => void }).closeIdleConnections
+        closeIdle?.call(server)
+      }),
+    stopHost: () => host.stop(),
+    exit: (code) => process.exit(code),
+  })
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
   return CLI_EXIT.OK
@@ -109,14 +135,27 @@ type FetchResult =
   | { ok: false; kind: "connect" }
 
 async function call(ctx: OnlineContext, path: string, init?: RequestInit): Promise<FetchResult> {
+  let res: Response
+  let text: string
   try {
-    const res = await fetch(`${ctx.baseUrl}${path}`, { ...init, headers: { ...authHeaders(ctx), ...(init?.headers ?? {}) } })
-    const text = await res.text()
-    const body = text ? JSON.parse(text) : null
-    return { ok: true, status: res.status, body }
-  } catch (err) {
+    res = await fetch(`${ctx.baseUrl}${path}`, { ...init, headers: { ...authHeaders(ctx), ...(init?.headers ?? {}) } })
+    text = await res.text()
+  } catch {
+    // Transport failure only (fetch itself or body read): server unreachable.
     return { ok: false, kind: "connect" }
   }
+  // Decode failure is NOT a connection failure: the server is reachable but
+  // returned a non-JSON body. Surface it as a reachable response with a null
+  // body; guardWrite rejects invalid payloads with SERVER, not CONNECT.
+  let body: unknown = null
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = null
+    }
+  }
+  return { ok: true, status: res.status, body }
 }
 
 /** Write-guard: server online, cron enabled, and configId/dataId match this config. */
@@ -124,6 +163,8 @@ async function guardWrite(ctx: OnlineContext): Promise<number | null> {
   const status = await call(ctx, "/v1/cron/status")
   if (!status.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
   if (status.status !== 200) return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER)
+  if (!status.body || typeof status.body !== "object")
+    return fail("Runtime server returned an invalid status payload", CLI_EXIT.SERVER)
   const payload = status.body as CronStatusPayload
   if (!payload.enabled) return fail("Cron is disabled on the runtime (cron_disabled)", CLI_EXIT.CRON_DISABLED)
   if (payload.configId !== ctx.localConfigId || payload.dataId !== ctx.localDataId) {
@@ -195,7 +236,10 @@ async function cronCommand(argv: string[]): Promise<number> {
 
   switch (cmd) {
     case "list": {
-      const res = await call(ctx, "/v1/cron/tasks")
+      const params = new URLSearchParams()
+      if (flags.values.agent) params.set("agentId", String(flags.values.agent))
+      const qs = params.toString()
+      const res = await call(ctx, `/v1/cron/tasks${qs ? `?${qs}` : ""}`)
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
       if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "list failed"), exitCodeFromStatus(res.status))
       printResult(ctx, res.body)
@@ -259,7 +303,8 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
       if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND)
       if (res.status !== 204) return fail(String((res.body as { error?: string })?.error ?? "delete failed"), exitCodeFromStatus(res.status))
-      console.log(`Deleted ${id}`)
+      if (ctx.json) console.log(JSON.stringify({ deleted: true, id }, null, 2))
+      else console.log(`Deleted ${id}`)
       return CLI_EXIT.OK
     }
     case "run": {
