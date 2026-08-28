@@ -113,7 +113,8 @@ export async function buildSessionPayload(input: PushSessionInput, org?: string)
       // 仅作为对未来 SDK 行为变化的防御。
       id: m.id ?? `${input.sessionId}:${index}`,
       role: m.role,
-      created_at: info.createdAt, // transcript 无消息级时间戳，session createdAt 兜底
+      // SDK ≥2.2.0 持久化消息级 timestamp（ISO-8601 UTC）；旧 transcript 无此字段，session createdAt 兜底
+      created_at: m.timestamp ?? info.createdAt,
       ...(segs.length > 0 ? { content: JSON.stringify(segs) } : {}),
       ...(usage ? { token_usage: usage } : {}),
     }
