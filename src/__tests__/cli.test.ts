@@ -152,6 +152,18 @@ describe("cron CLI (online)", () => {
     expect(code).toBe(CLI_EXIT.CRON_DISABLED)
   })
 
+  it("non-200 status probe (401) exits SERVER, not CRON_DISABLED", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/status", (c) => c.json({ error: "Unauthorized", reason: "invalid api key" }, 401))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "delete", "t1"])
+    expect(code).toBe(CLI_EXIT.SERVER)
+    // Assert before mockRestore(): restoring clears mock.calls state.
+    expect(String(errSpy.mock.calls)).toContain("HTTP 401")
+    errSpy.mockRestore()
+  })
+
   it("connection failure on write exits CONNECT", async () => {
     vi.stubGlobal("fetch", async () => { throw new Error("ECONNREFUSED") })
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})

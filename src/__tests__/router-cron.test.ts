@@ -231,7 +231,7 @@ describe("executions projection", () => {
     }
   }
 
-  it("filters by taskId/agentId/status/trigger and sorts scheduledFireTime DESC, id DESC", async () => {
+  it("filters by taskId/agentId/status/trigger and sorts scheduledFireTime DESC, id ASC", async () => {
     const fake = new FakeService()
     seed(fake)
     const { app } = makeApp(fake)

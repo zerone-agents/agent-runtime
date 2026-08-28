@@ -98,10 +98,13 @@ docker run -d \
 
 ### Cron persistence
 
-When `cron.enabled: true`, mount the data directory that contains `<dataRoot>/cron/`:
+When `cron.enabled: true`, mount the resolved cron data directory
+(`<configDir>/<dataRoot>`) — the directory that contains `<dataRoot>/cron/`.
+With the image's default `--config /app/config` and the default
+`dataRoot: .zerone`, that path is `/app/config/.zerone`:
 
 ```bash
-docker run -v /host/cron-data:/app/.zerone ...
+docker run -v /host/cron-data:/app/config/.zerone ...
 ```
 
 Without the volume mount, container recreation loses all cron tasks and

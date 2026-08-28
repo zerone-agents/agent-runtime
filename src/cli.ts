@@ -123,6 +123,7 @@ async function call(ctx: OnlineContext, path: string, init?: RequestInit): Promi
 async function guardWrite(ctx: OnlineContext): Promise<number | null> {
   const status = await call(ctx, "/v1/cron/status")
   if (!status.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
+  if (status.status !== 200) return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER)
   const payload = status.body as CronStatusPayload
   if (!payload.enabled) return fail("Cron is disabled on the runtime (cron_disabled)", CLI_EXIT.CRON_DISABLED)
   if (payload.configId !== ctx.localConfigId || payload.dataId !== ctx.localDataId) {
