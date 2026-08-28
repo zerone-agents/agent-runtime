@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import type { CronExecution, CronTask } from "@zerone-agent/agent-sdk"
+import { CRON_EXECUTION_STATUSES, type CronExecution, type CronTask } from "@zerone-agent/agent-sdk"
 import { CronApiError, type RuntimeCronService } from "../cron-service.js"
 import { type CronStatusPayload } from "../cron-identity.js"
 
@@ -11,9 +11,9 @@ export interface CronRouterDeps {
 const MAX_LIMIT = 200
 const DEFAULT_LIMIT = 50
 
-// Mirrors the SDK CronExecutionStatus / CronExecutionTrigger unions (types are
-// not runtime values, so the sets are hardcoded — keep in sync with the SDK).
-const EXECUTION_STATUSES = new Set(["pending", "running", "succeeded", "failed", "skipped", "timeout", "interrupted"])
+// Status validation uses the SDK-exported CRON_EXECUTION_STATUSES so future SDK
+// statuses are accepted without a runtime change. The SDK does not export a
+// trigger set — mirror the CronExecutionTrigger union here, keep in sync.
 const EXECUTION_TRIGGERS = new Set(["scheduled", "manual"])
 
 interface ErrorBody {
@@ -56,7 +56,7 @@ function toErrorResponse(err: unknown) {
 /** Parse a uint query param. undefined = absent; null = present but invalid. */
 function parseUintParam(url: URL, name: string, min: number, max: number): number | null | undefined {
   const raw = url.searchParams.get(name)
-  if (raw === null || raw === "") return undefined
+  if (raw === null) return undefined
   if (!/^\d+$/.test(raw)) return null
   const n = Number(raw)
   return n >= min && n <= max ? n : null
@@ -241,12 +241,14 @@ export function createCronRouter(deps: CronRouterDeps): Hono {
       const offset = rawOffset ?? 0
       const rawStatus = url.searchParams.get("status")
       const rawTrigger = url.searchParams.get("trigger")
-      const status = rawStatus === null || rawStatus === "" ? undefined : rawStatus
-      const trigger = rawTrigger === null || rawTrigger === "" ? undefined : rawTrigger
+      // Absent (null) → undefined (no filter). Empty string is a supplied value
+      // and fails the enum check below → 400, like any other invalid value.
+      const status = rawStatus ?? undefined
+      const trigger = rawTrigger ?? undefined
       const from = parseUintParam(url, "from", 0, Number.MAX_SAFE_INTEGER)
       const to = parseUintParam(url, "to", 0, Number.MAX_SAFE_INTEGER)
       if (
-        (status !== undefined && !EXECUTION_STATUSES.has(status)) ||
+        (status !== undefined && !CRON_EXECUTION_STATUSES.has(status)) ||
         (trigger !== undefined && !EXECUTION_TRIGGERS.has(trigger)) ||
         from === null || to === null
       ) {

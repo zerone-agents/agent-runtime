@@ -308,6 +308,19 @@ describe("query param validation", () => {
     }
   })
 
+  it("explicitly empty numeric/enum params are supplied values, not absent → 400", async () => {
+    const { app } = makeApp(new FakeService())
+    for (const path of [
+      "/tasks?limit=", "/tasks?offset=",
+      "/executions?limit=", "/executions?offset=",
+      "/executions?status=", "/executions?trigger=", "/executions?from=", "/executions?to=",
+    ]) {
+      const res = await app.request(path)
+      expect(res.status, path).toBe(400)
+      expect((await res.json()).code, path).toBe("invalid_request")
+    }
+  })
+
   it("GET /executions accepts a valid status filter", async () => {
     const fake = new FakeService()
     seed(fake)

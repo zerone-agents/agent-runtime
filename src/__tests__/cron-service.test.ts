@@ -107,11 +107,21 @@ describe("RuntimeCronService agent validation", () => {
     expect(inner.updated).toHaveLength(1)
   })
 
-  it("update() delegates for legacy tasks without an agentId binding", async () => {
+  it("update() rejects an unbound task that provides no explicit agentId", async () => {
     const inner = new FakeSdkCronService()
     inner.tasks.set("t1", { id: "t1", cron: "* * * * *", prompt: "p", createdAt: 0 })
     const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
-    await svc.update("t1", { prompt: "x" })
+    await expect(svc.update("t1", { prompt: "x" })).rejects.toMatchObject({
+      name: "CronApiError", code: "agent_not_found",
+    })
+    expect(inner.updated).toHaveLength(0)
+  })
+
+  it("update() rescues an unbound task when an explicit valid agentId is supplied", async () => {
+    const inner = new FakeSdkCronService()
+    inner.tasks.set("t1", { id: "t1", cron: "* * * * *", prompt: "p", createdAt: 0 })
+    const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
+    await svc.update("t1", { prompt: "x", agentId: "assistant" })
     expect(inner.updated).toHaveLength(1)
   })
 

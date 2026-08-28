@@ -58,15 +58,19 @@ export class RuntimeCronService implements CronService {
 
   async update(taskId: string, changes: CronTaskChanges): Promise<CronTask | null> {
     // Issue #21: create AND update must reference a valid, currently-available
-    // agent. The effective agentId is the explicit change when present,
-    // otherwise the task's existing binding.
+    // agent. Effective agentId = explicit change when present, otherwise the
+    // task's existing binding; an unbound task must therefore provide one.
     if (changes.agentId !== undefined) {
       this.assertAgent(changes.agentId)
     } else {
       const existing = await this.inner.get(taskId)
-      // Legacy tasks without any agentId (created outside the runtime) stay
-      // editable — there is no agent binding to validate.
-      if (existing?.agentId !== undefined) this.assertAgent(existing.agentId)
+      if (existing !== null) {
+        // assertAgent(undefined) throws agent_not_found ("agentId is required")
+        // — unbound tasks cannot be updated without an explicit agentId.
+        this.assertAgent(existing.agentId)
+      }
+      // existing === null → unknown task: delegate; inner.update returns null
+      // and the router maps it to 404 task_not_found.
     }
     return this.inner.update(taskId, changes)
   }
