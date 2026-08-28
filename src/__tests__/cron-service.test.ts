@@ -14,6 +14,7 @@ import { join } from "node:path"
 class FakeSdkCronService implements CronService {
   created: CreateCronTaskInput[] = []
   updated: Array<{ taskId: string; changes: CronTaskChanges }> = []
+  tasks = new Map<string, CronTask>()
   start = vi.fn(async () => {})
   stop = vi.fn(async () => {})
   suspend = vi.fn(async () => {})
@@ -23,10 +24,12 @@ class FakeSdkCronService implements CronService {
     return { id: "t1", createdAt: 0, ...input } as CronTask
   }
   list = vi.fn(async (): Promise<CronTask[]> => [])
-  get = vi.fn(async (): Promise<CronTask | null> => null)
+  get = vi.fn(async (id: string): Promise<CronTask | null> => this.tasks.get(id) ?? null)
   async update(taskId: string, changes: CronTaskChanges): Promise<CronTask | null> {
     this.updated.push({ taskId, changes })
-    return { id: taskId, cron: "* * * * *", prompt: "p", createdAt: 0 }
+    const existing = this.tasks.get(taskId)
+    if (!existing) return null
+    return { ...existing, ...changes } as CronTask
   }
   delete = vi.fn(async () => {})
   runNow = vi.fn(async () => ({}) as CronExecution)
@@ -76,13 +79,47 @@ describe("RuntimeCronService agent validation", () => {
     expect(inner.created).toHaveLength(1)
   })
 
-  it("update() validates agentId only when present in changes", async () => {
+  it("update() validates an explicit agentId change", async () => {
     const inner = new FakeSdkCronService()
     const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
-    await svc.update("t1", { prompt: "new" }) // no agentId → no validation
+    await svc.update("t1", { prompt: "new" }) // unknown task → no binding → no validation
     await expect(svc.update("t1", { agentId: "ghost" })).rejects.toMatchObject({
       code: "agent_not_found",
     })
+    expect(inner.updated).toHaveLength(1)
+  })
+
+  it("update() rejects when the task's bound agent is no longer registered", async () => {
+    const inner = new FakeSdkCronService()
+    inner.tasks.set("t1", { id: "t1", cron: "* * * * *", prompt: "p", createdAt: 0, agentId: "ghost" })
+    const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
+    await expect(svc.update("t1", { prompt: "x" })).rejects.toMatchObject({
+      code: "agent_not_found",
+    })
+    expect(inner.updated).toHaveLength(0)
+  })
+
+  it("update() delegates when the task's bound agent is still available", async () => {
+    const inner = new FakeSdkCronService()
+    inner.tasks.set("t1", { id: "t1", cron: "* * * * *", prompt: "p", createdAt: 0, agentId: "assistant" })
+    const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
+    await svc.update("t1", { prompt: "x" })
+    expect(inner.updated).toHaveLength(1)
+  })
+
+  it("update() delegates for legacy tasks without an agentId binding", async () => {
+    const inner = new FakeSdkCronService()
+    inner.tasks.set("t1", { id: "t1", cron: "* * * * *", prompt: "p", createdAt: 0 })
+    const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
+    await svc.update("t1", { prompt: "x" })
+    expect(inner.updated).toHaveLength(1)
+  })
+
+  it("update() with no agentId change on an unknown task delegates and maps to not-found", async () => {
+    const inner = new FakeSdkCronService()
+    const svc = new RuntimeCronService(inner, makeRegistryWith("assistant"))
+    const result = await svc.update("missing", { prompt: "x" })
+    expect(result).toBeNull()
     expect(inner.updated).toHaveLength(1)
   })
 

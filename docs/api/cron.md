@@ -30,7 +30,7 @@ All `/v1/cron/*` routes require the `x-api-key` header when auth is enabled
 
 ## Executions
 
-- `GET /v1/cron/executions?taskId=&agentId=&status=&trigger=&from=&to=&limit=&offset=` — in-memory projection; stable sort `scheduledFireTime DESC, id ASC`; response `{items, limit, offset, total}`.
+- `GET /v1/cron/executions?taskId=&agentId=&status=&trigger=&from=&to=&limit=&offset=` — in-memory projection; stable sort `scheduledFireTime DESC, id DESC`; response `{items, limit, offset, total}`.
 - `GET /v1/cron/executions/:executionId` — 200 / 404.
 
 ## Status codes

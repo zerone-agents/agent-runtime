@@ -215,36 +215,36 @@ describe("POST /tasks/:taskId/run (enqueueNow)", () => {
   })
 })
 
-describe("executions projection", () => {
-  function seed(fake: FakeService) {
-    fake.tasks.set("t1", { id: "t1", cron: "0 1 * * *", prompt: "p", createdAt: 1, agentId: "assistant" })
-    fake.tasks.set("t2", { id: "t2", cron: "0 2 * * *", prompt: "p", createdAt: 2, agentId: "other" })
-    const rows: Array<[string, string, string, string, number]> = [
-      // [id, taskId, status, trigger, scheduledFireTime]
-      ["e1", "t1", "succeeded", "scheduled", 100],
-      ["e2", "t1", "failed", "manual", 200],
-      ["e3", "t2", "succeeded", "scheduled", 300],
-      ["e4", "t1", "running", "manual", 200],
-    ]
-    for (const [id, cronTaskId, status, trigger, scheduledFireTime] of rows) {
-      fake.executions.set(id, { id, cronTaskId, status, trigger, scheduledFireTime } as CronExecution)
-    }
+function seed(fake: FakeService) {
+  fake.tasks.set("t1", { id: "t1", cron: "0 1 * * *", prompt: "p", createdAt: 1, agentId: "assistant" })
+  fake.tasks.set("t2", { id: "t2", cron: "0 2 * * *", prompt: "p", createdAt: 2, agentId: "other" })
+  const rows: Array<[string, string, string, string, number]> = [
+    // [id, taskId, status, trigger, scheduledFireTime]
+    ["e1", "t1", "succeeded", "scheduled", 100],
+    ["e2", "t1", "failed", "manual", 200],
+    ["e3", "t2", "succeeded", "scheduled", 300],
+    ["e4", "t1", "running", "manual", 200],
+  ]
+  for (const [id, cronTaskId, status, trigger, scheduledFireTime] of rows) {
+    fake.executions.set(id, { id, cronTaskId, status, trigger, scheduledFireTime } as CronExecution)
   }
+}
 
-  it("filters by taskId/agentId/status/trigger and sorts scheduledFireTime DESC, id ASC", async () => {
+describe("executions projection", () => {
+  it("filters by taskId/agentId/status/trigger and sorts scheduledFireTime DESC, id DESC", async () => {
     const fake = new FakeService()
     seed(fake)
     const { app } = makeApp(fake)
 
     const byAgent = await (await app.request("/executions?agentId=assistant")).json()
     expect(byAgent.total).toBe(3)
-    expect(byAgent.items.map((e: CronExecution) => e.id)).toEqual(["e2", "e4", "e1"])
+    expect(byAgent.items.map((e: CronExecution) => e.id)).toEqual(["e4", "e2", "e1"])
 
     const byStatus = await (await app.request("/executions?status=succeeded")).json()
     expect(byStatus.items.map((e: CronExecution) => e.id)).toEqual(["e3", "e1"])
 
     const byTrigger = await (await app.request("/executions?trigger=manual")).json()
-    expect(byTrigger.items.map((e: CronExecution) => e.id)).toEqual(["e2", "e4"])
+    expect(byTrigger.items.map((e: CronExecution) => e.id)).toEqual(["e4", "e2"])
 
     const byTask = await (await app.request("/executions?taskId=t2")).json()
     expect(byTask.items.map((e: CronExecution) => e.id)).toEqual(["e3"])
@@ -256,10 +256,10 @@ describe("executions projection", () => {
     const { app } = makeApp(fake)
 
     const ranged = await (await app.request("/executions?from=150&to=250")).json()
-    expect(ranged.items.map((e: CronExecution) => e.id)).toEqual(["e2", "e4"])
+    expect(ranged.items.map((e: CronExecution) => e.id)).toEqual(["e4", "e2"])
 
     const paged = await (await app.request("/executions?limit=2&offset=1")).json()
-    expect(paged.items.map((e: CronExecution) => e.id)).toEqual(["e2", "e4"])
+    expect(paged.items.map((e: CronExecution) => e.id)).toEqual(["e4", "e2"])
     expect(paged).toMatchObject({ limit: 2, offset: 1, total: 4 })
   })
 
@@ -271,6 +271,50 @@ describe("executions projection", () => {
     const miss = await app.request("/executions/nope")
     expect(miss.status).toBe(404)
     expect((await miss.json()).code).toBe("execution_not_found")
+  })
+})
+
+describe("query param validation", () => {
+  it("GET /tasks rejects non-numeric, zero, negative and over-max limit, accepts limit=200", async () => {
+    const { app } = makeApp(new FakeService())
+    for (const q of ["?limit=abc", "?limit=0", "?limit=-1", "?limit=201"]) {
+      const res = await app.request(`/tasks${q}`)
+      expect(res.status).toBe(400)
+      expect((await res.json()).code).toBe("invalid_request")
+    }
+    expect((await app.request("/tasks?limit=200")).status).toBe(200)
+  })
+
+  it("GET /tasks rejects negative offset", async () => {
+    const { app } = makeApp(new FakeService())
+    const res = await app.request("/tasks?offset=-5")
+    expect(res.status).toBe(400)
+    expect((await res.json()).code).toBe("invalid_request")
+  })
+
+  it("GET /executions rejects invalid limit", async () => {
+    const { app } = makeApp(new FakeService())
+    const res = await app.request("/executions?limit=abc")
+    expect(res.status).toBe(400)
+    expect((await res.json()).code).toBe("invalid_request")
+  })
+
+  it("GET /executions rejects bogus status/trigger and non-numeric from", async () => {
+    const { app } = makeApp(new FakeService())
+    for (const q of ["?status=bogus", "?trigger=bogus", "?from=abc"]) {
+      const res = await app.request(`/executions${q}`)
+      expect(res.status).toBe(400)
+      expect((await res.json()).code).toBe("invalid_request")
+    }
+  })
+
+  it("GET /executions accepts a valid status filter", async () => {
+    const fake = new FakeService()
+    seed(fake)
+    const { app } = makeApp(fake)
+    const res = await app.request("/executions?status=failed")
+    expect(res.status).toBe(200)
+    expect((await res.json()).items.map((e: CronExecution) => e.id)).toEqual(["e2"])
   })
 })
 

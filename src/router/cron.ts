@@ -11,6 +11,11 @@ export interface CronRouterDeps {
 const MAX_LIMIT = 200
 const DEFAULT_LIMIT = 50
 
+// Mirrors the SDK CronExecutionStatus / CronExecutionTrigger unions (types are
+// not runtime values, so the sets are hardcoded — keep in sync with the SDK).
+const EXECUTION_STATUSES = new Set(["pending", "running", "succeeded", "failed", "skipped", "timeout", "interrupted"])
+const EXECUTION_TRIGGERS = new Set(["scheduled", "manual"])
+
 interface ErrorBody {
   error: string
   code: string
@@ -48,12 +53,13 @@ function toErrorResponse(err: unknown) {
   return { status: 500, body: { error: "Cron service error", code: "internal" } }
 }
 
-function parsePagination(url: URL): { limit: number; offset: number } {
-  const rawLimit = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT)
-  const rawOffset = Number(url.searchParams.get("offset") ?? 0)
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, MAX_LIMIT) : DEFAULT_LIMIT
-  const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0
-  return { limit, offset }
+/** Parse a uint query param. undefined = absent; null = present but invalid. */
+function parseUintParam(url: URL, name: string, min: number, max: number): number | null | undefined {
+  const raw = url.searchParams.get(name)
+  if (raw === null || raw === "") return undefined
+  if (!/^\d+$/.test(raw)) return null
+  const n = Number(raw)
+  return n >= min && n <= max ? n : null
 }
 
 /** In-memory projection over SDK list()+listExecutions() (issue #21: low-frequency management queries). */
@@ -76,7 +82,7 @@ async function projectExecutions(
     return true
   })
   rows = rows.sort((a, b) =>
-    b.scheduledFireTime - a.scheduledFireTime || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    b.scheduledFireTime - a.scheduledFireTime || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   )
 
   const total = rows.length
@@ -118,7 +124,13 @@ export function createCronRouter(deps: CronRouterDeps): Hono {
   app.get("/tasks", async (c) => {
     try {
       const url = new URL(c.req.url)
-      const { limit, offset } = parsePagination(url)
+      const rawLimit = parseUintParam(url, "limit", 1, MAX_LIMIT)
+      const rawOffset = parseUintParam(url, "offset", 0, Number.MAX_SAFE_INTEGER)
+      if (rawLimit === null || rawOffset === null) {
+        return jsonError("Invalid pagination parameters (limit: 1-200, offset: >= 0)", "invalid_request", 400)(c)
+      }
+      const limit = rawLimit ?? DEFAULT_LIMIT
+      const offset = rawOffset ?? 0
       return c.json(await paginateTasks(cron(), url.searchParams.get("agentId") ?? undefined, limit, offset))
     } catch (err) {
       const mapped = toErrorResponse(err)
@@ -220,12 +232,25 @@ export function createCronRouter(deps: CronRouterDeps): Hono {
   app.get("/executions", async (c) => {
     try {
       const url = new URL(c.req.url)
-      const { limit, offset } = parsePagination(url)
-      const num = (name: string) => {
-        const raw = url.searchParams.get(name)
-        if (raw === null) return undefined
-        const n = Number(raw)
-        return Number.isFinite(n) ? n : undefined
+      const rawLimit = parseUintParam(url, "limit", 1, MAX_LIMIT)
+      const rawOffset = parseUintParam(url, "offset", 0, Number.MAX_SAFE_INTEGER)
+      if (rawLimit === null || rawOffset === null) {
+        return jsonError("Invalid pagination parameters (limit: 1-200, offset: >= 0)", "invalid_request", 400)(c)
+      }
+      const limit = rawLimit ?? DEFAULT_LIMIT
+      const offset = rawOffset ?? 0
+      const rawStatus = url.searchParams.get("status")
+      const rawTrigger = url.searchParams.get("trigger")
+      const status = rawStatus === null || rawStatus === "" ? undefined : rawStatus
+      const trigger = rawTrigger === null || rawTrigger === "" ? undefined : rawTrigger
+      const from = parseUintParam(url, "from", 0, Number.MAX_SAFE_INTEGER)
+      const to = parseUintParam(url, "to", 0, Number.MAX_SAFE_INTEGER)
+      if (
+        (status !== undefined && !EXECUTION_STATUSES.has(status)) ||
+        (trigger !== undefined && !EXECUTION_TRIGGERS.has(trigger)) ||
+        from === null || to === null
+      ) {
+        return jsonError("Invalid filter parameters (status/trigger/from/to)", "invalid_request", 400)(c)
       }
       return c.json(
         await projectExecutions(
@@ -233,10 +258,10 @@ export function createCronRouter(deps: CronRouterDeps): Hono {
           {
             taskId: url.searchParams.get("taskId") ?? undefined,
             agentId: url.searchParams.get("agentId") ?? undefined,
-            status: url.searchParams.get("status") ?? undefined,
-            trigger: url.searchParams.get("trigger") ?? undefined,
-            from: num("from"),
-            to: num("to"),
+            status,
+            trigger,
+            from: from ?? undefined,
+            to: to ?? undefined,
           },
           limit,
           offset,
