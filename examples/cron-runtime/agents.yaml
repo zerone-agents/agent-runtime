@@ -1,0 +1,10 @@
+cron:
+  enabled: true
+  dataRoot: .zerone
+  executionTimeoutMs: 600000
+  drainMs: 5000
+
+agents:
+  - id: assistant
+    description: General assistant used by scheduled prompts
+    model: claude-sonnet-4-6

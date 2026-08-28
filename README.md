@@ -206,6 +206,25 @@ Optional top-level `aigc` config: when enabled, every response carries an implic
 
 Optional top-level `hub` config: when enabled, every successfully completed run asynchronously pushes the full session snapshot to agent-hub (idempotent upsert on the hub side). The `X-User-Name` request header maps to session ownership and is required — when absent, the push is skipped for that run. Tenant ownership comes from the deployment-level `hub.org` config (delivered via agent-hub/agent-deployer); the `X-Org` request header is no longer read. When `hub.org` is not configured, the `org` field is omitted and the hub resolves its default tenant by deployment mode. The push never blocks a run — network errors and 5xx are retried twice with 1s→2s backoff, 4xx is not retried. See the [`hub` section in `docs/configuration.md`](docs/configuration.md#hub-聊天记录回传可选) for full config.
 
+### Cron (scheduled agents, optional)
+
+Optional top-level `cron` config: when enabled, the runtime starts the cron scheduler before HTTP listens and exposes scheduled-task management via `/v1/cron/*` routes and the `zerone-agent cron` CLI subcommands (online mode; `--offline` is not supported yet). Opt-in — scheduled runs incur model calls and tool execution.
+
+```yaml
+cron:
+  enabled: true
+  dataRoot: .zerone
+  executionTimeoutMs: 600000
+  drainMs: 5000
+
+agents:
+  - id: assistant
+    description: General assistant used by scheduled prompts
+    model: claude-sonnet-4-6
+```
+
+Task state and execution history persist under `<dataRoot>/cron/` (single-writer lock). See [`docs/api/cron.md`](docs/api/cron.md) for the HTTP API and the [`cron` section in `docs/configuration.md`](docs/configuration.md#cron) for full config. Runnable example: [`examples/cron-runtime/`](examples/cron-runtime/).
+
 ### Skill loading
 
 Skills are **fully filesystem-driven** — no whitelist. Set `settingSources` to choose which directories to scan (`~/.openagent/skills/`, `<cwd>/.openagent/skills/`, plus `extraUserSkillDirs`); every discovered `SKILL.md` is exposed to the agent. Skills are scanned once at startup; restart to pick up changes. `GET /v1/agents/:id` surfaces the resolved list as `availableSkills`.

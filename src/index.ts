@@ -1,10 +1,4 @@
 #!/usr/bin/env node
-import { parseArgs } from "node:util"
-import { discoverConfig, findConfigDir } from "./config.js"
-import { AgentRegistry } from "./registry.js"
-import { MetricsCollector } from "./metrics.js"
-import { createApp } from "./router/index.js"
-
 export { createApp } from "./router/index.js"
 export type { CreateAppOptions } from "./router/index.js"
 export { AgentRegistry, type AgentInfo, type AgentDetail } from "./registry.js"
@@ -34,43 +28,23 @@ export {
   type RuntimeConfig,
   type AgentDefinition,
 } from "./config.js"
+export { RuntimeCronService, CronApiError, type CronErrorCode } from "./cron-service.js"
+export {
+  pathIdentity, sha256Hex, newRuntimeId, disabledCronStatus,
+  type CronStatusPayload,
+} from "./cron-identity.js"
+export {
+  createRuntime, resolveCronDataRoot,
+  type AgentRuntimeHost, type CreateRuntimeOptions,
+} from "./runtime.js"
+export { runCli, CLI_EXIT } from "./cli.js"
+export { CronConfigSchema, type CronConfig } from "./config.js"
 
 if (import.meta.filename === process.argv[1]) {
-  async function main() {
-    const { values } = parseArgs({
-      options: {
-        config: { type: "string", short: "c" },
-        port: { type: "string", short: "p" },
-      },
-      strict: false,
-    })
-
-    const configDir = findConfigDir(values.config as string | undefined)
-    const config = await discoverConfig(configDir)
-
-    if (values.port) {
-      config.server.port = parseInt(values.port as string, 10)
-    }
-
-    console.log(`Loading config from: ${configDir}`)
-    console.log(`Agents: ${config.agents.map((a) => a.id).join(", ")}`)
-
-    const registry = new AgentRegistry()
-    await registry.loadFromConfig(config, configDir)
-
-    const metrics = new MetricsCollector()
-    const app = createApp(config, registry, metrics)
-
-    const { serve } = await import("@hono/node-server")
-    serve(
-      { fetch: app.fetch, port: config.server.port, hostname: config.server.host },
-      (info: { address: string; port: number }) => {
-        console.log(`agent-runtime listening on http://${info.address}:${info.port}`)
-      },
-    )
-  }
-
-  main().catch((err) => {
+  const { runCli } = await import("./cli.js")
+  runCli(process.argv.slice(2)).then((code) => {
+    if (code !== 0) process.exit(code)
+  }, (err) => {
     console.error("Failed to start:", err.message)
     process.exit(1)
   })
