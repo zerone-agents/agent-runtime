@@ -264,7 +264,7 @@ describe("cron CLI (online)", () => {
   })
 
   it("--json errors are machine-readable across categories", async () => {
-    // not_found via 404 on a read
+    // server error code preserved on 404 (was: local "not_found" category)
     {
       const app = new Hono()
       app.get("/v1/cron/status", (c) => c.json({ enabled: true, running: true, runtimeId: "r", configId: "cfg-local", dataId: "data-local", taskCount: 0, activeExecutionCount: 0 }))
@@ -274,7 +274,7 @@ describe("cron CLI (online)", () => {
       const code = await runCli([...baseArgs, "get", "nope", "--json"])
       expect(code).toBe(CLI_EXIT.NOT_FOUND)
       const parsed = JSON.parse(String(errSpy.mock.calls[0]?.[0] ?? ""))
-      expect(parsed).toMatchObject({ code: "not_found" })
+      expect(parsed).toMatchObject({ code: "task_not_found" })
       expect(typeof parsed.error).toBe("string")
       errSpy.mockRestore()
     }
@@ -299,6 +299,20 @@ describe("cron CLI (online)", () => {
       expect(parsed).toMatchObject({ code: "instance_mismatch" })
       errSpy.mockRestore()
     }
+  })
+
+  it("--json preserves the server error code instead of the local exit category", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/tasks", (c) => c.json({ error: "Agent unavailable", code: "agent_unavailable" }, 503))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "list", "--json"])
+    expect(code).toBe(CLI_EXIT.SERVER)
+    // Assert before mockRestore(): restoring clears mock.calls state.
+    const parsed = JSON.parse(String(errSpy.mock.calls[0]?.[0] ?? ""))
+    expect(parsed).toMatchObject({ code: "agent_unavailable" })
+    expect(typeof parsed.error).toBe("string")
+    errSpy.mockRestore()
   })
 
   it("--help/-h print usage and exit 0 before serve flag fallback", async () => {

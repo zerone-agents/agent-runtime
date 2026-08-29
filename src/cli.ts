@@ -46,8 +46,9 @@ const EXIT_CODE_NAMES: Record<number, string> = {
   [CLI_EXIT.SERVER]: "server_error",
 }
 
-function fail(message: string, exitCode: number, json = false): number {
-  if (json) console.error(JSON.stringify({ error: message, code: EXIT_CODE_NAMES[exitCode] ?? "error" }, null, 2))
+/** Report a CLI failure. `code` overrides the JSON machine code when the failure originated from an HTTP response (preserves the server's body code); client-originated failures fall back to EXIT_CODE_NAMES[exitCode]. */
+function fail(message: string, exitCode: number, json = false, code?: string): number {
+  if (json) console.error(JSON.stringify({ error: message, code: code ?? EXIT_CODE_NAMES[exitCode] ?? "error" }, null, 2))
   else console.error(message)
   return exitCode
 }
@@ -193,9 +194,12 @@ async function call(ctx: OnlineContext, path: string, init?: RequestInit): Promi
 async function guardWrite(ctx: OnlineContext): Promise<number | null> {
   const status = await call(ctx, "/v1/cron/status")
   if (!status.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-  if (status.status !== 200) return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER, ctx.json)
+  // Server-origin failures preserve the server's body code when present; the
+  // client-origin failures below keep their local exit-category codes.
+  if (status.status !== 200)
+    return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER, ctx.json, (status.body as { code?: string } | null | undefined)?.code)
   if (!status.body || typeof status.body !== "object")
-    return fail("Runtime server returned an invalid status payload", CLI_EXIT.SERVER, ctx.json)
+    return fail("Runtime server returned an invalid status payload", CLI_EXIT.SERVER, ctx.json, (status.body as { code?: string } | null | undefined)?.code)
   const payload = status.body as CronStatusPayload
   if (!payload.enabled) return fail("Cron is disabled on the runtime (cron_disabled)", CLI_EXIT.CRON_DISABLED, ctx.json)
   if (payload.configId !== ctx.localConfigId || payload.dataId !== ctx.localDataId) {
@@ -275,7 +279,8 @@ async function cronCommand(argv: string[]): Promise<number> {
       const qs = params.toString()
       const res = await call(ctx, `/v1/cron/tasks${qs ? `?${qs}` : ""}`)
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "list failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "list failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
@@ -284,8 +289,9 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (!id) return fail("Usage: zerone-agent cron get <task-id>", CLI_EXIT.USAGE, ctx.json)
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}`)
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "get failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json, bodyCode)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "get failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
@@ -302,7 +308,8 @@ async function cronCommand(argv: string[]): Promise<number> {
         body: JSON.stringify({ name, cron, prompt, agentId: agent }),
       })
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status !== 201) return fail(String((res.body as { error?: string })?.error ?? "create failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status !== 201) return fail(String((res.body as { error?: string })?.error ?? "create failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
@@ -323,8 +330,9 @@ async function cronCommand(argv: string[]): Promise<number> {
         body: JSON.stringify(changes),
       })
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "update failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json, bodyCode)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "update failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
@@ -335,8 +343,9 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (guard !== null) return guard
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}`, { method: "DELETE" })
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
-      if (res.status !== 204) return fail(String((res.body as { error?: string })?.error ?? "delete failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json, bodyCode)
+      if (res.status !== 204) return fail(String((res.body as { error?: string })?.error ?? "delete failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       if (ctx.json) console.log(JSON.stringify({ deleted: true, id }, null, 2))
       else console.log(`Deleted ${id}`)
       return CLI_EXIT.OK
@@ -348,8 +357,9 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (guard !== null) return guard
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}/run`, { method: "POST" })
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
-      if (res.status !== 202) return fail(String((res.body as { error?: string })?.error ?? "run failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json, bodyCode)
+      if (res.status !== 202) return fail(String((res.body as { error?: string })?.error ?? "run failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body) // { executionId, status }
       return CLI_EXIT.OK
     }
@@ -360,7 +370,8 @@ async function cronCommand(argv: string[]): Promise<number> {
       const qs = params.toString()
       const res = await call(ctx, `/v1/cron/executions${qs ? `?${qs}` : ""}`)
       if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "history failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
+      const bodyCode = (res.body as { code?: string } | null | undefined)?.code
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "history failed"), exitCodeFromStatus(res.status, res.body), ctx.json, bodyCode)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
