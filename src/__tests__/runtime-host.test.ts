@@ -184,4 +184,47 @@ describe("createRuntime lifecycle", () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
+
+  it("stop() suspends Cron scheduling at shutdown start, before cron.stop() drains it", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+      await host.start()
+
+      // Call-through spies: exercise the real suspend/stop while recording
+      // the invocation order.
+      const order: string[] = []
+      const suspendOrig = host.cron!.suspend.bind(host.cron!)
+      const stopOrig = host.cron!.stop.bind(host.cron!)
+      const suspendSpy = vi
+        .spyOn(host.cron!, "suspend")
+        .mockImplementation(async () => {
+          order.push("suspend")
+          await suspendOrig()
+        })
+      const stopSpy = vi
+        .spyOn(host.cron!, "stop")
+        .mockImplementation(async (options?: { drainMs?: number }) => {
+          order.push("stop")
+          await stopOrig(options)
+        })
+
+      await host.stop()
+
+      expect(suspendSpy).toHaveBeenCalledTimes(1)
+      expect(stopSpy).toHaveBeenCalledTimes(1)
+      // Suspend must happen BEFORE the drain/stop: the SDK Scheduler keeps
+      // firing until suspend() runs, so it must run at shutdown start, ahead
+      // of the mutation-drain barrier.
+      expect(order.indexOf("suspend")).toBeLessThan(order.indexOf("stop"))
+      expect(order).toEqual(["suspend", "stop"])
+
+      suspendSpy.mockRestore()
+      stopSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
 })

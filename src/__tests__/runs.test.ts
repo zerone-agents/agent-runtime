@@ -361,4 +361,75 @@ describe("RunRegistry — phased shutdown (sealAndCancel / finishCleanup)", () =
       reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }),
     ).toThrow(RunRegistryClosedError)
   })
+
+  it("sealAndCancel() is idempotent: a repeated seal never overwrites pending cleanup", async () => {
+    const reg = new RunRegistry()
+    // Manually-controlled agent cleanup promise (closePromise guard in
+    // markTerminal preserves it; agent.close() is NOT called).
+    let releaseClose!: () => void
+    const closePromise = new Promise<void>((r) => {
+      releaseClose = r
+    })
+    const agent = makeMockAgent()
+    reg.register({ agent, agentId: "a1", sessionId: "s1", closePromise })
+
+    reg.sealAndCancel()
+
+    let firstResolved = false
+    const first = reg.finishCleanup().then(() => {
+      firstResolved = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(firstResolved).toBe(false) // cleanup still pending
+
+    // Regression: the second seal used to see an empty active map and
+    // overwrite cleanupDone with an already-resolved promise, making
+    // finishCleanup() resolve early while the first seal's close promises
+    // were still pending.
+    reg.sealAndCancel()
+
+    let secondResolved = false
+    const second = reg.finishCleanup().then(() => {
+      secondResolved = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(secondResolved).toBe(false)
+    expect(firstResolved).toBe(false)
+
+    releaseClose()
+    await Promise.all([first, second])
+    expect(firstResolved).toBe(true)
+    expect(secondResolved).toBe(true)
+  })
+
+  it("concurrent double closeAll(): both promises resolve only after the closePromise releases", async () => {
+    const reg = new RunRegistry()
+    let releaseClose!: () => void
+    const closePromise = new Promise<void>((r) => {
+      releaseClose = r
+    })
+    const agent = makeMockAgent()
+    reg.register({ agent, agentId: "a1", sessionId: "s1", closePromise })
+
+    // Fire both without awaiting: the second's sealAndCancel() runs while
+    // the first's cleanupDone is still pending.
+    const p1 = reg.closeAll()
+    const p2 = reg.closeAll()
+
+    let resolvedCount = 0
+    void p1.then(() => {
+      resolvedCount++
+    })
+    void p2.then(() => {
+      resolvedCount++
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // Neither may resolve while the controlled closePromise is held: the
+    // old code let the second closeAll() observe a resolved cleanup.
+    expect(resolvedCount).toBe(0)
+
+    releaseClose()
+    await Promise.all([p1, p2])
+    expect(resolvedCount).toBe(2)
+  })
 })

@@ -228,9 +228,15 @@ export class RunRegistry {
    * 'shutdown'. Returns WITHOUT awaiting agent cleanup — cleanup completion
    * is awaited separately via finishCleanup(), so the shutdown request drain
    * is never gated behind Agent close() promises (which may resolve only
-   * after their handlers unwind).
+   * after their handlers unwind). Idempotent: only the first call seals;
+   * repeated or concurrent calls return immediately without disturbing the
+   * cleanupDone promise captured by the first.
    */
   sealAndCancel(): void {
+    // Idempotent: never overwrite cleanupDone while a previous seal's
+    // Agent-close promises are still pending (RunRegistry is a public class;
+    // concurrent/repeated closeAll() must not observe a resolved cleanup).
+    if (this.closed) return
     this.closed = true
     if (this.sweepTimer) clearInterval(this.sweepTimer)
 
