@@ -185,7 +185,7 @@ describe("createRuntime lifecycle", () => {
     }
   })
 
-  it("stop() suspends Cron scheduling at shutdown start, before cron.stop() drains it", async () => {
+  it("stop() cancels HTTP runs without waiting for Cron (no pre-stop suspension)", async () => {
     const configDir = writeConfigDir(true)
     try {
       const { loadYamlConfig } = await import("../config.js")
@@ -193,36 +193,33 @@ describe("createRuntime lifecycle", () => {
       const host = await createRuntime(config, { configDir })
       await host.start()
 
-      // Call-through spies: exercise the real suspend/stop while recording
-      // the invocation order.
-      const order: string[] = []
-      const suspendOrig = host.cron!.suspend.bind(host.cron!)
-      const stopOrig = host.cron!.stop.bind(host.cron!)
-      const suspendSpy = vi
-        .spyOn(host.cron!, "suspend")
-        .mockImplementation(async () => {
-          order.push("suspend")
-          await suspendOrig()
-        })
+      const suspendSpy = vi.spyOn(host.cron!, "suspend")
+      let releaseCronStop!: () => void
+      const cronStopHeld = new Promise<void>((resolve) => { releaseCronStop = resolve })
       const stopSpy = vi
         .spyOn(host.cron!, "stop")
-        .mockImplementation(async (options?: { drainMs?: number }) => {
-          order.push("stop")
-          await stopOrig(options)
-        })
+        .mockImplementation(() => cronStopHeld)
+      const sealSpy = vi.spyOn(host.runs, "sealAndCancel")
 
-      await host.stop()
+      const stopPromise = host.stop()
+      await new Promise((resolve) => setTimeout(resolve, 20))
 
-      expect(suspendSpy).toHaveBeenCalledTimes(1)
+      // HTTP run cancellation is NOT gated behind any Cron operation — even
+      // a non-settling cron.stop cannot delay it. (Regression: an awaited,
+      // execution-draining suspend() ahead of sealAndCancel used to.)
+      expect(sealSpy).toHaveBeenCalledTimes(1)
+      // Issue #21: Runtime must not split the SDK's internal shutdown
+      // phases — the single stop({ drainMs }) owns the full Cron lifecycle
+      // (stop-claiming/drain/interrupt-remaining/release-lock). No suspend().
+      expect(suspendSpy).not.toHaveBeenCalled()
+
+      releaseCronStop()
+      await stopPromise
       expect(stopSpy).toHaveBeenCalledTimes(1)
-      // Suspend must happen BEFORE the drain/stop: the SDK Scheduler keeps
-      // firing until suspend() runs, so it must run at shutdown start, ahead
-      // of the mutation-drain barrier.
-      expect(order.indexOf("suspend")).toBeLessThan(order.indexOf("stop"))
-      expect(order).toEqual(["suspend", "stop"])
 
       suspendSpy.mockRestore()
       stopSpy.mockRestore()
+      sealSpy.mockRestore()
     } finally {
       rmSync(configDir, { recursive: true, force: true })
     }

@@ -126,18 +126,16 @@ export async function createRuntime(
         stopPromise = (async () => {
           // Phase 1 (synchronous): reject new mutations.
           shutdownGate.begin()
-          // Phase 2: suspend Cron scheduling + seal/cancel registered runs.
-          // Suspend Cron scheduling immediately: no fresh scheduled executions
-          // enqueue/start while HTTP mutations drain. suspend() pauses the
-          // scheduler without draining or releasing the lock; the full drain
-          // (stop) is awaited later, concurrently with Run cleanup. (Verified
-          // SDK semantics: suspend() only acts when running; stop() works
-          // from the suspended state.)
-          if (cron) await cron.suspend()
-          // Seal + cancel registered runs — fast, never awaits Agent cleanup.
-          // A blocking JSON run request is itself a tracked mutation, so its
+          // Phase 2: seal + cancel registered runs — fast, never awaits
+          // Agent cleanup and never gates behind any Cron operation. A
+          // blocking JSON run request is itself a tracked mutation, so its
           // cancellation must not wait behind anything. Late registrations
           // fail fast (RunRegistryClosedError → 503 shutting_down).
+          // NOTE: Cron lifecycle is NOT touched here. Issue #21 forbids
+          // splitting the SDK's internal shutdown phases: the single
+          // stop({ drainMs }) owns 停止领取/drain/中断剩余执行/释放锁,
+          // including the graceful drain window (suspend() would abort
+          // active executions immediately — the wrong capability).
           runs.sealAndCancel()
           // Phase 3: wait for in-flight mutations to finish (unblocked by the
           // cancellation above).
