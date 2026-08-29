@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { RunRegistry, RunIdConflictError } from "../runs.js"
+import { RunRegistry, RunIdConflictError, RunRegistryClosedError } from "../runs.js"
 
 function makeMockAgent(overrides: Record<string, any> = {}) {
   return {
@@ -292,7 +292,7 @@ describe("RunRegistry — closeAll", () => {
     errSpy.mockRestore()
   })
 
-  it("register() after closeAll() throws (late-registration shutdown guard)", async () => {
+  it("register() after closeAll() throws RunRegistryClosedError (late-registration shutdown guard)", async () => {
     const reg = new RunRegistry()
     reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" })
 
@@ -302,6 +302,63 @@ describe("RunRegistry — closeAll", () => {
     // after closeAll() must fail fast instead of running uncancellable.
     expect(() =>
       reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }),
+    ).toThrow(RunRegistryClosedError)
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }),
     ).toThrow("RunRegistry is closed (shutdown in progress)")
+  })
+})
+
+describe("RunRegistry — phased shutdown (sealAndCancel / finishCleanup)", () => {
+  it("sealAndCancel() cancels immediately; finishCleanup() stays pending until the closePromise resolves", async () => {
+    const reg = new RunRegistry()
+    // Manually-controlled agent cleanup promise: markTerminal's closePromise
+    // guard preserves it (agent.close() is NOT called for this record).
+    let releaseClose!: () => void
+    const closePromise = new Promise<void>((r) => {
+      releaseClose = r
+    })
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1", closePromise })
+
+    reg.sealAndCancel()
+
+    // Phase A is synchronous: run already cancelled with shutdown origin,
+    // but agent cleanup has not been awaited anywhere.
+    expect(agent.interrupt).toHaveBeenCalledTimes(1)
+    expect(agent.close).not.toHaveBeenCalled()
+    expect(reg.get(id)?.state).toBe("cancelled")
+    expect(reg.get(id)?.reason).toBe("shutdown")
+
+    let finished = false
+    const done = reg.finishCleanup().then(() => {
+      finished = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(finished).toBe(false) // cleanup still in flight
+
+    releaseClose()
+    await done
+    expect(finished).toBe(true)
+  })
+
+  it("finishCleanup() resolves immediately when sealAndCancel() had no runs", async () => {
+    const reg = new RunRegistry()
+    reg.sealAndCancel()
+    await expect(reg.finishCleanup()).resolves.toBeUndefined()
+  })
+
+  it("closeAll() composes both phases (backward compat)", async () => {
+    const reg = new RunRegistry()
+    const agent = makeMockAgent()
+    const id = reg.register({ agent, agentId: "a1", sessionId: "s1" })
+
+    await reg.closeAll()
+
+    expect(agent.close).toHaveBeenCalledTimes(1)
+    expect(reg.get(id)?.state).toBe("cancelled")
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }),
+    ).toThrow(RunRegistryClosedError)
   })
 })

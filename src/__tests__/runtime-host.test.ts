@@ -112,14 +112,56 @@ describe("createRuntime lifecycle", () => {
       const host = await createRuntime(config, { configDir })
       await host.start()
 
-      const runsClose = vi.spyOn(host.runs, "closeAll")
+      const runsSeal = vi.spyOn(host.runs, "sealAndCancel")
       const agentsClose = vi.spyOn(host.agents, "closeAll")
       await host.stop()
       await host.stop()
-      expect(runsClose).toHaveBeenCalledTimes(1)
+      expect(runsSeal).toHaveBeenCalledTimes(1) // stop() phases: seal once, never legacy closeAll
       expect(agentsClose).toHaveBeenCalledTimes(1)
-      runsClose.mockRestore()
+      runsSeal.mockRestore()
       agentsClose.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
+  it("Cron stop begins without waiting for Run cleanup (concurrent phase 4)", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+      await host.start()
+
+      // Manually-controlled run cleanup: models a stuck agent.close().
+      let releaseCleanup!: () => void
+      const cleanupPending = new Promise<void>((r) => {
+        releaseCleanup = r
+      })
+      const finishSpy = vi
+        .spyOn(host.runs, "finishCleanup")
+        .mockReturnValue(cleanupPending)
+      const cronStopSpy = vi
+        .spyOn(host.cron!, "stop")
+        .mockImplementation(async () => {})
+
+      let stopped = false
+      const stopPromise = host.stop().then(() => {
+        stopped = true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      // cron.stop was invoked while Run cleanup is still pending — a stuck
+      // cleanup must not delay Cron drain or lock release (issue #21).
+      expect(cronStopSpy).toHaveBeenCalledTimes(1)
+      expect(stopped).toBe(false)
+
+      releaseCleanup()
+      await stopPromise
+      expect(stopped).toBe(true)
+
+      finishSpy.mockRestore()
+      cronStopSpy.mockRestore()
     } finally {
       rmSync(configDir, { recursive: true, force: true })
     }

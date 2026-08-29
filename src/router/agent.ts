@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { createHash } from "node:crypto"
 import type { AgentRegistry } from "../registry.js"
-import { RunIdConflictError, type RunRegistry } from "../runs.js"
+import { RunIdConflictError, RunRegistryClosedError, type RunRegistry } from "../runs.js"
 import type { MetricsCollector } from "../metrics.js"
 import { streamAgentResponse } from "../sse.js"
 import { buildAigcLabel, type AigcConfig } from "../aigc.js"
@@ -80,6 +80,9 @@ export function createAgentRouter(
       await agent.close().catch(() => {})
       if (err instanceof RunIdConflictError) {
         return c.json({ error: "Run ID conflict", runId: err.runId }, 409)
+      }
+      if (err instanceof RunRegistryClosedError) {
+        return c.json({ error: "Runtime is shutting down", code: "shutting_down" }, 503)
       }
       return c.json({ error: (err as Error).message }, 400)
     }

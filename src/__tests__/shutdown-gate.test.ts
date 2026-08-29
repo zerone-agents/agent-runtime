@@ -152,7 +152,7 @@ describe("createShutdownGateMiddleware — held-request regression", () => {
   })
 })
 
-describe("createShutdownGateMiddleware — cancellation-first stop order (deadlock regression)", () => {
+describe("createShutdownGateMiddleware — phased stop order (deadlock regression)", () => {
   it("cancellation-first stop order unblocks a blocked tracked mutation (deadlock regression)", async () => {
     const gate = new ShutdownGate()
     let release!: () => void
@@ -160,7 +160,8 @@ describe("createShutdownGateMiddleware — cancellation-first stop order (deadlo
     const runsFake = {
       // Cancellation is what unblocks the blocked run handler (models
       // RunRegistry.cancel → agent abort): no external/manual release.
-      async closeAll() { release() },
+      sealAndCancel() { release() },
+      finishCleanup() { return Promise.resolve() },
     }
     const app = new Hono()
     app.use("*", createShutdownGateMiddleware(gate))
@@ -169,19 +170,72 @@ describe("createShutdownGateMiddleware — cancellation-first stop order (deadlo
     const request = app.request("/run", { method: "POST" })
     await new Promise((r) => setTimeout(r, 0)) // let it enter the middleware + handler
 
-    // Mirror of AgentRuntimeHost.stop() phase order (1-3):
+    // Mirror of AgentRuntimeHost.stop() phase order (1-4):
     let completed = false
     const stopP = (async () => {
       gate.begin()
-      await runsFake.closeAll()
+      runsFake.sealAndCancel()
       await gate.drained()
+      await runsFake.finishCleanup()
     })().then(() => { completed = true })
 
     await new Promise((r) => setTimeout(r, 20))
-    // With the old order (drained before closeAll) completed stays false — the deadlock.
+    // With the old order (drained before cancellation) completed stays false — the deadlock.
     expect(completed).toBe(true)
     expect((await request).status).toBe(200)
     await stopP
+  })
+
+  it("cleanup may resolve only after the handler unwinds; drain must not wait behind it", async () => {
+    const gate = new ShutdownGate()
+    let release!: () => void
+    const blocked = new Promise<void>((r) => { release = r })
+    // Models an Agent whose close() resolves only after its active handler
+    // unwinds — and that handler is the tracked mutation holding the gate.
+    let cleanupResolve!: () => void
+    const cleanup = new Promise<void>((r) => { cleanupResolve = r })
+    const runsFake = {
+      sealAndCancel() { release() }, // phase A: cancel only, NO cleanup await
+      finishCleanup() { return cleanup }, // phase B: agent cleanup
+    }
+
+    const app = new Hono()
+    app.use("*", createShutdownGateMiddleware(gate))
+    app.post("/run", (c) => blocked.then(() => c.json({ done: true })))
+
+    const request = app.request("/run", { method: "POST" })
+    await new Promise((r) => setTimeout(r, 0)) // let it enter the middleware + handler
+
+    // Mirror of AgentRuntimeHost.stop() phase order (1-4):
+    const phases: string[] = []
+    const stopP = (async () => {
+      gate.begin() // phase 1
+      phases.push("begin")
+      runsFake.sealAndCancel() // phase 2: cancellation, never awaits cleanup
+      phases.push("sealAndCancel")
+      await gate.drained() // phase 3: unblocked by the cancellation above
+      phases.push("drained")
+      await runsFake.finishCleanup() // phase 4: agent cleanup
+      phases.push("finishCleanup")
+    })()
+
+    await new Promise((r) => setTimeout(r, 20))
+    // (a) seal/cancel released the blocked handler immediately — without
+    // awaiting cleanup — so the tracked request settled and drained()
+    // resolved while cleanup was still pending.
+    const res = await request
+    expect(res.status).toBe(200)
+    expect(phases).toEqual(["begin", "sealAndCancel", "drained"])
+    // (b) the run's closePromise (cleanup) resolves only AFTER the tracked
+    // request completes: stop is parked in phase 4, past the drain. Under
+    // the OLD order (monolithic closeAll awaiting cleanup BEFORE drained)
+    // stop would still be parked before drain — the shutdown cycle this
+    // regression pins.
+
+    // The handler has unwound: cleanup may resolve, and stop completes.
+    cleanupResolve()
+    await stopP
+    expect(phases).toEqual(["begin", "sealAndCancel", "drained", "finishCleanup"])
   })
 })
 

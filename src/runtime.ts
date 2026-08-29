@@ -124,24 +124,25 @@ export async function createRuntime(
     async stop() {
       if (!stopPromise) {
         stopPromise = (async () => {
-          // Phase 1 (synchronous): reject new mutations. All shutdown paths
-          // (signals, programmatic, orchestrators) converge here (issue #21).
-          // Outer server owners may still close their listener first — this gate
-          // is independent of socket state.
+          // Phase 1 (synchronous): reject new mutations.
           shutdownGate.begin()
-          // Phase 2: cancel REGISTERED runs first — a blocking JSON run request is
-          // itself a tracked mutation, so run cancellation must not wait behind the
-          // drain of the very request it unblocks. Late registrations (requests that
-          // passed the gate before begin() but had not registered a run yet) fail
-          // fast against the closed registry.
-          await runs.closeAll()
-          // Phase 3: wait for in-flight mutations to finish (now unblocked).
+          // Phase 2: seal + cancel registered runs — fast, never awaits Agent
+          // cleanup. A blocking JSON run request is itself a tracked mutation,
+          // so its cancellation must not wait behind anything. Late
+          // registrations fail fast (RunRegistryClosedError → 503
+          // shutting_down).
+          runs.sealAndCancel()
+          // Phase 3: wait for in-flight mutations to finish (unblocked by the
+          // cancellation above).
           await shutdownGate.drained()
-          // Phase 4: Cron drain + lock release only after mutations quiesced.
+          // Phase 4 (concurrent per issue #21): Run cleanup completion and
+          // Cron drain/lock-release in PARALLEL — a stuck Run cleanup must
+          // not delay Cron drain or lock release.
+          const jobs: Promise<void>[] = [runs.finishCleanup()]
           if (cron) {
-            await cron.stop({ drainMs: config.cron?.drainMs })
-            running = false
+            jobs.push(cron.stop({ drainMs: config.cron?.drainMs }).then(() => { running = false }))
           }
+          await Promise.all(jobs)
           // Phase 5: registry cleanup.
           await agents.closeAll()
         })()

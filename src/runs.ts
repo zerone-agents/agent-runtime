@@ -46,6 +46,14 @@ export class RunIdConflictError extends Error {
   }
 }
 
+/** Thrown by register() once the registry has been sealed for shutdown. */
+export class RunRegistryClosedError extends Error {
+  constructor() {
+    super("RunRegistry is closed (shutdown in progress)")
+    this.name = "RunRegistryClosedError"
+  }
+}
+
 /** Caller-provided runId must match UUID v4 format. */
 const RUN_ID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -56,12 +64,18 @@ export class RunRegistry {
   private terminal = new Map<string, TerminalEntry>()
   private sweepTimer?: NodeJS.Timeout
   /**
-   * Shutdown-window guard: set by closeAll() before cancelling registered
-   * runs. Requests that passed the shutdown gate but have not registered a
-   * run yet fail fast here instead of starting a run nobody will cancel —
-   * such a run would otherwise block the drain wait uncancellable.
+   * Shutdown-window guard: set by sealAndCancel() before cancelling
+   * registered runs. Requests that passed the shutdown gate but have not
+   * registered a run yet fail fast here instead of starting a run nobody
+   * will cancel — such a run would otherwise block the drain wait
+   * uncancellable.
    */
   private closed = false
+  /**
+   * Agent-cleanup completion captured by sealAndCancel(); awaited separately
+   * via finishCleanup() so callers can drain in-flight requests first.
+   */
+  private cleanupDone: Promise<void> = Promise.resolve()
 
   constructor(options: RunRegistryOptions = {}) {
     this.TTL_MS = options.ttlMs ?? 5 * 60 * 1000
@@ -75,15 +89,15 @@ export class RunRegistry {
    * Register a new run. Runtime generates a UUID by default; if `callerRunId`
    * is provided, it must be a valid UUID and must not already be active or in
    * the terminal cache (within TTL window). Throws RunIdConflictError on
-   * duplicate, Error on invalid format, and Error if the registry is closed
-   * (shutdown in progress).
+   * duplicate, Error on invalid format, and RunRegistryClosedError if the
+   * registry is closed (shutdown in progress).
    */
   register(
     rec: Omit<RunRecord, "runId" | "state" | "startedAt">,
     callerRunId?: string,
   ): string {
     if (this.closed) {
-      throw new Error("RunRegistry is closed (shutdown in progress)")
+      throw new RunRegistryClosedError()
     }
     const runId = callerRunId ?? randomUUID()
     if (callerRunId && !RUN_ID_FORMAT.test(callerRunId)) {
@@ -208,7 +222,15 @@ export class RunRegistry {
     }
   }
 
-  async closeAll(): Promise<void> {
+  /**
+   * Shutdown phase A: seal the registry (late registrations fail fast with
+   * RunRegistryClosedError) and cancel every active run with reason
+   * 'shutdown'. Returns WITHOUT awaiting agent cleanup — cleanup completion
+   * is awaited separately via finishCleanup(), so the shutdown request drain
+   * is never gated behind Agent close() promises (which may resolve only
+   * after their handlers unwind).
+   */
+  sealAndCancel(): void {
     this.closed = true
     if (this.sweepTimer) clearInterval(this.sweepTimer)
 
@@ -225,15 +247,28 @@ export class RunRegistry {
       this.markTerminal(rec.runId, "cancelled", "shutdown")
     }
 
-    // Await all closePromises created during the markTerminal sweep above.
+    // Await (via finishCleanup) all closePromises created during the
+    // markTerminal sweep above. Must be computed AFTER the sweep: the
+    // snapshot holds live record references, and markTerminal is what
+    // attaches the agent.close() promise to each.
     const closePromises = activeRuns
       .map((r) => r.closePromise)
       .filter((p): p is Promise<void> => Boolean(p))
-    await Promise.allSettled(closePromises)
+    this.cleanupDone = Promise.allSettled(closePromises).then(() => {})
 
     // active is already empty (markTerminal deleted each entry).
     // terminal is intentionally NOT cleared: post-closeAll callers may still
     // query run state (e.g. verify cancelled); TTL sweep will reap entries.
     this.active.clear()
+  }
+
+  /** Shutdown phase B: await agent cleanup captured by sealAndCancel(). */
+  finishCleanup(): Promise<void> {
+    return this.cleanupDone
+  }
+
+  async closeAll(): Promise<void> {
+    this.sealAndCancel()
+    await this.finishCleanup()
   }
 }

@@ -3,11 +3,12 @@ import type { MiddlewareHandler } from "hono"
 /**
  * Application-level shutdown gate: once begun, mutating requests (/v1/*)
  * are rejected with 503 shutting_down, and in-flight mutations are tracked
- * so shutdown can await their completion (drained()) BEFORE touching Run or
- * Cron state — server.close() alone cannot establish that boundary because
- * streaming responses can hold accepted connections open indefinitely.
- * GET/HEAD are neither rejected nor tracked (status probes stay truthful,
- * SSE streams must not block shutdown).
+ * so shutdown can await their completion (drained()). The shutdown
+ * sequence cancels registered Runs BEFORE awaiting drained() — cancellation
+ * is what unblocks tracked run handlers — then awaits Run cleanup and Cron
+ * drain concurrently (see AgentRuntimeHost.stop()). GET/HEAD are neither
+ * rejected nor tracked (status probes stay truthful, SSE streams must not
+ * block shutdown).
  */
 export class ShutdownGate {
   private down = false
