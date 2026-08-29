@@ -152,6 +152,39 @@ describe("createShutdownGateMiddleware — held-request regression", () => {
   })
 })
 
+describe("createShutdownGateMiddleware — cancellation-first stop order (deadlock regression)", () => {
+  it("cancellation-first stop order unblocks a blocked tracked mutation (deadlock regression)", async () => {
+    const gate = new ShutdownGate()
+    let release!: () => void
+    const blocked = new Promise<void>((r) => { release = r })
+    const runsFake = {
+      // Cancellation is what unblocks the blocked run handler (models
+      // RunRegistry.cancel → agent abort): no external/manual release.
+      async closeAll() { release() },
+    }
+    const app = new Hono()
+    app.use("*", createShutdownGateMiddleware(gate))
+    app.post("/run", (c) => blocked.then(() => c.json({ done: true })))
+
+    const request = app.request("/run", { method: "POST" })
+    await new Promise((r) => setTimeout(r, 0)) // let it enter the middleware + handler
+
+    // Mirror of AgentRuntimeHost.stop() phase order (1-3):
+    let completed = false
+    const stopP = (async () => {
+      gate.begin()
+      await runsFake.closeAll()
+      await gate.drained()
+    })().then(() => { completed = true })
+
+    await new Promise((r) => setTimeout(r, 20))
+    // With the old order (drained before closeAll) completed stays false — the deadlock.
+    expect(completed).toBe(true)
+    expect((await request).status).toBe(200)
+    await stopP
+  })
+})
+
 describe("createRuntime integration", () => {
   it("host.stop() begins the gate synchronously: mutations during drain get 503 shutting_down", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "gate-host-"))

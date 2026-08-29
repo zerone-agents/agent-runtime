@@ -55,6 +55,13 @@ export class RunRegistry {
   private active = new Map<string, RunRecord>()
   private terminal = new Map<string, TerminalEntry>()
   private sweepTimer?: NodeJS.Timeout
+  /**
+   * Shutdown-window guard: set by closeAll() before cancelling registered
+   * runs. Requests that passed the shutdown gate but have not registered a
+   * run yet fail fast here instead of starting a run nobody will cancel —
+   * such a run would otherwise block the drain wait uncancellable.
+   */
+  private closed = false
 
   constructor(options: RunRegistryOptions = {}) {
     this.TTL_MS = options.ttlMs ?? 5 * 60 * 1000
@@ -68,12 +75,16 @@ export class RunRegistry {
    * Register a new run. Runtime generates a UUID by default; if `callerRunId`
    * is provided, it must be a valid UUID and must not already be active or in
    * the terminal cache (within TTL window). Throws RunIdConflictError on
-   * duplicate, Error on invalid format.
+   * duplicate, Error on invalid format, and Error if the registry is closed
+   * (shutdown in progress).
    */
   register(
     rec: Omit<RunRecord, "runId" | "state" | "startedAt">,
     callerRunId?: string,
   ): string {
+    if (this.closed) {
+      throw new Error("RunRegistry is closed (shutdown in progress)")
+    }
     const runId = callerRunId ?? randomUUID()
     if (callerRunId && !RUN_ID_FORMAT.test(callerRunId)) {
       throw new Error(
@@ -198,6 +209,7 @@ export class RunRegistry {
   }
 
   async closeAll(): Promise<void> {
+    this.closed = true
     if (this.sweepTimer) clearInterval(this.sweepTimer)
 
     // Snapshot before mutating; markTerminal deletes from active.

@@ -124,22 +124,25 @@ export async function createRuntime(
     async stop() {
       if (!stopPromise) {
         stopPromise = (async () => {
-          // Quiesce FIRST, synchronously: reject new mutations, then wait for
-          // in-flight ones to finish before touching Run/Cron state. All shutdown
-          // paths (signals, programmatic, orchestrators) converge here (issue #21).
+          // Phase 1 (synchronous): reject new mutations. All shutdown paths
+          // (signals, programmatic, orchestrators) converge here (issue #21).
           // Outer server owners may still close their listener first — this gate
           // is independent of socket state.
           shutdownGate.begin()
+          // Phase 2: cancel REGISTERED runs first — a blocking JSON run request is
+          // itself a tracked mutation, so run cancellation must not wait behind the
+          // drain of the very request it unblocks. Late registrations (requests that
+          // passed the gate before begin() but had not registered a run yet) fail
+          // fast against the closed registry.
+          await runs.closeAll()
+          // Phase 3: wait for in-flight mutations to finish (now unblocked).
           await shutdownGate.drained()
-          const jobs: Promise<void>[] = [runs.closeAll()]
+          // Phase 4: Cron drain + lock release only after mutations quiesced.
           if (cron) {
-            jobs.push(
-              cron.stop({ drainMs: config.cron?.drainMs }).then(() => {
-                running = false
-              }),
-            )
+            await cron.stop({ drainMs: config.cron?.drainMs })
+            running = false
           }
-          await Promise.all(jobs)
+          // Phase 5: registry cleanup.
           await agents.closeAll()
         })()
       }

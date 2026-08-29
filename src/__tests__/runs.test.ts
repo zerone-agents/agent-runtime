@@ -291,4 +291,17 @@ describe("RunRegistry — closeAll", () => {
     )
     errSpy.mockRestore()
   })
+
+  it("register() after closeAll() throws (late-registration shutdown guard)", async () => {
+    const reg = new RunRegistry()
+    reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s1" })
+
+    await reg.closeAll()
+
+    // A request that passed the shutdown gate before begin() but registers
+    // after closeAll() must fail fast instead of running uncancellable.
+    expect(() =>
+      reg.register({ agent: makeMockAgent(), agentId: "a1", sessionId: "s2" }),
+    ).toThrow("RunRegistry is closed (shutdown in progress)")
+  })
 })
