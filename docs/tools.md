@@ -69,7 +69,7 @@ export default defineTool({
 The agent detail endpoint (`GET /agents/:id`) includes `fileTools` with the names of tools loaded from `customTools` files:
 
 ```json
-{ "id": "assistant", "status": "ready", "fileTools": ["get_weather"] }
+{ "id": "assistant", "status": "ready", "fileTools": ["GetWeather"] }
 ```
 
 ## TypeScript Tool Files

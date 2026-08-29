@@ -5,7 +5,7 @@
  * - `defineTool()` is a pure authoring helper (type inference, editor hints).
  *   It never scans, registers, or executes anything.
  * - `materializeTool()` turns an authored definition into an SDK
- *   `ToolDefinition`, deriving the tool name from the file name.
+ *   `ToolDefinition`; the definition's required `name` is the tool name.
  *
  * The executable tool protocol (`ToolDefinition`, `customTools`) belongs to
  * the SDK; the filesystem convention belongs to this runtime.
