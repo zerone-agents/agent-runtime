@@ -35,9 +35,21 @@ Common options:
   --offline         NOT SUPPORTED YET (SDK maintenance session pending)
 API key: env ZERONE_AGENT_HTTP_API_KEY or agents.yaml auth.apiKey (never a flag).`
 
-function fail(msg: string, code: number): number {
-  console.error(msg)
-  return code
+const EXIT_CODE_NAMES: Record<number, string> = {
+  [CLI_EXIT.OK]: "ok",
+  [CLI_EXIT.ERROR]: "error",
+  [CLI_EXIT.USAGE]: "usage",
+  [CLI_EXIT.CRON_DISABLED]: "cron_disabled",
+  [CLI_EXIT.CONNECT]: "connect_failed",
+  [CLI_EXIT.MISMATCH]: "instance_mismatch",
+  [CLI_EXIT.NOT_FOUND]: "not_found",
+  [CLI_EXIT.SERVER]: "server_error",
+}
+
+function fail(message: string, exitCode: number, json = false): number {
+  if (json) console.error(JSON.stringify({ error: message, code: EXIT_CODE_NAMES[exitCode] ?? "error" }, null, 2))
+  else console.error(message)
+  return exitCode
 }
 
 /**
@@ -180,24 +192,26 @@ async function call(ctx: OnlineContext, path: string, init?: RequestInit): Promi
 /** Write-guard: server online, cron enabled, and configId/dataId match this config. */
 async function guardWrite(ctx: OnlineContext): Promise<number | null> {
   const status = await call(ctx, "/v1/cron/status")
-  if (!status.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-  if (status.status !== 200) return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER)
+  if (!status.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+  if (status.status !== 200) return fail(`Runtime server rejected status probe (HTTP ${status.status})`, CLI_EXIT.SERVER, ctx.json)
   if (!status.body || typeof status.body !== "object")
-    return fail("Runtime server returned an invalid status payload", CLI_EXIT.SERVER)
+    return fail("Runtime server returned an invalid status payload", CLI_EXIT.SERVER, ctx.json)
   const payload = status.body as CronStatusPayload
-  if (!payload.enabled) return fail("Cron is disabled on the runtime (cron_disabled)", CLI_EXIT.CRON_DISABLED)
+  if (!payload.enabled) return fail("Cron is disabled on the runtime (cron_disabled)", CLI_EXIT.CRON_DISABLED, ctx.json)
   if (payload.configId !== ctx.localConfigId || payload.dataId !== ctx.localDataId) {
     return fail(
       "Instance identity mismatch: the server manages a different config/cron directory (instance_mismatch)",
       CLI_EXIT.MISMATCH,
+      ctx.json,
     )
   }
   return null
 }
 
-function exitCodeFromStatus(status: number): number {
+function exitCodeFromStatus(status: number, body: unknown): number {
+  const code = (body as { code?: string } | null | undefined)?.code
+  if (status === 503 && code === "cron_disabled") return CLI_EXIT.CRON_DISABLED
   if (status === 404) return CLI_EXIT.NOT_FOUND
-  if (status === 503) return CLI_EXIT.CRON_DISABLED
   if (status >= 500) return CLI_EXIT.SERVER
   if (status === 400 || status === 409) return CLI_EXIT.USAGE
   return CLI_EXIT.ERROR
@@ -231,6 +245,7 @@ async function cronCommand(argv: string[]): Promise<number> {
     return fail(
       "offline_not_supported: offline CLI requires withCronMaintenanceSession (SDK issue #52); use online mode",
       CLI_EXIT.USAGE,
+      argv.includes("--json"),
     )
   }
 
@@ -259,18 +274,18 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (flags.values.agent) params.set("agentId", String(flags.values.agent))
       const qs = params.toString()
       const res = await call(ctx, `/v1/cron/tasks${qs ? `?${qs}` : ""}`)
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "list failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "list failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
     case "get": {
       const id = positional[1]
-      if (!id) return fail("Usage: zerone-agent cron get <task-id>", CLI_EXIT.USAGE)
+      if (!id) return fail("Usage: zerone-agent cron get <task-id>", CLI_EXIT.USAGE, ctx.json)
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}`)
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "get failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "get failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
@@ -279,21 +294,21 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (guard !== null) return guard
       const { name, cron, prompt, agent } = flags.values as Record<string, string | undefined>
       if (!cron || !prompt || !agent) {
-        return fail("create requires --cron, --prompt and --agent", CLI_EXIT.USAGE)
+        return fail("create requires --cron, --prompt and --agent", CLI_EXIT.USAGE, ctx.json)
       }
       const res = await call(ctx, "/v1/cron/tasks", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, cron, prompt, agentId: agent }),
       })
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status !== 201) return fail(String((res.body as { error?: string })?.error ?? "create failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status !== 201) return fail(String((res.body as { error?: string })?.error ?? "create failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
     case "update": {
       const id = positional[1]
-      if (!id) return fail("Usage: zerone-agent cron update <task-id> [--name|--cron|--prompt|--agent <v>]", CLI_EXIT.USAGE)
+      if (!id) return fail("Usage: zerone-agent cron update <task-id> [--name|--cron|--prompt|--agent <v>]", CLI_EXIT.USAGE, ctx.json)
       const guard = await guardWrite(ctx)
       if (guard !== null) return guard
       const { name, cron, prompt, agent } = flags.values as Record<string, string | undefined>
@@ -307,34 +322,34 @@ async function cronCommand(argv: string[]): Promise<number> {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(changes),
       })
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "update failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "update failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
     case "delete": {
       const id = positional[1]
-      if (!id) return fail("Usage: zerone-agent cron delete <task-id>", CLI_EXIT.USAGE)
+      if (!id) return fail("Usage: zerone-agent cron delete <task-id>", CLI_EXIT.USAGE, ctx.json)
       const guard = await guardWrite(ctx)
       if (guard !== null) return guard
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}`, { method: "DELETE" })
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND)
-      if (res.status !== 204) return fail(String((res.body as { error?: string })?.error ?? "delete failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
+      if (res.status !== 204) return fail(String((res.body as { error?: string })?.error ?? "delete failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       if (ctx.json) console.log(JSON.stringify({ deleted: true, id }, null, 2))
       else console.log(`Deleted ${id}`)
       return CLI_EXIT.OK
     }
     case "run": {
       const id = positional[1]
-      if (!id) return fail("Usage: zerone-agent cron run <task-id>", CLI_EXIT.USAGE)
+      if (!id) return fail("Usage: zerone-agent cron run <task-id>", CLI_EXIT.USAGE, ctx.json)
       const guard = await guardWrite(ctx)
       if (guard !== null) return guard
       const res = await call(ctx, `/v1/cron/tasks/${encodeURIComponent(id)}/run`, { method: "POST" })
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND)
-      if (res.status !== 202) return fail(String((res.body as { error?: string })?.error ?? "run failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status === 404) return fail(`Task not found: ${id}`, CLI_EXIT.NOT_FOUND, ctx.json)
+      if (res.status !== 202) return fail(String((res.body as { error?: string })?.error ?? "run failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body) // { executionId, status }
       return CLI_EXIT.OK
     }
@@ -344,13 +359,13 @@ async function cronCommand(argv: string[]): Promise<number> {
       if (flags.values.status) params.set("status", String(flags.values.status))
       const qs = params.toString()
       const res = await call(ctx, `/v1/cron/executions${qs ? `?${qs}` : ""}`)
-      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT)
-      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "history failed"), exitCodeFromStatus(res.status))
+      if (!res.ok) return fail("Cannot reach runtime server", CLI_EXIT.CONNECT, ctx.json)
+      if (res.status !== 200) return fail(String((res.body as { error?: string })?.error ?? "history failed"), exitCodeFromStatus(res.status, res.body), ctx.json)
       printResult(ctx, res.body)
       return CLI_EXIT.OK
     }
     default:
-      return fail(`Unknown cron command: ${cmd ?? "(none)"}\n${USAGE}`, CLI_EXIT.USAGE)
+      return fail(`Unknown cron command: ${cmd ?? "(none)"}\n${USAGE}`, CLI_EXIT.USAGE, ctx.json)
   }
 }
 
@@ -368,5 +383,5 @@ export async function runCli(argv: string[]): Promise<number> {
   if (cmd === "cron") {
     return cronCommand(argv.slice(1))
   }
-  return fail(`Unknown command: ${cmd}\n${USAGE}`, CLI_EXIT.USAGE)
+  return fail(`Unknown command: ${cmd}\n${USAGE}`, CLI_EXIT.USAGE, argv.includes("--json"))
 }

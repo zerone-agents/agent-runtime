@@ -233,6 +233,74 @@ describe("cron CLI (online)", () => {
     expect(code).toBe(CLI_EXIT.USAGE)
   })
 
+  it("503 with body code shutting_down exits SERVER, not CRON_DISABLED", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/tasks", (c) => c.json({ error: "Runtime is shutting down", code: "shutting_down" }, 503))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "list"])
+    errSpy.mockRestore()
+    expect(code).toBe(CLI_EXIT.SERVER)
+  })
+
+  it("503 with body code agent_unavailable exits SERVER", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/tasks", (c) => c.json({ error: "Agent unavailable", code: "agent_unavailable" }, 503))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "list"])
+    errSpy.mockRestore()
+    expect(code).toBe(CLI_EXIT.SERVER)
+  })
+
+  it("503 with body code cron_disabled still exits CRON_DISABLED", async () => {
+    const app = new Hono()
+    app.get("/v1/cron/tasks", (c) => c.json({ error: "Cron is disabled", code: "cron_disabled" }, 503))
+    stubFetch(app)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const code = await runCli([...baseArgs, "list"])
+    errSpy.mockRestore()
+    expect(code).toBe(CLI_EXIT.CRON_DISABLED)
+  })
+
+  it("--json errors are machine-readable across categories", async () => {
+    // not_found via 404 on a read
+    {
+      const app = new Hono()
+      app.get("/v1/cron/status", (c) => c.json({ enabled: true, running: true, runtimeId: "r", configId: "cfg-local", dataId: "data-local", taskCount: 0, activeExecutionCount: 0 }))
+      app.get("*", (c) => c.json({ error: "Task not found", code: "task_not_found" }, 404))
+      stubFetch(app)
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const code = await runCli([...baseArgs, "get", "nope", "--json"])
+      expect(code).toBe(CLI_EXIT.NOT_FOUND)
+      const parsed = JSON.parse(String(errSpy.mock.calls[0]?.[0] ?? ""))
+      expect(parsed).toMatchObject({ code: "not_found" })
+      expect(typeof parsed.error).toBe("string")
+      errSpy.mockRestore()
+    }
+    // connection failure
+    {
+      vi.stubGlobal("fetch", async () => { throw new Error("ECONNREFUSED") })
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const code = await runCli([...baseArgs, "list", "--json"])
+      expect(code).toBe(CLI_EXIT.CONNECT)
+      const parsed = JSON.parse(String(errSpy.mock.calls[0]?.[0] ?? ""))
+      expect(parsed).toMatchObject({ code: "connect_failed" })
+      errSpy.mockRestore()
+    }
+    // instance mismatch (write guard)
+    {
+      const { app } = makeFakeServer({ configId: "cfg-REMOTE" })
+      stubFetch(app)
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const code = await runCli([...baseArgs, "delete", "t1", "--json"])
+      expect(code).toBe(CLI_EXIT.MISMATCH)
+      const parsed = JSON.parse(String(errSpy.mock.calls[0]?.[0] ?? ""))
+      expect(parsed).toMatchObject({ code: "instance_mismatch" })
+      errSpy.mockRestore()
+    }
+  })
+
   it("--help/-h print usage and exit 0 before serve flag fallback", async () => {
     for (const args of [["--help"], ["-h"]]) {
       const logs: string[] = []
