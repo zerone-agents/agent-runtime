@@ -2,8 +2,10 @@
  * File-based custom tool loader.
  *
  * Loads explicitly listed tool script files, dynamically imports each one,
- * and materializes its default export into SDK ToolDefinitions whose names
- * are derived from file names.
+ * and materializes its default export into SDK ToolDefinitions. The
+ * definition's required `name` field is the runtime tool name and the
+ * collision key; the file path identifies the script and is used for
+ * loading and error context only.
  *
  * Tool files are trusted code running with full Node.js privileges.
  * Loading happens once at startup; there is no watching or hot reload.
@@ -49,8 +51,9 @@ async function importModule(path: string): Promise<Record<string, unknown>> {
  * - Paths must already be resolved (the caller resolves them against
  *   configDir); empty list -> [].
  * - Only .ts/.mts/.js/.mjs files are accepted.
- * - File name (without extension) is the tool name; collisions across the
- *   listed files are an error.
+ * - The definition's required `name` is the tool name and the collision
+ *   key; duplicate names across the listed files are an error. The file
+ *   path identifies the script (loading and error context) only.
  * - Any load/validation failure throws; the caller (registry) decides how to
  *   degrade per agent.
  */
