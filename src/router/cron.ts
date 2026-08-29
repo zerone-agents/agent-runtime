@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { CRON_EXECUTION_STATUSES, type CronExecution, type CronTask } from "@zerone-agent/agent-sdk"
+import { CRON_EXECUTION_STATUSES, CronServiceStoppingError, type CronExecution, type CronTask } from "@zerone-agent/agent-sdk"
 import { CronApiError, type RuntimeCronService } from "../cron-service.js"
 import { type CronStatusPayload } from "../cron-identity.js"
 
@@ -46,6 +46,12 @@ function toErrorResponse(err: unknown) {
       case "cron_disabled":
         return { status: 503, body: { error: err.message, code: err.code } }
     }
+  }
+  if (err instanceof CronServiceStoppingError) {
+    // SDK 2.3.0 lifecycle barrier (SDK #57/#58): protected operations reject
+    // once stop() begins — map to the same stable response the shutdown gate
+    // gives, so clients see one code for "shutting down" either way.
+    return { status: 503, body: { error: err.message, code: "shutting_down" } }
   }
   if (isInvalidCronError(err)) {
     return { status: 400, body: { error: err.message, code: "cron_invalid" } }

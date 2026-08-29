@@ -6,6 +6,7 @@ import { disabledCronStatus } from "../cron-identity.js"
 import { AgentRegistry } from "../registry.js"
 import { createApp } from "../router/index.js"
 import { MetricsCollector } from "../metrics.js"
+import { CronServiceStoppingError } from "@zerone-agent/agent-sdk"
 import type {
   CronService, CronTask, CronExecution, CreateCronTaskInput,
   CronTaskChanges, CronExecutionQuery,
@@ -118,6 +119,22 @@ describe("task CRUD", () => {
     })
     expect(res.status).toBe(404)
     expect((await res.json()).code).toBe("agent_not_found")
+  })
+
+  it("SDK lifecycle barrier rejection (CronServiceStoppingError) maps to 503 shutting_down", async () => {
+    const fake = new FakeService()
+    fake.create = async () => {
+      throw new CronServiceStoppingError("create", "stopping")
+    }
+    const { app } = makeApp(fake)
+    const res = await app.request("/tasks", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cron: "0 18 * * *", prompt: "p", agentId: "assistant" }),
+    })
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.code).toBe("shutting_down")
+    expect(body.error).toContain("shutting down")
   })
 
   it("POST /tasks invalid cron expression → 400 cron_invalid", async () => {
