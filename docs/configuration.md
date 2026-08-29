@@ -112,6 +112,24 @@ hub:
 - 信任模型：`X-User-Name` 头由 runtime 直接信任、无法校验——开启 hub 回传时，runtime 应部署在 deployer/网关之后（或配置 HTTP API key），否则用户归属可被伪造；租户归属不受请求影响
 - 失败处理：推送永不阻塞 run；网络错误/5xx 指数退避重试 2 次（1s、2s），4xx 不重试；失败仅记日志
 
+## cron
+
+Optional. Disabled by default — scheduled agents incur model calls and tool
+execution, so cron must be opted into explicitly.
+
+```yaml
+cron:
+  enabled: true          # default false
+  dataRoot: .zerone      # default; relative paths resolve against the config dir
+  executionTimeoutMs: 600000  # optional, SDK default when omitted
+  drainMs: 5000               # optional, SDK default when omitted
+```
+
+- Task and execution files live under `<dataRoot>/cron/` (created by the SDK on start, guarded by a single-writer `runtime.lock`).
+- When `enabled: false`, no CronService is created, no `cronService` is injected into agents, and existing task files are never read or modified.
+- Startup fails fast on an unwritable directory or a held lock — the runtime never serves in a "healthy but not scheduling" state.
+- One runtime process per cron data directory (single-writer lock; multi-process ownership is a non-goal).
+
 ## Config Discovery
 
 Search order:

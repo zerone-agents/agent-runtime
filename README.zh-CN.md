@@ -202,6 +202,25 @@ agents:
 
 可选的顶层 `hub` 配置：启用后，每次成功完成的 run 会异步把该 session 的全量快照推送到 agent-hub（hub 侧幂等 upsert）。请求头 `X-User-Name` 映射为 session 用户归属且必传——缺失时 runtime 跳过该次推送；租户归属只来自部署级配置 `hub.org`（经 agent-hub/agent-deployer 下发），**请求头 `X-Org` 已删除、不再读取**，未配置 `hub.org` 时省略 org 字段、由 hub 按部署模式解析默认租户。推送永不阻塞 run —— 网络错误/5xx 以 1s→2s 退避重试 2 次，4xx 不重试。完整配置见 [`docs/configuration.md` 的 `hub` 章节](docs/configuration.md#hub-聊天记录回传可选)。
 
+### Cron 定时任务（可选）
+
+可选的顶层 `cron` 配置：启用后，runtime 在 HTTP 监听之前启动 cron 调度器，通过 `/v1/cron/*` 路由和 `zerone-agent cron` CLI 子命令（在线模式；暂不支持 `--offline`）管理定时任务。需显式开启——定时运行会产生模型调用与工具执行。
+
+```yaml
+cron:
+  enabled: true
+  dataRoot: .zerone
+  executionTimeoutMs: 600000
+  drainMs: 5000
+
+agents:
+  - id: assistant
+    description: General assistant used by scheduled prompts
+    model: claude-sonnet-4-6
+```
+
+任务状态与执行历史持久化在 `<dataRoot>/cron/` 下（单写者锁）。HTTP API 见 [`docs/api/cron.md`](docs/api/cron.md)，完整配置见 [`docs/configuration.md` 的 `cron` 章节](docs/configuration.md#cron)，可运行示例见 [`examples/cron-runtime/`](examples/cron-runtime/)。
+
 ### Skill 加载
 
 Skill **完全由文件系统驱动**——无白名单。通过 `settingSources` 选择扫描目录（`~/.openagent/skills/`、`<cwd>/.openagent/skills/`，外加 `extraUserSkillDirs`）；发现的每个 `SKILL.md` 都会暴露给 agent。Skill 在启动时扫描一次，修改文件系统后需重启生效。`GET /v1/agents/:id` 返回的 `availableSkills` 字段可查看实际加载的列表。
@@ -295,7 +314,7 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 ## 作为库使用
 
-运行时也可以作为库嵌入（`createApp`、`AgentRegistry`、`MetricsCollector`）——见 [`docs/sdk-usage.md`](docs/sdk-usage.md)。
+运行时也可以作为库嵌入（`createRuntime`、`AgentRuntimeHost`）——见 [`docs/sdk-usage.md`](docs/sdk-usage.md)。
 
 ## License
 

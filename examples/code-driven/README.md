@@ -39,8 +39,8 @@ code-driven/
 | `defineTool()` | JSON Schema 风格自定义工具（GetWeather） |
 | `tool()` + `sdkToolToToolDefinition()` | Zod 风格自定义工具（Calculator） |
 | `hooks` | PreToolUse / PostToolUse 日志 |
-| `registry.register()` | 手动注册 Agent |
-| `createApp()` | 组装 Hono 路由 |
+| `host.agents.register()` | 手动注册代码构建的 Agent（覆盖 config 中同 id 条目） |
+| `createRuntime()` | 组装 Host 并托管生命周期（`start()` 先于 listen，`stop()` 优雅停机） |
 
 ## 环境变量
 
@@ -80,6 +80,7 @@ curl -N -X POST http://localhost:3000/v1/agents/smart/runs \
 ## 关键点
 
 - `agent.config.ts` 适合纯声明式配置（无自定义工具），优先级高于 `agents.yaml`
-- `index.ts` 展示完整 SDK 模式：`createAgent({ tools: [...] })` → `registry.register()` → `createApp()` → `serve()`
+- `index.ts` 展示完整 SDK 模式：`createRuntime()` → `host.agents.register()` → `host.start()` → `serve()`，SIGINT/SIGTERM 时优雅停机
 - `tool()` 返回 `SdkMcpToolDefinition`，需用 `sdkToolToToolDefinition()` 转换后才能传入 `createAgent`
 - `defineTool()` 直接返回 `ToolDefinition`，无需转换
+- `host.stop()` 优雅停机：排水进行中的 runs、停止 cron 调度（若启用）并关闭所有 agents

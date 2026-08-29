@@ -5,8 +5,9 @@
  * - 自定义工具（defineTool + tool）
  * - Hook 系统（PreToolUse / PostToolUse）
  * - 多 Agent 注册 + 工具隔离
- * - Runtime createApp / AgentRegistry / MetricsCollector
+ * - Runtime createRuntime（AgentRuntimeHost 生命周期：start 先于 listen，stop 优雅排水）
  * - 自定义路由扩展
+ * - 优雅停机（SIGINT/SIGTERM：先停止接流，再排水 runs/cron、关闭 agents）
  *
  * Run: npx tsx examples/programmatic/index.ts
  */
@@ -16,12 +17,7 @@ import { serve } from "@hono/node-server"
 import { z } from "zod"
 
 import { defineTool, tool, sdkToolToToolDefinition } from "@zerone-agent/agent-sdk"
-import {
-  createApp,
-  AgentRegistry,
-  MetricsCollector,
-  type RuntimeConfig,
-} from "../../src/index.js"
+import { buildShutdown, closeHttpServer, createRuntime, type RuntimeConfig } from "../../src/index.js"
 
 // ─── 自定义工具 ────────────────────────────────────────────
 
@@ -35,8 +31,8 @@ const stockTool = defineTool({
     },
     required: ["symbol"],
   },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
+  isReadOnly: true,
+  isConcurrencySafe: true,
   async call(input: { symbol: string }) {
     const prices: Record<string, { price: number; change: string }> = {
       AAPL: { price: 198.5, change: "+1.2%" },
@@ -89,7 +85,7 @@ function createLoggingHooks(label: string) {
   }
 }
 
-// ─── 组装 Runtime ──────────────────────────────────────────
+// ─── 组装 Runtime（createRuntime / AgentRuntimeHost） ───────
 
 async function main() {
   const envOverrides = {
@@ -100,10 +96,29 @@ async function main() {
     baseURL: process.env.ZERONE_AGENT_BASE_URL ?? undefined,
   }
 
-  const registry = new AgentRegistry()
-  registry.register(
+  const PORT = Number(process.env.PORT ?? 3100)
+  const HOST = process.env.HOST ?? "0.0.0.0"
+
+  // 本示例无 agents.yaml：configDir 仅用于锚定相对路径与 cron dataRoot（本示例未启用 cron）
+  const configDir = process.cwd()
+
+  const config: RuntimeConfig = {
+    server: { host: HOST, port: PORT },
+    cors: { origins: ["*"] },
+    // agents 声明会被下方 host.agents.register 的代码构建版本覆盖
+    // （hooks / 自定义工具实例无法来自配置文件）
+    agents: [
+      { id: "analyst", description: "financial analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
+      { id: "ops", description: "ops assistant", model: "claude-sonnet-4-6", maxTurns: 15 },
+    ],
+  }
+
+  // createRuntime 组装 AgentRegistry + RunRegistry + MetricsCollector（+ cron，若启用）
+  const host = await createRuntime(config, { configDir })
+
+  host.agents.register(
     "analyst",
-    { id: "analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
+    { id: "analyst", description: "financial analyst", model: "claude-sonnet-4-6", maxTurns: 10 },
     {
       ...envOverrides,
       agent: {
@@ -121,9 +136,9 @@ async function main() {
       hooks: createLoggingHooks("analyst"),
     },
   )
-  registry.register(
+  host.agents.register(
     "ops",
-    { id: "ops", model: "claude-sonnet-4-6", maxTurns: 15 },
+    { id: "ops", description: "ops assistant", model: "claude-sonnet-4-6", maxTurns: 15 },
     {
       ...envOverrides,
       agent: {
@@ -143,42 +158,39 @@ async function main() {
     },
   )
 
-  const PORT = Number(process.env.PORT ?? 3100)
-  const HOST = process.env.HOST ?? "0.0.0.0"
+  // cron 锁 + 执行恢复 + 调度器在 listen 之前启动；cron 未启用时为 no-op
+  await host.start()
 
-  const metrics = new MetricsCollector()
-
-  const config: RuntimeConfig = {
-    server: { host: HOST, port: PORT },
-    cors: { origins: ["*"] },
-    agents: [
-      { id: "analyst", model: "claude-sonnet-4-6" },
-      { id: "ops", model: "claude-sonnet-4-6" },
-    ],
-  }
-
-  const app = createApp(config, registry, metrics)
-
-  // 自定义扩展路由
+  // 自定义扩展路由（host.app 是标准 Hono 实例，可自由挂载）
   const extension = new Hono()
   extension.get("/status", (c) => {
     return c.json({
-      agents: registry.list().map((a) => ({ id: a.id, status: a.status })),
-      metrics: metrics.getSnapshot(),
+      agents: host.agents.list().map((a) => ({ id: a.id, status: a.status })),
+      cron: { enabled: Boolean(host.cron) },
     })
   })
-  app.route("/custom", extension)
+  host.app.route("/custom", extension)
 
-  serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
+  const server = serve({ fetch: host.app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`\n  Programmatic Agent Server`)
     console.log(`  http://${info.address}:${info.port}`)
     console.log(`\n  Agents:`)
     console.log(`    analyst  — 金融分析（WebSearch, 文件读取）`)
     console.log(`    ops      — 运维操作（Bash, 文件读写编辑）`)
     console.log(`\n  Custom routes:`)
-    console.log(`    GET /custom/status — 运行状态概览`)
+    console.log(`    GET /custom/status — 运行状态概览（agents + cron）`)
     console.log()
   })
+
+  // 优雅停机：先停接流，host.stop() 会先拒绝新变更请求（503）、
+  // 等待在途变更完成，再排水 runs/cron、关闭 agents
+  const shutdown = buildShutdown({
+    closeServer: () => closeHttpServer(server),
+    stopHost: () => host.stop(),
+    exit: (code) => process.exit(code),
+  })
+  process.on("SIGINT", shutdown)
+  process.on("SIGTERM", shutdown)
 }
 
 main().catch((err) => {

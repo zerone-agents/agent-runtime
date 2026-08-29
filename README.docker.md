@@ -96,6 +96,20 @@ docker run -d \
 | `ZERONE_AGENT_API_TYPE` | API 类型 |
 | `ZERONE_AGENT_HTTP_API_KEY` | HTTP 服务认证 Key |
 
+### Cron persistence
+
+When `cron.enabled: true`, mount the resolved cron data directory
+(`<configDir>/<dataRoot>`) — the directory that contains `<dataRoot>/cron/`.
+With the image's default `--config /app/config` and the default
+`dataRoot: .zerone`, that path is `/app/config/.zerone`:
+
+```bash
+docker run -v /host/cron-data:/app/config/.zerone ...
+```
+
+Without the volume mount, container recreation loses all cron tasks and
+execution history (they live only in the container filesystem under dataRoot).
+
 ## 健康检查
 
 Dockerfile 已内置 `HEALTHCHECK`，会每 30 秒访问 `/health` 端点检查服务状态。

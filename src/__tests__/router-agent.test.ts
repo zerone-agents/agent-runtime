@@ -849,6 +849,31 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
     expect(agent.close).toHaveBeenCalledTimes(1)
   })
 
+  it("returns 503 shutting_down when the runs registry is sealed (shutdown race)", async () => {
+    const agent = makeReadyAgent()
+    registry.create.mockReturnValue(agent)
+    const app = createAppWithRuns(registry, runsRegistry, metrics)
+
+    // Simulate shutdown phase A (runs.sealAndCancel()): a request that
+    // passed the shutdown gate before begin() but had not registered a run
+    // yet must get a typed 503, not a generic 400.
+    runsRegistry.sealAndCancel()
+
+    const res = await app.request("http://localhost/v1/agents/a1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ message: "hi", stream: false }),
+    })
+
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({
+      error: "Runtime is shutting down",
+      code: "shutting_down",
+    })
+    // Register failure must still not leak the just-created Agent.
+    expect(agent.close).toHaveBeenCalledTimes(1)
+  })
+
   it("JSON blocking run with caller-provided runId can be cancelled mid-prompt via cancel endpoint", async () => {
     // Deferred that controls when prompt() resolves. The handler will be
     // stuck at `await agent.prompt(...)` until we release it.
