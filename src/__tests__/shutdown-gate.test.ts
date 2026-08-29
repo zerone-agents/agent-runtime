@@ -316,4 +316,47 @@ describe("createRuntime integration", () => {
     await stopP
     expect(drainedResolved).toBe(true)
   })
+
+  it("rejecting cron.stop during a held mutation never sits unhandled (rejection regression)", async () => {
+    const gate = new ShutdownGate()
+    let releaseHandler!: () => void
+    const held = new Promise<void>((r) => { releaseHandler = r })
+    const app = new Hono()
+    app.use("*", createShutdownGateMiddleware(gate))
+    app.post("/mutate", (c) => held.then(() => c.json({ done: true })))
+
+    const request = app.request("/mutate", { method: "POST" })
+    await new Promise((r) => setTimeout(r, 0)) // enters middleware + handler (now tracked)
+
+    // Observable for the hazard: with a listener registered Node emits the
+    // event instead of crashing — the flag IS the detection.
+    let unhandled = false
+    const onUnhandled = () => { unhandled = true }
+    process.on("unhandledRejection", onUnhandled)
+
+    const cronStopError = new Error("cron stop failed")
+    // Mirror of production (src/runtime.ts): rejection observed at creation...
+    const cronStop = Promise.reject(cronStopError)
+    cronStop.catch(() => {})
+    // ...and joined only after the mutation drain, per stop()'s phase order.
+    let stopError: unknown
+    const stopP = (async () => {
+      gate.begin()
+      await gate.drained()
+      await Promise.all([cronStop])
+    })().catch((e) => { stopError = e })
+
+    await new Promise((r) => setTimeout(r, 10))
+    // Gate still held, yet the rejection was never unhandled —
+    // red if the immediate catch is removed.
+    expect(unhandled).toBe(false)
+
+    releaseHandler()
+    expect((await request).status).toBe(200)
+    await stopP
+    // Outcome preserved: the original error propagates to stop().
+    expect(stopError).toBe(cronStopError)
+
+    process.off("unhandledRejection", onUnhandled)
+  })
 })

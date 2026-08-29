@@ -145,6 +145,14 @@ export async function createRuntime(
                 running = false
               })
             : undefined
+          // Observe a rejection IMMEDIATELY: the Promise.all below attaches
+          // its handler only after the mutation drain resolves — a fast
+          // cron.stop() rejection while the gate is held would otherwise sit
+          // unhandled for that whole window, and Node terminates the process
+          // on unhandled rejections (before orderly cleanup can run). The
+          // catch marks the rejection as observed; the ORIGINAL outcome is
+          // preserved — Promise.all still rejects with the real error later.
+          cronStop?.catch(() => {})
           // Phase 4: wait for in-flight mutations to finish (unblocked by the
           // run cancellation above). Cron shutdown is already in flight and
           // bounded by drainMs, independent of how long this takes.

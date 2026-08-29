@@ -227,4 +227,22 @@ describe("createRuntime lifecycle", () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
+
+  it("cron.stop rejection propagates through stop() as a rejected promise, not a crash", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+      await host.start()
+
+      const failure = new Error("cron stop failed")
+      const stopSpy = vi.spyOn(host.cron!, "stop").mockRejectedValue(failure)
+
+      await expect(host.stop()).rejects.toThrow("cron stop failed")
+      stopSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
 })
