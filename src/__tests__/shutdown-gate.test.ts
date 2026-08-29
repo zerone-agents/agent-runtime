@@ -280,4 +280,40 @@ describe("createRuntime integration", () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
+
+  it("cron stop is STARTED before the mutation gate drains (held mutation)", async () => {
+    const gate = new ShutdownGate()
+    let releaseHandler!: () => void
+    const held = new Promise<void>((r) => { releaseHandler = r })
+    const app = new Hono()
+    app.use("*", createShutdownGateMiddleware(gate))
+    app.post("/mutate", (c) => held.then(() => c.json({ done: true })))
+
+    const request = app.request("/mutate", { method: "POST" })
+    await new Promise((r) => setTimeout(r, 0)) // enters middleware + handler (now tracked)
+
+    let cronStopStarted = false
+    const cronStop = async () => { cronStopStarted = true }
+
+    // Mirror of AgentRuntimeHost.stop() phase order: cron.stop is FIRED
+    // right after begin/sealAndCancel — not awaited — so a slow or hung
+    // tracked mutation cannot delay stop-claiming/drainMs/lock release.
+    let drainedResolved = false
+    const stopP = (async () => {
+      gate.begin()
+      const fired = cronStop()
+      await gate.drained().then(() => { drainedResolved = true })
+      await fired
+    })()
+
+    await new Promise((r) => setTimeout(r, 10))
+    // Gate NOT drained (handler still held) but cron.stop already started:
+    expect(drainedResolved).toBe(false)
+    expect(cronStopStarted).toBe(true)
+
+    releaseHandler()
+    expect((await request).status).toBe(200)
+    await stopP
+    expect(drainedResolved).toBe(true)
+  })
 })

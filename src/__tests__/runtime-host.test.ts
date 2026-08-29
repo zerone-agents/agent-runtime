@@ -212,6 +212,9 @@ describe("createRuntime lifecycle", () => {
       // phases — the single stop({ drainMs }) owns the full Cron lifecycle
       // (stop-claiming/drain/interrupt-remaining/release-lock). No suspend().
       expect(suspendSpy).not.toHaveBeenCalled()
+      // cron.stop is FIRED immediately after sealAndCancel (not gated behind
+      // the mutation drain): already invoked here, its promise still held.
+      expect(stopSpy).toHaveBeenCalledTimes(1)
 
       releaseCronStop()
       await stopPromise

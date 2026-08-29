@@ -131,24 +131,27 @@ export async function createRuntime(
           // blocking JSON run request is itself a tracked mutation, so its
           // cancellation must not wait behind anything. Late registrations
           // fail fast (RunRegistryClosedError → 503 shutting_down).
-          // NOTE: Cron lifecycle is NOT touched here. Issue #21 forbids
-          // splitting the SDK's internal shutdown phases: the single
-          // stop({ drainMs }) owns 停止领取/drain/中断剩余执行/释放锁,
-          // including the graceful drain window (suspend() would abort
-          // active executions immediately — the wrong capability).
           runs.sealAndCancel()
-          // Phase 3: wait for in-flight mutations to finish (unblocked by the
-          // cancellation above).
+          // Phase 3: START the single Cron shutdown immediately — firing,
+          // not awaited. Issue #21: stop({ drainMs }) owns 停止领取/drain/
+          // 中断剩余执行/释放锁 as one indivisible SDK operation, and its
+          // stop-claiming must not sit behind the mutation drain: a slow or
+          // hung tracked mutation would otherwise let the Scheduler keep
+          // claiming new executions with drainMs not yet started and the
+          // directory lock never entering release. (suspend() is the wrong
+          // capability — it aborts active executions immediately.)
+          const cronStop = cron
+            ? cron.stop({ drainMs: config.cron?.drainMs }).then(() => {
+                running = false
+              })
+            : undefined
+          // Phase 4: wait for in-flight mutations to finish (unblocked by the
+          // run cancellation above). Cron shutdown is already in flight and
+          // bounded by drainMs, independent of how long this takes.
           await shutdownGate.drained()
-          // Phase 4 (concurrent per issue #21): Run cleanup completion and
-          // Cron drain/lock-release in PARALLEL — a stuck Run cleanup must
-          // not delay Cron drain or lock release.
-          const jobs: Promise<void>[] = [runs.finishCleanup()]
-          if (cron) {
-            jobs.push(cron.stop({ drainMs: config.cron?.drainMs }).then(() => { running = false }))
-          }
-          await Promise.all(jobs)
-          // Phase 5: registry cleanup.
+          // Phase 5: Run cleanup joins the already-running Cron shutdown.
+          await Promise.all([runs.finishCleanup(), ...(cronStop ? [cronStop] : [])])
+          // Phase 6: registry cleanup.
           await agents.closeAll()
         })()
       }
