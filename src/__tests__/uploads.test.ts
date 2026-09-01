@@ -11,7 +11,6 @@ import {
   UploadError, splitExt, sanitizeFilename, allocateDestination,
   processUpload, type UploadedFileMeta,
 } from "../uploads.js"
-import { lookupMimeType } from "../files.js"
 
 describe("uploads constants", () => {
   it("exposes the spec limits", () => {
@@ -222,5 +221,21 @@ describe("processUpload", () => {
     await expect(processUpload(cwd, body, contentType))
       .rejects.toMatchObject({ code: "upload_limit_exceeded" })
     expect(readdirSync(uploadsDir())).toEqual([])
+  })
+
+  it("does not leak orphan files from queued parts after a mid-request failure", async () => {
+    const { contentType, body } = multipartStream([
+      { filename: "big.bin", chunks: bigChunks(20 * MB + 1) },
+      { filename: "trailing.txt", type: "text/plain", chunks: [Buffer.from("t")] },
+    ])
+    await expect(processUpload(cwd, body, contentType))
+      .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+    expect(readdirSync(uploadsDir())).toEqual([])
+  })
+
+  it("rejects multipart content-type without boundary as invalid_multipart", async () => {
+    const stream = Readable.toWeb(Readable.from([Buffer.from("x")])) as unknown as ReadableStream<Uint8Array>
+    await expect(processUpload(cwd, stream, "multipart/form-data"))
+      .rejects.toMatchObject({ code: "invalid_multipart" })
   })
 })

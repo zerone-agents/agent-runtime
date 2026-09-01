@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto"
 import { open, mkdir, rm, type FileHandle } from "node:fs/promises"
-import { join, basename } from "node:path"
+import { join } from "node:path"
 import { Readable } from "node:stream"
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import busboy from "busboy"
@@ -128,6 +128,20 @@ export async function processUpload(
     await Promise.all(created.map((p) => rm(p, { force: true }).catch(() => {})))
   }
 
+  let bb: ReturnType<typeof busboy>
+  try {
+    bb = busboy({
+      headers: { "content-type": contentType },
+      // files 上限放宽一个，让第 11 个 part 仍触发 file 事件，由自维护计数报错
+      limits: { files: MAX_FILE_COUNT + 1, fileSize: MAX_FILE_BYTES, fields: 5 },
+    })
+  } catch (err) {
+    throw new UploadError(
+      "invalid_multipart",
+      `Malformed multipart headers: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
   return await new Promise<UploadedFileMeta[]>((resolve, reject) => {
     let settled = false
 
@@ -142,17 +156,12 @@ export async function processUpload(
       )
     }
 
-    const bb = busboy({
-      headers: { "content-type": contentType },
-      // files 上限放宽一个，让第 11 个 part 仍触发 file 事件，由自维护计数报错
-      limits: { files: MAX_FILE_COUNT + 1, fileSize: MAX_FILE_BYTES, fields: 5 },
-    })
-
     let work: Promise<void> = Promise.resolve()
 
     bb.on("file", (_fieldName, stream, info) => {
       work = work.then(() =>
         (async () => {
+          if (settled) return
           fileCount += 1
           if (fileCount > MAX_FILE_COUNT) {
             throw new UploadError(
