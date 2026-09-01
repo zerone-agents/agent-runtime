@@ -5,17 +5,35 @@ import { stat, realpath } from "node:fs/promises"
 import { Readable } from "node:stream"
 import { basename, relative } from "node:path"
 import { listDir, ListError, safeResolve, lookupMimeType } from "../files.js"
+import { processUpload, UploadError } from "../uploads.js"
 
 /**
  * 创建 files 路由。cwd 默认为 process.cwd()，测试时可显式传入临时目录。
  *
  * 端点：
+ *   POST /uploads       multipart 上传（201 { files }；400 invalid_multipart / 413 upload_limit_exceeded）
  *   GET  /              列表（?path & ?recursive & ?depth）
  *   GET  /content       单文件下载（Task 4 实现）
  *   HEAD /content       单文件元数据（Task 4 实现）
  */
 export function createFilesRouter(cwd: string = process.cwd()): Hono {
   const router = new Hono()
+
+  router.post("/uploads", async (c) => {
+    const body = c.req.raw.body
+    const contentType = c.req.header("Content-Type") ?? ""
+    try {
+      if (!body) throw new UploadError("invalid_multipart", "Request has no body")
+      const files = await processUpload(cwd, body, contentType)
+      return c.json({ files }, 201)
+    } catch (err) {
+      if (err instanceof UploadError) {
+        const status = err.code === "upload_limit_exceeded" ? 413 : 400
+        return c.json({ error: err.message, code: err.code }, status)
+      }
+      throw err
+    }
+  })
 
   router.get("/", async (c) => {
     const path = c.req.query("path") ?? ""
