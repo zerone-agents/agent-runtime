@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { mkdtempSync, rmSync, closeSync, openSync, existsSync } from "node:fs"
+import {
+  mkdtempSync, rmSync, closeSync, openSync, existsSync,
+  readdirSync, writeFileSync, mkdirSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Readable } from "node:stream"
 import {
   UPLOADS_DIR, MAX_FILE_COUNT, MAX_FILE_BYTES, MAX_TOTAL_BYTES,
   UploadError, splitExt, sanitizeFilename, allocateDestination,
+  processUpload, type UploadedFileMeta,
 } from "../uploads.js"
+import { lookupMimeType } from "../files.js"
 
 describe("uploads constants", () => {
   it("exposes the spec limits", () => {
@@ -101,5 +107,120 @@ describe("UploadError", () => {
     expect(err).toBeInstanceOf(Error)
     expect(err.code).toBe("invalid_multipart")
     expect(err.message).toBe("bad body")
+  })
+})
+
+// ---- 测试辅助：手工构造流式 multipart body（限额测试用大流量分块） ----
+function multipartStream(
+  parts: { filename: string; type?: string; chunks: Buffer[] }[],
+  boundary = "testbound",
+): { contentType: string; body: ReadableStream<Uint8Array> } {
+  const out: Buffer[] = []
+  for (const p of parts) {
+    const headers = [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="files"; filename="${p.filename}"`,
+      ...(p.type ? [`Content-Type: ${p.type}`] : []),
+      "",
+      "",
+    ].join("\r\n")
+    out.push(Buffer.from(headers), ...p.chunks, Buffer.from("\r\n"))
+  }
+  out.push(Buffer.from(`--${boundary}--\r\n`))
+  return {
+    contentType: `multipart/form-data; boundary=${boundary}`,
+    body: Readable.toWeb(Readable.from(out)) as unknown as ReadableStream<Uint8Array>,
+  }
+}
+
+/** totalBytes 的载荷：n 个共享同一块 1MB 零填充 buffer 的视图（内存 ≈1MB） */
+function bigChunks(totalBytes: number): Buffer[] {
+  const chunkSize = 1024 * 1024
+  const zero = Buffer.alloc(chunkSize)
+  const n = Math.ceil(totalBytes / chunkSize)
+  return Array.from(
+    { length: n },
+    (_, i) => (i === n - 1 ? zero.subarray(0, totalBytes - (n - 1) * chunkSize) : zero),
+  )
+}
+
+const MB = 1024 * 1024
+
+describe("processUpload", () => {
+  let cwd: string
+  beforeEach(() => { cwd = mkdtempSync(join(tmpdir(), "process-upload-")) })
+  afterEach(() => { rmSync(cwd, { recursive: true, force: true }) })
+
+  const uploadsDir = () => join(cwd, ".zerone-uploads")
+
+  it("writes files and returns metadata (id/name/mime/size/path)", async () => {
+    const { contentType, body } = multipartStream([
+      { filename: "a.pdf", type: "application/pdf", chunks: [Buffer.from("hello")] },
+      { filename: "b.txt", type: "text/plain", chunks: [Buffer.from("world!")] },
+    ])
+    const metas = await processUpload(cwd, body, contentType)
+    expect(metas.map((m) => m.path)).toEqual([".zerone-uploads/a.pdf", ".zerone-uploads/b.txt"])
+    expect(metas[0]).toMatchObject({ name: "a.pdf", mime: "application/pdf", size: 5 })
+    expect(metas[0].id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(readdirSync(uploadsDir()).sort()).toEqual(["a.pdf", "b.txt"])
+  })
+
+  it("defaults mime to application/octet-stream when part has no Content-Type", async () => {
+    const { contentType, body } = multipartStream([{ filename: "x.bin", chunks: [Buffer.from([0])] }])
+    const metas = await processUpload(cwd, body, contentType)
+    expect(metas[0].mime).toBe("application/octet-stream")
+  })
+
+  it("renames same-name files within one request (-2 suffix)", async () => {
+    const { contentType, body } = multipartStream([
+      { filename: "dup.pdf", type: "application/pdf", chunks: [Buffer.from("1")] },
+      { filename: "dup.pdf", type: "application/pdf", chunks: [Buffer.from("22")] },
+    ])
+    const metas = await processUpload(cwd, body, contentType)
+    expect(metas.map((m) => m.path)).toEqual([".zerone-uploads/dup.pdf", ".zerone-uploads/dup-2.pdf"])
+    expect(metas[1].size).toBe(2)
+  })
+
+  it("rejects non-multipart content type", async () => {
+    const stream = Readable.toWeb(Readable.from([Buffer.from("x")])) as unknown as ReadableStream<Uint8Array>
+    await expect(processUpload(cwd, stream, "application/json"))
+      .rejects.toMatchObject({ code: "invalid_multipart" })
+  })
+
+  it("rejects a request with no file parts", async () => {
+    const { contentType, body } = multipartStream([])
+    await expect(processUpload(cwd, body, contentType))
+      .rejects.toMatchObject({ code: "invalid_multipart" })
+  })
+
+  it("rejects more than 10 files and cleans up its own files", async () => {
+    // 预置一个既有文件（模拟此前请求的产物，不得被清理）
+    mkdirSync(uploadsDir(), { recursive: true })
+    writeFileSync(join(uploadsDir(), "keep.pdf"), "keep")
+    const parts = Array.from({ length: 11 }, (_, i) => ({
+      filename: `f${i}.txt`, type: "text/plain", chunks: [Buffer.from("x")],
+    }))
+    const { contentType, body } = multipartStream(parts)
+    await expect(processUpload(cwd, body, contentType))
+      .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+    expect(readdirSync(uploadsDir())).toEqual(["keep.pdf"])
+  })
+
+  it("enforces the 20MB single-file limit during streaming and cleans up", async () => {
+    const { contentType, body } = multipartStream([
+      { filename: "small.txt", type: "text/plain", chunks: [Buffer.from("ok")] },
+      { filename: "big.bin", chunks: bigChunks(20 * MB + 1) },
+    ])
+    await expect(processUpload(cwd, body, contentType))
+      .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+    expect(readdirSync(uploadsDir())).toEqual([]) // small.txt 也被清理（all-or-none）
+  })
+
+  it("enforces the 50MB request-total limit during streaming and cleans up", async () => {
+    const part = (n: number) => ({ filename: `p${n}.bin`, chunks: bigChunks(17 * MB) })
+    const { contentType, body } = multipartStream([part(1), part(2), part(3)]) // 3×17MB = 51MB，单文件 <20MB
+    await expect(processUpload(cwd, body, contentType))
+      .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+    expect(readdirSync(uploadsDir())).toEqual([])
   })
 })
