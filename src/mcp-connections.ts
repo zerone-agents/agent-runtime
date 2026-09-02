@@ -8,6 +8,14 @@
  * same connection, and released exactly once via closeAll() on startup
  * rollback / shutdown. Tool visibility remains per-agent: each entry's
  * capabilities receive the shared connection's tools independently.
+ *
+ * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.0.2
+ * (issue #51): connectMCPServer() logs only sanitized structured fields
+ * (server name + stable errorType) and never the raw Error.message, so the
+ * runtime does NOT intercept the process-global console. The full raw error
+ * still travels on MCPConnection.error for runtime-side diagnostics.
+ * (The strict stdio stderr policy came with SDK 3.1.0 — see
+ * withStrictStdioStderr.)
  */
 
 import { connectMCPServer, type MCPConnection } from "@zerone-agent/agent-sdk"
@@ -40,64 +48,37 @@ function sortKeys(value: unknown): unknown {
 /**
  * Sanitized failure: NEVER carries the SDK/raw error text (it may embed
  * command lines, URLs, or credentials). Only the server name is echoed.
+ *
+ * NOTE: no constructor parameter properties — this module is imported by
+ * test/fixtures/mcp-fd2-runner.mjs via Node's native type stripping,
+ * which supports erasable syntax only.
  */
 export class McpConnectionError extends Error {
-  constructor(readonly serverName: string) {
+  readonly serverName: string
+  constructor(serverName: string) {
     super(`MCP server "${serverName}" failed to connect`)
     this.name = "McpConnectionError"
+    this.serverName = serverName
   }
+}
+
+/**
+ * Enforce the runtime's strict output boundary on stdio MCP spawns
+ * (#51, SDK 3.1.0): the SDK's McpStdioConfig default stderr policy is the
+ * upstream "inherit" — the child writes straight to the runtime's fd 2,
+ * bypassing every JS-level sanitizer. The runtime therefore explicitly
+ * injects `stderr: "ignore"` on every stdio connection, never relying on
+ * the default and never allowing user config to downgrade the boundary.
+ * (Replaces the earlier /bin/sh exec wrap; the SDK now owns the policy.)
+ */
+function withStrictStdioStderr(config: Record<string, unknown>): Record<string, unknown> {
+  if (config.type !== "stdio") return config
+  return { ...config, stderr: "ignore" }
 }
 
 interface ManagedConnection {
   conn: MCPConnection
   refs: Set<string>
-}
-
-/**
- * Scoped suppression of the SDK client's raw `[MCP] ...` console.error
- * lines (sdk mcp/client.ts prints the underlying error text — potentially
- * URLs, commands, or credentials — BEFORE the runtime can wrap it, so the
- * runtime's sanitized message alone cannot keep logs clean). We drop those
- * lines during the connect window; the runtime re-emits its own sanitized
- * failure. Other console.error output passes through untouched.
- *
- * Concurrency-safe by refcounting (review r2): the FIRST window installs
- * ONE shared filter and saves the real logger; the LAST window out restores
- * it — regardless of the order windows close. Overlapping windows (e.g.
- * concurrent Runtime loads) therefore never nest wrappers, never leak a
- * filter, and never swallow logs after the last window closes.
- */
-let suppressWindows = 0
-let realConsoleError: typeof console.error | undefined
-
-/** The single filter installed while ≥1 suppression window is open. */
-const sdkMcpLogFilter = (...args: unknown[]): void => {
-  if (typeof args[0] === "string" && args[0].startsWith("[MCP]")) return
-  realConsoleError!(...args)
-}
-
-function withSdkMcpLogSuppression<T>(fn: () => Promise<T>): Promise<T> {
-  suppressWindows++
-  if (suppressWindows === 1) {
-    realConsoleError = console.error
-    console.error = sdkMcpLogFilter
-  }
-  return fn().finally(() => {
-    suppressWindows--
-    if (suppressWindows === 0) {
-      // Identity-checked restore (review r3): if the host replaced
-      // console.error DURING the window, the current function is no longer
-      // ours — restoring would permanently override the host's new logger
-      // with our stale reference. Leave the host's logger untouched and
-      // disarm; the next window re-arms against whatever is installed
-      // then. In this degraded window the SDK's raw [MCP] lines may
-      // surface — host interference takes precedence over sanitization.
-      if (console.error === sdkMcpLogFilter) {
-        console.error = realConsoleError!
-      }
-      realConsoleError = undefined
-    }
-  })
 }
 
 export class McpConnectionManager {
@@ -122,9 +103,9 @@ export class McpConnectionManager {
       if (existing.conn.status === "connected") return existing.conn
       throw new McpConnectionError(name)
     }
-    const conn = await withSdkMcpLogSuppression(() =>
-      connectMCPServer(name, config as never),
-    )
+    // Inject AFTER the key is computed: sharing keys derive from the
+    // canonical (user-authored) config, never from runtime-injected policy.
+    const conn = await connectMCPServer(name, withStrictStdioStderr(config) as never)
     this.byKey.set(key, { conn, refs: new Set([entryId]) })
     if (conn.status !== "connected") throw new McpConnectionError(name)
     return conn

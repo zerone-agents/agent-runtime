@@ -10,6 +10,7 @@ import {
   McpConnectionError,
   canonicalMcpConfig,
 } from "../mcp-connections.js"
+import { capturedOutput } from "./helpers/deep-log.js"
 
 const mockConnect = vi.mocked(connectMCPServer)
 
@@ -73,13 +74,27 @@ describe("McpConnectionManager", () => {
   })
 
   it("throws sanitized McpConnectionError on error status (no raw error text)", async () => {
-    mockConnect.mockResolvedValueOnce({
-      name: "db",
-      status: "error",
-      tools: [],
-      error: new Error("secret-token-xyz in https://user:pass@host"),
-      close: vi.fn(),
-    } as never)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const SECRET = "secret-token-xyz"
+    mockConnect.mockImplementationOnce(async () => {
+      // SDK 3.1.0 contract: the client logs sanitized structured fields
+      // (server + stable errorType) only, keeping the raw credential-bearing
+      // error on MCPConnection.error. Model that here — with the raw error
+      // in play end to end, the FULL captured runtime logs must stay clean
+      // (deep-inspected so nested objects/errors cannot hide a secret).
+      console.error("[MCP] Failed to connect to server", {
+        server: "db",
+        errorType: "init_failed",
+      })
+      return {
+        name: "db",
+        status: "error",
+        tools: [],
+        error: new Error(`${SECRET} in https://user:pass@host`),
+        close: vi.fn(),
+      } as never
+    })
     const m = new McpConnectionManager()
     await expect(
       m.acquire("a", "db", { transport: "stdio", command: "node" }),
@@ -88,6 +103,14 @@ describe("McpConnectionManager", () => {
       m.acquire("a", "db", { transport: "stdio", command: "node" }),
     ).rejects.toBeInstanceOf(McpConnectionError)
     expect(mockConnect).toHaveBeenCalledTimes(1) // 失败连接被共享，不重试
+
+    // Log contract (#54 review r4): full captured logs never carry the
+    // credential-bearing raw error text.
+    const logged = capturedOutput([errSpy.mock.calls, warnSpy.mock.calls])
+    expect(logged).not.toContain(SECRET)
+    expect(logged).not.toContain("user:pass@")
+    errSpy.mockRestore()
+    warnSpy.mockRestore()
   })
 
   it("closeAll closes each unique connection once and is idempotent", async () => {
@@ -157,116 +180,72 @@ describe("McpConnectionManager", () => {
     })
   })
 
-  describe("SDK raw log suppression (#47 review: sanitized failures)", () => {
-    it("drops the SDK's raw [MCP] console.error lines during the connect window; other output passes through", async () => {
+  describe("process-global output object contract (#51)", () => {
+    it("never modifies console.error or process.stderr.write during connects — host identities are preserved", async () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-      const rawLine =
-        '[MCP] Failed to connect to "db": secret-token-xyz in https://user:pass@host'
-      // SDK behavior (mcp/client.ts): the raw error is console.error'd
-      // BEFORE the error-status connection is returned.
+      const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+      let identityInsideConnect: unknown
+      let writeIdentityInsideConnect: unknown
       mockConnect.mockImplementationOnce(async () => {
-        console.error(rawLine)
-        console.error("unrelated noise")
+        // Captured INSIDE the connect window: with the old interception
+        // this was the runtime's filter wrapper, not the host logger.
+        identityInsideConnect = console.error
+        writeIdentityInsideConnect = process.stderr.write
         return {
           name: "db",
           status: "error",
           tools: [],
-          error: new Error("secret-token-xyz"),
+          error: new Error("secret-token-xyz in https://user:pass@host"),
           close: async () => {},
-        }
+        } as never
       })
       const m = new McpConnectionManager()
       await expect(
         m.acquire("a", "db", { transport: "stdio", command: "node" }),
       ).rejects.toThrow('MCP server "db" failed to connect')
-
-      // The raw SDK line (with credentials) never reached the real logger.
-      const mcpCalls = errSpy.mock.calls.filter((c) =>
-        String(c[0]).startsWith("[MCP]"),
-      )
-      expect(mcpCalls).toHaveLength(0)
-      // Suppression is scoped: non-MCP output still flows.
-      expect(
-        errSpy.mock.calls.some((c) => String(c[0]) === "unrelated noise"),
-      ).toBe(true)
-      // And the filter is removed after the window.
-      expect(console.error).toBe(errSpy) // not the wrapper
-
-      errSpy.mockRestore()
-    })
-
-    it("concurrent connect windows leave no permanent filter and swallow nothing afterwards (#47 review r2)", async () => {
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-
-      // Staggered gates force a deterministic non-LIFO overlap: window A
-      // opens, window B opens, A closes first, B closes last.
-      let releaseA!: () => void
-      let releaseB!: () => void
-      const gateA = new Promise<void>((r) => { releaseA = r })
-      const gateB = new Promise<void>((r) => { releaseB = r })
-      mockConnect.mockImplementation(async (n: string) => {
-        await (n === "first" ? gateA : gateB)
-        return {
-          name: n,
-          status: "connected",
-          tools: [],
-          close: async () => {},
-        } as never
-      })
-
-      const m1 = new McpConnectionManager()
-      const m2 = new McpConnectionManager()
-      const p1 = m1.acquire("a", "first", { transport: "stdio", command: "x" })
-      const p2 = m2.acquire("b", "second", { transport: "stdio", command: "x" })
-      await new Promise((r) => setTimeout(r, 5))
-      releaseA()
-      await new Promise((r) => setTimeout(r, 5))
-      releaseB()
-      await Promise.all([p1, p2])
-
-      // No permanent filter: console.error is fully restored...
+      // SDK 3.1.0 logs sanitized fields only (server + stable errorType);
+      // the runtime must not wrap, replace, or filter any process-global
+      // output object at any point — before, during, or after the connect.
+      expect(identityInsideConnect).toBe(errSpy)
       expect(console.error).toBe(errSpy)
-      // ...and later [MCP] lines from anywhere are NOT swallowed by a
-      // stale wrapper.
-      console.error("[MCP] later line from elsewhere")
-      expect(
-        errSpy.mock.calls.some((c) => String(c[0]) === "[MCP] later line from elsewhere"),
-      ).toBe(true)
-
+      expect(writeIdentityInsideConnect).toBe(writeSpy)
+      expect(process.stderr.write).toBe(writeSpy)
       errSpy.mockRestore()
+      writeSpy.mockRestore()
+    })
+  })
+
+  describe("stdio stderr policy (SDK 3.1.0, #51 follow-up)", () => {
+    it("explicitly injects stderr: 'ignore' for stdio configs — never relies on the upstream 'inherit' default", async () => {
+      mockConnect.mockResolvedValueOnce(okConn("db") as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "db", {
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "srv", "--token=x"],
+        env: { K: "v" },
+      })
+      // The config handed to the SDK must carry an explicit strict stderr
+      // policy: the SDK default is "inherit", which lets the child write
+      // straight to the runtime's fd 2 past every JS-level sanitizer.
+      expect(mockConnect.mock.calls[0]![1]).toEqual({
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "srv", "--token=x"],
+        env: { K: "v" },
+        stderr: "ignore",
+      })
     })
 
-    it("never clobbers a logger installed by the host during the window (#47 review r3)", async () => {
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-      const hostLogger = vi.fn()
-      let release!: () => void
-      const gate = new Promise<void>((r) => { release = r })
-      mockConnect.mockImplementation(async () => {
-        await gate
-        // The host swaps in its own logger mid-window...
-        console.error = hostLogger as unknown as typeof console.error
-        return {
-          name: "db",
-          status: "connected",
-          tools: [],
-          close: async () => {},
-        } as never
-      })
-
+    it("leaves non-stdio configs untouched", async () => {
+      mockConnect.mockResolvedValueOnce(okConn("api") as never)
       const m = new McpConnectionManager()
-      const p = m.acquire("a", "db", { transport: "stdio", command: "node" })
-      await new Promise((r) => setTimeout(r, 5))
-      release()
-      await p
-
-      // ...and the window close must NOT restore the stale saved logger
-      // on top of it (the R3 P1: permanent override of host-installed
-      // loggers). Host logger stays in place, nothing leaks or rewraps.
-      expect(console.error).toBe(hostLogger)
-      expect(errSpy).not.toHaveBeenCalledAfter(hostLogger as never)
-
-      errSpy.mockRestore()
-      vi.restoreAllMocks()
+      await m.acquire("a", "api", { transport: "http", url: "http://x", headers: { A: "b" } })
+      expect(mockConnect.mock.calls[0]![1]).toEqual({
+        type: "http",
+        url: "http://x",
+        headers: { A: "b" },
+      })
     })
   })
 })

@@ -108,8 +108,8 @@ curl -H "x-api-key: your-secret-key" \
   "mcpServers": {
     "github": {
       "transport": "stdio",
-      "command": "mcp-server-github",
-      "args": ["--owner", "myorg"],
+      "command": "***",
+      "args": ["***", "***"],
       "env": {
         "GITHUB_TOKEN": "***"
       }
@@ -125,7 +125,7 @@ curl -H "x-api-key: your-secret-key" \
 }
 ```
 
-注意 `env` 和 `headers` 的 value 被替换为 `"***"`——key 保留，让上游知道这里配了什么，但不暴露具体值。详见 [MCP 脱敏策略](#mcp-脱敏策略)。
+**任何原始配置值都不离开进程**：`env`/`headers`/`command`/`args` 的值替换为 `"***"`（`args` 仅保留元素个数，值可能含 `--token=xxx` 形式密钥）；`url` 只保留 `scheme://host[:port]/path` 结构（userinfo 与 query/hash 被剥除，可能携带 `?token=` 或 `user:pass@` 凭证；不可解析则整体掩码）。详见 [MCP 脱敏策略](#mcp-脱敏策略)。
 
 #### 示例 4：带子代理
 
@@ -234,15 +234,15 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `command` | string | 启动命令（如 `npx`、`mcp-server-github`）— **原样返回** |
-| `args` | string[] | 命令行参数 — **原样返回**（可能含 `--token=xxx` 形式的密钥，详见下文边界说明） |
+| `command` | string | 启动命令 — **掩码**为 `"***"`（可执行路径可能泄露基础设施细节） |
+| `args` | string[] | 命令行参数 — 每个元素**掩码**为 `"***"`，仅保留元素个数（值可能含 `--token=xxx` 形式密钥） |
 | `env` | Record\<string, string\> | 环境变量，**值脱敏**为 `"***"`（key 保留） |
 
 ### sse / http 专属（可选）
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `url` | string | MCP server URL — **原样返回**（可能含 `?token=xxx` 或 `user:pass@host` 形式的密钥，详见下文边界说明） |
+| `url` | string | **结构化脱敏**：仅保留 `scheme://host[:port]/path`，userinfo 与 query/hash 被剥除（可能携带 `?token=xxx` 或 `user:pass@host` 凭证）；不可解析则整体掩码为 `"***"` |
 | `headers` | Record\<string, string\> | 请求头，**值脱敏**为 `"***"`（key 保留） |
 
 ---
@@ -263,18 +263,11 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 |---|---|
 | `env` 值 | ✅ 替换为 `"***"`，key 保留 |
 | `headers` 值 | ✅ 替换为 `"***"`，key 保留 |
-| `command` | ⚠️ 原样返回 |
-| `args` | ⚠️ 原样返回 |
-| `url` | ⚠️ 原样返回 |
+| `command` | ✅ 掩码为 `"***"` |
+| `args` | ✅ 每个元素掩码为 `"***"`，元素个数保留 |
+| `url` | ✅ 结构化脱敏：保留 scheme/host/port/path，剥除 userinfo/query/hash；不可解析整体掩码 |
 
-### 已知边界（上游需注意）
-
-接口只对 **`env` 和 `headers` 的值**强制脱敏。`args` 和 `url` 字段原样返回，理论上可能携带密钥：
-
-- `args`: 命令行参数可能含 `--token=xxx`、`--api-key=yyy` 之类的内联密钥
-- `url`: 可能含 query string 形式的 token（`?token=xxx`）或 URL 内嵌凭证（`https://user:pass@host`）
-
-**建议上游消费方**：在 UI / 日志展示 MCP server 配置时，对 `args` 和 `url` 也保持警惕，不要原样落日志或展示给终端用户。
+**任何原始配置值都不经此端点离开进程**——上游无需再对 `command`/`args`/`url` 自行防泄。
 
 ---
 

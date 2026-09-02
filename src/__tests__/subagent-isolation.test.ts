@@ -184,11 +184,13 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
       (c) => (c[0] as string) === "childASrv",
     )
     expect(childASrvCalls).toHaveLength(1)
-    // canonical (transport→type) config reached the SDK
+    // canonical (transport→type) config reached the SDK, with the strict
+    // stdio stderr policy injected (#51, SDK 3.1.0)
     expect(mockConnectMcp).toHaveBeenCalledWith("childASrv", {
       type: "stdio",
       command: "node",
       args: ["child-a.js"],
+      stderr: "ignore",
     })
   })
 

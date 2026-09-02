@@ -157,7 +157,8 @@ describe("AgentRegistry (factory)", () => {
       // Agent-local (#47): no top-level mcpServers — connections are
       // pre-materialized by the runtime manager and flow into capabilities.
       expect(opts.mcpServers).toBeUndefined()
-      // canonical config (transport→type) reached connectMCPServer
+      // canonical config (transport→type) reached connectMCPServer —
+      // http unchanged; stdio carries the strict stderr policy (#51)
       expect(mockConnectMcp).toHaveBeenCalledWith("web", {
         type: "http",
         url: "https://example.com/mcp",
@@ -167,6 +168,7 @@ describe("AgentRegistry (factory)", () => {
         type: "stdio",
         command: "node",
         args: ["server.js"],
+        stderr: "ignore",
       })
     })
 
@@ -399,7 +401,7 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.allowedTools).toEqual(["Read"])
     })
 
-    it("sanitizes MCP stdio env values (keeps command and args)", async () => {
+    it("sanitizes MCP stdio config: command/args fully masked, env values masked (#54 review)", async () => {
       const config = makeConfig([{
         id: "stdio-agent",
         model: "gpt-4",
@@ -407,7 +409,7 @@ describe("AgentRegistry (factory)", () => {
           local: {
             transport: "stdio",
             command: "npx",
-            args: ["-y", "some-server"],
+            args: ["-y", "some-server", "--token=hunter2"],
             env: { API_KEY: "secret-token", OTHER: "x" },
           },
         },
@@ -418,21 +420,21 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.mcpServers).toEqual({
         local: {
           transport: "stdio",
-          command: "npx",
-          args: ["-y", "some-server"],
+          command: "***",
+          args: ["***", "***", "***"], // arity preserved, values masked
           env: { API_KEY: "***", OTHER: "***" },
         },
       })
     })
 
-    it("sanitizes MCP sse headers (keeps url)", async () => {
+    it("sanitizes MCP sse url to structure (no userinfo/query) and masks header values (#54 review)", async () => {
       const config = makeConfig([{
         id: "sse-agent",
         model: "gpt-4",
         mcpServers: {
           remote: {
             transport: "sse",
-            url: "https://example.com/sse",
+            url: "https://user:pass@example.com/sse?token=hunter2",
             headers: { Authorization: "Bearer xxx" },
           },
         },
@@ -449,14 +451,19 @@ describe("AgentRegistry (factory)", () => {
       })
     })
 
-    it("sanitizes MCP http headers (keeps url)", async () => {
+    it("sanitizes MCP http url to structure; unparseable urls are fully masked (#54 review)", async () => {
       const config = makeConfig([{
         id: "http-agent",
         model: "gpt-4",
         mcpServers: {
           api: {
             transport: "http",
-            url: "https://example.com/mcp",
+            url: "https://api.example.com:8443/mcp?key=hunter2",
+            headers: { "X-API-Key": "abc" },
+          },
+          weird: {
+            transport: "http",
+            url: "not a valid url",
             headers: { "X-API-Key": "abc" },
           },
         },
@@ -467,7 +474,12 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.mcpServers).toEqual({
         api: {
           transport: "http",
-          url: "https://example.com/mcp",
+          url: "https://api.example.com:8443/mcp",
+          headers: { "X-API-Key": "***" },
+        },
+        weird: {
+          transport: "http",
+          url: "***",
           headers: { "X-API-Key": "***" },
         },
       })
@@ -554,7 +566,7 @@ describe("AgentRegistry (factory)", () => {
       registry.create("test")
 
       expect(mockCreateAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ maxSessionTurns: 50 }),
+        expect.objectContaining({ maxSessionQueries: 50 }),
       )
     })
 
@@ -570,7 +582,7 @@ describe("AgentRegistry (factory)", () => {
       registry.create("test")
 
       expect(mockCreateAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ maxSessionTurns: undefined }),
+        expect.objectContaining({ maxSessionQueries: undefined }),
       )
     })
 
@@ -715,8 +727,13 @@ describe("AgentRegistry (factory)", () => {
       expect(
         opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
       ).toEqual(["mcp__db__query"])
-      // canonical config (transport→type) reached connectMCPServer
-      expect(mockConnectMcp).toHaveBeenCalledWith("db", { type: "stdio", command: "node" })
+      // canonical config (transport→type) reached connectMCPServer, with
+      // the strict stdio stderr policy injected (#51, SDK 3.1.0)
+      expect(mockConnectMcp).toHaveBeenCalledWith("db", {
+        type: "stdio",
+        command: "node",
+        stderr: "ignore",
+      })
     })
 
     it("mounts child capabilities from the child entry's own assets", async () => {
