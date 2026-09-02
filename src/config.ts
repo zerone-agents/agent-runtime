@@ -60,7 +60,7 @@ const ThinkingConfigSchema = z.object({
   budgetTokens: z.number().optional(),
 })
 
-const AgentDefinitionSchema = z.object({
+const AgentDefinitionSchemaCore = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
   /** Human-readable capability summary. Used for SDK agent.description and Task routing when mounted. */
@@ -74,19 +74,6 @@ const AgentDefinitionSchema = z.object({
   systemPromptFile: z.string().optional(),
   maxTurns: z.number().default(10),
   maxSessionQueries: z.number().optional(),
-  /**
-   * Legacy name, explicitly rejected (was renamed to maxSessionQueries):
-   * stripping it silently would drop a configured session cap to
-   * unlimited. Declaring the key keeps strip-mode from removing it
-   * before validation, so any supplied value fails loudly.
-   */
-  maxSessionTurns: z
-    .unknown()
-    .optional()
-    .refine(
-      (v) => v === undefined,
-      "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
-    ),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project"])).optional(),
@@ -102,6 +89,25 @@ const AgentDefinitionSchema = z.object({
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },
+)
+
+/**
+ * Input-boundary guard: rejects the legacy `maxSessionTurns` key BEFORE
+ * the clean schema parses (zod strip mode would otherwise silently drop
+ * the unknown key, turning a configured session cap into unlimited).
+ * Kept out of the schema itself so the exported AgentDefinition type and
+ * the generated .d.ts expose only maxSessionQueries.
+ */
+const AgentDefinitionSchema = z.preprocess(
+  (input) => {
+    if (typeof input === "object" && input !== null && "maxSessionTurns" in input) {
+      throw new Error(
+        "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
+      )
+    }
+    return input
+  },
+  AgentDefinitionSchemaCore,
 )
 
 export const RuntimeConfigSchema = z.object({
