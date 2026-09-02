@@ -15,6 +15,7 @@
 | `GET` | `/v1/files` | 列出 cwd 下的文件与目录 |
 | `GET` | `/v1/files/content` | 单文件流式下载（支持 Range） |
 | `HEAD` | `/v1/files/content` | 单文件元数据（响应头，无 body） |
+| `POST` | `/v1/files/uploads` | 上传聊天附件（multipart/form-data） |
 
 所有端点：
 - 受 `/v1/*` 的 `x-api-key` 鉴权保护（如配置）
@@ -210,6 +211,18 @@ Last-Modified: Tue, 07 Jul 2026 10:00:00 GMT
 
 ---
 
+## `POST /v1/files/uploads`
+
+Upload chat attachments (multipart/form-data, field `files`; same `x-api-key` auth as all `/v1` routes).
+
+- Limits enforced **while streaming**: at most 10 files, 20MB per file, 50MB per request.
+- Files land flat in `<cwd>/.zerone-uploads`. First upload keeps the sanitized original name; collisions atomically allocate `name-2.ext`, `name-3.ext`, …
+- Multi-file requests are all-or-none: any failure cleans up every file it created.
+- Success → `201 { "files": [{ "id", "name", "mime", "size", "path" }] }` (`path` is cwd-relative; `name === basename(path)`).
+- Errors: `{ "error", "code" }` with `code` ∈ `invalid_multipart` (400) / `upload_limit_exceeded` (413).
+
+---
+
 ## 路径安全
 
 所有 `path` 参数都会经过统一的 `safeResolve` 检查：
@@ -225,7 +238,7 @@ Last-Modified: Tue, 07 Jul 2026 10:00:00 GMT
 
 ## 不做的事（YAGNI）
 
-- 文件上传 / 写入 / 删除（只读）
+- 工作区内文件的写入 / 删除（聊天附件上传是唯一的写入口，走专门的 `POST /v1/files/uploads`）
 - 文件搜索 / glob
 - 目录打包（tar/zip）
 - 文件变更通知

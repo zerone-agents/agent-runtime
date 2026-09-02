@@ -94,3 +94,11 @@ The legacy `stream` body field is still supported when no `Accept` header is pro
 - `stream: false` → JSON blocking response
 
 For new integrations, prefer the `Accept` header approach (Streamable HTTP) as it follows standard HTTP content negotiation.
+
+## Request body
+
+`message` (string) is always required. All other fields are optional.
+
+### `attachments` (optional, issue #43)
+
+An array of descriptors returned by `POST /v1/files/uploads`. Legacy text-only requests are unaffected. Descriptors are re-validated on every run: the `path` must stay inside `.zerone-uploads/`, reference an existing regular file (no symlinks), and match its real `size`; count (≤10), per-file (≤20MB) and total (≤50MB) limits are re-checked. Failures return `{ "error", "code", "path?" }` with `code` ∈ `attachment_missing`/`invalid_attachment` (400) / `upload_limit_exceeded` (413). Decodeable images become image blocks; everything else is exposed to the agent as a safe `Read` path appended to the user message.
