@@ -18,6 +18,7 @@ import {
   loadSkillsFromFilesystem,
   SkillRegistry,
   type SettingSource,
+  type SkillDefinition,
 } from "@zerone-agent/agent-sdk"
 
 export interface SkillSummary {
@@ -36,11 +37,13 @@ export interface ScanOptions {
 }
 
 /**
- * Scan filesystem for SKILL.md files via the SDK's loader.
- * Returns one SkillSummary per unique skill name (collisions resolved by the
- * SDK's load order — last write wins).
+ * Materialize the FULL SkillDefinition[] for an agent entry (issue #47):
+ * flows into SDK AgentCapabilities.skills, fully replacing the SDK session
+ * registry view for that agent (SDK root merge rule: `caps.skills ??
+ * registry view` — an explicit set takes over entirely, so parent skills
+ * can never leak into a child's definition).
  */
-export async function scanSkills(opts: ScanOptions): Promise<SkillSummary[]> {
+export async function materializeSkills(opts: ScanOptions): Promise<SkillDefinition[]> {
   if (!opts.settingSources || opts.settingSources.length === 0) return []
 
   const registry = new SkillRegistry()
@@ -59,10 +62,25 @@ export async function scanSkills(opts: ScanOptions): Promise<SkillSummary[]> {
   return registry
     .getAll()
     .filter((s) => s.source === "user" || s.source === "project")
-    .map((s) => ({
-      name: s.name,
-      description: s.description,
-      source: s.source as "user" | "project",
-      location: s.location ?? "",
-    }))
+}
+
+/** Project full definitions into the detail-endpoint summary shape. */
+export function toSummaries(defs: SkillDefinition[]): SkillSummary[] {
+  return defs.map((s) => ({
+    name: s.name,
+    description: s.description,
+    source: (s.source ?? "project") as "user" | "project",
+    location: s.location ?? "",
+  }))
+}
+
+/**
+ * Scan filesystem for SKILL.md files via the SDK's loader.
+ * Returns one SkillSummary per unique skill name (collisions resolved by the
+ * SDK's load order — last write wins). Single scan path: scanSkills is a
+ * summary projection of materializeSkills, so detail views and capabilities
+ * can never diverge.
+ */
+export async function scanSkills(opts: ScanOptions): Promise<SkillSummary[]> {
+  return toSummaries(await materializeSkills(opts))
 }

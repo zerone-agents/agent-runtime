@@ -258,7 +258,7 @@ agents:
     subagents: ["coder", "researcher"]
 ```
 
-Mounting maps only `description`, `systemPrompt` (resolved), `allowedTools`, `disallowedTools` and `maxTurns` — credentials, skills, custom tools and datasets do not apply in the mounted context. Delegation depth is 1: a subagent cannot mount further subagents. Unknown or duplicate ids in `subagents` fail at startup.
+Mounting materializes the child's own Agent-local capabilities — its resolved `systemPrompt` (with the child's datasets injected), MCP tools, custom file tools, skills, and `allowedTools`/`disallowedTools` policy. Capabilities are never inherited from or merged with the parent: a subagent that declares no MCP servers sees none of the parent's. Credentials remain runtime-global: the parent run's provider, model, and working directory apply. Delegation depth is 1: a subagent cannot mount further subagents. Unknown or duplicate ids in `subagents` fail at startup.
 
 Field reference and TypeScript mode: [`docs/configuration.md`](docs/configuration.md).
 

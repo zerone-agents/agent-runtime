@@ -3,7 +3,16 @@ import { AgentRegistry } from "../registry.js"
 
 vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
-  return { ...actual, createAgent: vi.fn() }
+  return {
+    ...actual,
+    createAgent: vi.fn(),
+    connectMCPServer: vi.fn(async () => ({
+      name: "default",
+      status: "connected",
+      tools: [],
+      close: async () => {},
+    })),
+  }
 })
 
 vi.mock("../config.js", () => ({
@@ -12,10 +21,13 @@ vi.mock("../config.js", () => ({
 
 vi.mock("../skills.js", () => ({
   scanSkills: vi.fn(async () => []),
+  materializeSkills: vi.fn(async () => []),
+  toSummaries: vi.fn(() => []),
 }))
 
 vi.mock("../tools/loader.js", () => ({
   loadToolDirectory: vi.fn(async () => []),
+  loadToolFiles: vi.fn(async () => []),
 }))
 
 import { createAgent } from "@zerone-agent/agent-sdk"

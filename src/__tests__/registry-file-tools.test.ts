@@ -3,7 +3,16 @@ import { AgentRegistry } from "../registry.js"
 
 vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
-  return { ...actual, createAgent: vi.fn() }
+  return {
+    ...actual,
+    createAgent: vi.fn(),
+    connectMCPServer: vi.fn(async () => ({
+      name: "default",
+      status: "connected",
+      tools: [],
+      close: async () => {},
+    })),
+  }
 })
 
 vi.mock("../config.js", () => ({
@@ -12,6 +21,8 @@ vi.mock("../config.js", () => ({
 
 vi.mock("../skills.js", () => ({
   scanSkills: vi.fn(async () => []),
+  materializeSkills: vi.fn(async () => []),
+  toSummaries: vi.fn(() => []),
 }))
 
 vi.mock("../tools/loader.js", () => ({
@@ -65,7 +76,7 @@ describe("AgentRegistry (file tools)", () => {
     expect(mockLoadToolFiles).toHaveBeenCalledWith(["/opt/zerone/tools/a.ts"])
   })
 
-  it("passes loaded file tools to createAgent as customTools", async () => {
+  it("passes loaded file tools to createAgent as agent.capabilities.customTools", async () => {
     const fileTool = { name: "say_hello", description: "hi" }
     mockLoadToolFiles.mockResolvedValue([fileTool as any])
     mockCreateAgent.mockReturnValue({ close: vi.fn() } as any)
@@ -77,8 +88,10 @@ describe("AgentRegistry (file tools)", () => {
     registry.create("agent-a")
 
     const opts = mockCreateAgent.mock.calls[0][0] as any
+    // Agent-local (#47): tools live in capabilities, no top-level customTools;
     // Read 防护工具随 fileTools 一并注入（同名接管内置 Read，issue #43）
-    expect(opts.customTools).toEqual([fileTool, expect.objectContaining({ name: "Read" })])
+    expect(opts.customTools).toBeUndefined()
+    expect(opts.agent.capabilities.customTools).toEqual([fileTool, expect.objectContaining({ name: "Read" })])
   })
 
   it("marks only the failing agent unavailable when tool loading throws", async () => {

@@ -245,4 +245,80 @@ describe("createRuntime lifecycle", () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
+
+  it("stop() still releases MCP connections when Phase 5 fails (#47 review)", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+      await host.start()
+
+      const registryMod = await import("../registry.js")
+      const closeAllSpy = vi.spyOn(registryMod.AgentRegistry.prototype, "closeAll")
+      const stopSpy = vi
+        .spyOn(host.cron!, "stop")
+        .mockRejectedValueOnce(new Error("cron stop failed"))
+
+      // Rejection contract unchanged: stop() still rejects...
+      await expect(host.stop()).rejects.toThrow("cron stop failed")
+      // ...but Phase 6 is NOT skipped — materialized MCP connections are
+      // released even on a failed shutdown.
+      expect(closeAllSpy).toHaveBeenCalledTimes(1)
+
+      stopSpy.mockRestore()
+      closeAllSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
+  it("startup rollback: construction failure after loadFromConfig closes the registry (#47)", async () => {
+    const configDir = writeConfigDir(false)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+
+      const registryMod = await import("../registry.js")
+      const closeAllSpy = vi.spyOn(registryMod.AgentRegistry.prototype, "closeAll")
+      const routerMod = await import("../router/index.js")
+      const createAppSpy = vi
+        .spyOn(routerMod, "createApp")
+        .mockImplementationOnce(() => {
+          throw new Error("router boom")
+        })
+
+      await expect(createRuntime(config, { configDir })).rejects.toThrow("router boom")
+      // Registry closeAll releases the runtime-owned MCP connections (#47 §3)
+      expect(closeAllSpy).toHaveBeenCalledTimes(1)
+
+      createAppSpy.mockRestore()
+      closeAllSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
+  it("startup rollback: cron.start() failure closes the registry before propagating (#47)", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+
+      const registryMod = await import("../registry.js")
+      const closeAllSpy = vi.spyOn(registryMod.AgentRegistry.prototype, "closeAll")
+      const startSpy = vi
+        .spyOn(host.cron!, "start")
+        .mockRejectedValueOnce(new Error("lock"))
+
+      await expect(host.start()).rejects.toThrow("lock")
+      expect(closeAllSpy).toHaveBeenCalledTimes(1)
+
+      startSpy.mockRestore()
+      closeAllSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
 })
