@@ -157,116 +157,32 @@ describe("McpConnectionManager", () => {
     })
   })
 
-  describe("SDK raw log suppression (#47 review: sanitized failures)", () => {
-    it("drops the SDK's raw [MCP] console.error lines during the connect window; other output passes through", async () => {
+  describe("process-global console contract (#51)", () => {
+    it("never modifies console.error during connects — host logger identity is preserved", async () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-      const rawLine =
-        '[MCP] Failed to connect to "db": secret-token-xyz in https://user:pass@host'
-      // SDK behavior (mcp/client.ts): the raw error is console.error'd
-      // BEFORE the error-status connection is returned.
+      let identityInsideConnect: unknown
       mockConnect.mockImplementationOnce(async () => {
-        console.error(rawLine)
-        console.error("unrelated noise")
+        // Captured INSIDE the connect window: with the old interception
+        // this was the runtime's filter wrapper, not the host logger.
+        identityInsideConnect = console.error
         return {
           name: "db",
           status: "error",
           tools: [],
-          error: new Error("secret-token-xyz"),
+          error: new Error("secret-token-xyz in https://user:pass@host"),
           close: async () => {},
-        }
+        } as never
       })
       const m = new McpConnectionManager()
       await expect(
         m.acquire("a", "db", { transport: "stdio", command: "node" }),
       ).rejects.toThrow('MCP server "db" failed to connect')
-
-      // The raw SDK line (with credentials) never reached the real logger.
-      const mcpCalls = errSpy.mock.calls.filter((c) =>
-        String(c[0]).startsWith("[MCP]"),
-      )
-      expect(mcpCalls).toHaveLength(0)
-      // Suppression is scoped: non-MCP output still flows.
-      expect(
-        errSpy.mock.calls.some((c) => String(c[0]) === "unrelated noise"),
-      ).toBe(true)
-      // And the filter is removed after the window.
-      expect(console.error).toBe(errSpy) // not the wrapper
-
-      errSpy.mockRestore()
-    })
-
-    it("concurrent connect windows leave no permanent filter and swallow nothing afterwards (#47 review r2)", async () => {
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-
-      // Staggered gates force a deterministic non-LIFO overlap: window A
-      // opens, window B opens, A closes first, B closes last.
-      let releaseA!: () => void
-      let releaseB!: () => void
-      const gateA = new Promise<void>((r) => { releaseA = r })
-      const gateB = new Promise<void>((r) => { releaseB = r })
-      mockConnect.mockImplementation(async (n: string) => {
-        await (n === "first" ? gateA : gateB)
-        return {
-          name: n,
-          status: "connected",
-          tools: [],
-          close: async () => {},
-        } as never
-      })
-
-      const m1 = new McpConnectionManager()
-      const m2 = new McpConnectionManager()
-      const p1 = m1.acquire("a", "first", { transport: "stdio", command: "x" })
-      const p2 = m2.acquire("b", "second", { transport: "stdio", command: "x" })
-      await new Promise((r) => setTimeout(r, 5))
-      releaseA()
-      await new Promise((r) => setTimeout(r, 5))
-      releaseB()
-      await Promise.all([p1, p2])
-
-      // No permanent filter: console.error is fully restored...
+      // SDK 3.0.2 logs sanitized fields only (server + stable errorType);
+      // the runtime must not wrap, replace, or filter the process-global
+      // logger at any point — before, during, or after the connect.
+      expect(identityInsideConnect).toBe(errSpy)
       expect(console.error).toBe(errSpy)
-      // ...and later [MCP] lines from anywhere are NOT swallowed by a
-      // stale wrapper.
-      console.error("[MCP] later line from elsewhere")
-      expect(
-        errSpy.mock.calls.some((c) => String(c[0]) === "[MCP] later line from elsewhere"),
-      ).toBe(true)
-
       errSpy.mockRestore()
-    })
-
-    it("never clobbers a logger installed by the host during the window (#47 review r3)", async () => {
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-      const hostLogger = vi.fn()
-      let release!: () => void
-      const gate = new Promise<void>((r) => { release = r })
-      mockConnect.mockImplementation(async () => {
-        await gate
-        // The host swaps in its own logger mid-window...
-        console.error = hostLogger as unknown as typeof console.error
-        return {
-          name: "db",
-          status: "connected",
-          tools: [],
-          close: async () => {},
-        } as never
-      })
-
-      const m = new McpConnectionManager()
-      const p = m.acquire("a", "db", { transport: "stdio", command: "node" })
-      await new Promise((r) => setTimeout(r, 5))
-      release()
-      await p
-
-      // ...and the window close must NOT restore the stale saved logger
-      // on top of it (the R3 P1: permanent override of host-installed
-      // loggers). Host logger stays in place, nothing leaks or rewraps.
-      expect(console.error).toBe(hostLogger)
-      expect(errSpy).not.toHaveBeenCalledAfter(hostLogger as never)
-
-      errSpy.mockRestore()
-      vi.restoreAllMocks()
     })
   })
 })

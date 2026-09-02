@@ -8,6 +8,12 @@
  * same connection, and released exactly once via closeAll() on startup
  * rollback / shutdown. Tool visibility remains per-agent: each entry's
  * capabilities receive the shared connection's tools independently.
+ *
+ * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.0.2
+ * (issue #51): connectMCPServer() logs only sanitized structured fields
+ * (server name + stable errorType) and never the raw Error.message, so the
+ * runtime does NOT intercept the process-global console. The full raw error
+ * still travels on MCPConnection.error for runtime-side diagnostics.
  */
 
 import { connectMCPServer, type MCPConnection } from "@zerone-agent/agent-sdk"
@@ -53,53 +59,6 @@ interface ManagedConnection {
   refs: Set<string>
 }
 
-/**
- * Scoped suppression of the SDK client's raw `[MCP] ...` console.error
- * lines (sdk mcp/client.ts prints the underlying error text — potentially
- * URLs, commands, or credentials — BEFORE the runtime can wrap it, so the
- * runtime's sanitized message alone cannot keep logs clean). We drop those
- * lines during the connect window; the runtime re-emits its own sanitized
- * failure. Other console.error output passes through untouched.
- *
- * Concurrency-safe by refcounting (review r2): the FIRST window installs
- * ONE shared filter and saves the real logger; the LAST window out restores
- * it — regardless of the order windows close. Overlapping windows (e.g.
- * concurrent Runtime loads) therefore never nest wrappers, never leak a
- * filter, and never swallow logs after the last window closes.
- */
-let suppressWindows = 0
-let realConsoleError: typeof console.error | undefined
-
-/** The single filter installed while ≥1 suppression window is open. */
-const sdkMcpLogFilter = (...args: unknown[]): void => {
-  if (typeof args[0] === "string" && args[0].startsWith("[MCP]")) return
-  realConsoleError!(...args)
-}
-
-function withSdkMcpLogSuppression<T>(fn: () => Promise<T>): Promise<T> {
-  suppressWindows++
-  if (suppressWindows === 1) {
-    realConsoleError = console.error
-    console.error = sdkMcpLogFilter
-  }
-  return fn().finally(() => {
-    suppressWindows--
-    if (suppressWindows === 0) {
-      // Identity-checked restore (review r3): if the host replaced
-      // console.error DURING the window, the current function is no longer
-      // ours — restoring would permanently override the host's new logger
-      // with our stale reference. Leave the host's logger untouched and
-      // disarm; the next window re-arms against whatever is installed
-      // then. In this degraded window the SDK's raw [MCP] lines may
-      // surface — host interference takes precedence over sanitization.
-      if (console.error === sdkMcpLogFilter) {
-        console.error = realConsoleError!
-      }
-      realConsoleError = undefined
-    }
-  })
-}
-
 export class McpConnectionManager {
   private byKey = new Map<string, ManagedConnection>()
 
@@ -122,9 +81,7 @@ export class McpConnectionManager {
       if (existing.conn.status === "connected") return existing.conn
       throw new McpConnectionError(name)
     }
-    const conn = await withSdkMcpLogSuppression(() =>
-      connectMCPServer(name, config as never),
-    )
+    const conn = await connectMCPServer(name, config as never)
     this.byKey.set(key, { conn, refs: new Set([entryId]) })
     if (conn.status !== "connected") throw new McpConnectionError(name)
     return conn

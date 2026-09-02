@@ -33,7 +33,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@zerone-agent/agent-sdk": "^3.0.0",
+    "@zerone-agent/agent-sdk": "^3.0.2",
     "busboy": "^1.6.0",
     "hono": "^4.7.0",
     "sharp": "^0.34.5",
