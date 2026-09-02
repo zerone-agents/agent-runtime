@@ -270,6 +270,20 @@ describe("RuntimeConfigSchema", () => {
         }),
       ).toThrow(/maxSessionTurns was renamed to maxSessionQueries/)
     })
+
+    it("safeParse returns { success: false } for the legacy key instead of throwing (#56 review r3)", () => {
+      const result = RuntimeConfigSchema.safeParse({
+        agents: [
+          { id: "assistant", description: "assistant", maxSessionTurns: 50 },
+        ],
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues[0]!.message).toContain(
+          "maxSessionTurns was renamed to maxSessionQueries",
+        )
+      }
+    })
   })
 })
 

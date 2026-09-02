@@ -96,14 +96,18 @@ const AgentDefinitionSchemaCore = z.object({
  * the clean schema parses (zod strip mode would otherwise silently drop
  * the unknown key, turning a configured session cap into unlimited).
  * Kept out of the schema itself so the exported AgentDefinition type and
- * the generated .d.ts expose only maxSessionQueries.
+ * the generated .d.ts expose only maxSessionQueries. Issues go through
+ * the standard ZodError path so `safeParse` returns `{ success: false }`
+ * instead of throwing (review r3).
  */
 const AgentDefinitionSchema = z.preprocess(
-  (input) => {
+  (input, ctx) => {
     if (typeof input === "object" && input !== null && "maxSessionTurns" in input) {
-      throw new Error(
-        "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
-      )
+      ctx.addIssue({
+        code: "custom",
+        message: "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
+      })
+      return z.NEVER
     }
     return input
   },
