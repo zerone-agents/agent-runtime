@@ -271,7 +271,10 @@ export class AgentRegistry {
       apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
       baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
       agent,
-      maxSessionTurns: def.maxSessionTurns,
+      // SDK 3.0.3 renamed its option to maxSessionQueries; the runtime's
+      // public config contract (agents.yaml / AgentDetail) keeps the
+      // name maxSessionTurns.
+      maxSessionQueries: def.maxSessionTurns,
       permissionMode: def.permissionMode,
       thinking: def.thinking as any,
       ...(subAgents ? { subAgents } : {}),

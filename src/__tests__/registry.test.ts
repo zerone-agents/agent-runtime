@@ -158,7 +158,7 @@ describe("AgentRegistry (factory)", () => {
       // pre-materialized by the runtime manager and flow into capabilities.
       expect(opts.mcpServers).toBeUndefined()
       // canonical config (transport→type) reached connectMCPServer —
-      // http unchanged; stdio carries the stderr-discard wrap (#54 r2)
+      // http unchanged; stdio carries the strict stderr policy (#51)
       expect(mockConnectMcp).toHaveBeenCalledWith("web", {
         type: "http",
         url: "https://example.com/mcp",
@@ -166,8 +166,9 @@ describe("AgentRegistry (factory)", () => {
       })
       expect(mockConnectMcp).toHaveBeenCalledWith("local", {
         type: "stdio",
-        command: "/bin/sh",
-        args: ["-c", 'exec "$0" "$@" 2>/dev/null', "node", "server.js"],
+        command: "node",
+        args: ["server.js"],
+        stderr: "ignore",
       })
     })
 
@@ -565,7 +566,7 @@ describe("AgentRegistry (factory)", () => {
       registry.create("test")
 
       expect(mockCreateAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ maxSessionTurns: 50 }),
+        expect.objectContaining({ maxSessionQueries: 50 }),
       )
     })
 
@@ -581,7 +582,7 @@ describe("AgentRegistry (factory)", () => {
       registry.create("test")
 
       expect(mockCreateAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ maxSessionTurns: undefined }),
+        expect.objectContaining({ maxSessionQueries: undefined }),
       )
     })
 
@@ -727,11 +728,11 @@ describe("AgentRegistry (factory)", () => {
         opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
       ).toEqual(["mcp__db__query"])
       // canonical config (transport→type) reached connectMCPServer, with
-      // the stdio stderr-discard wrap applied (#54 review r2)
+      // the strict stdio stderr policy injected (#51, SDK 3.0.3)
       expect(mockConnectMcp).toHaveBeenCalledWith("db", {
         type: "stdio",
-        command: "/bin/sh",
-        args: ["-c", 'exec "$0" "$@" 2>/dev/null', "node"],
+        command: "node",
+        stderr: "ignore",
       })
     })
 

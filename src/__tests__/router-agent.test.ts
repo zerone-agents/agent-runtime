@@ -109,7 +109,7 @@ describe("Agent Router (per-request)", () => {
 
       expect(mockQuery).toHaveBeenCalledWith(
         "hello",
-        expect.objectContaining({ maxSessionTurns: 20 })
+        expect.objectContaining({ maxSessionQueries: 20 })
       )
     })
 
@@ -139,7 +139,7 @@ describe("Agent Router (per-request)", () => {
 
       expect(mockQuery).toHaveBeenCalledWith(
         "hello",
-        expect.objectContaining({ includePartialMessages: true, maxSessionTurns: 15 })
+        expect.objectContaining({ includePartialMessages: true, maxSessionQueries: 15 })
       )
     })
 
@@ -172,7 +172,7 @@ describe("Agent Router (per-request)", () => {
 
       expect(mockPrompt).toHaveBeenCalledWith(
         "hello",
-        expect.objectContaining({ maxSessionTurns: 25 })
+        expect.objectContaining({ maxSessionQueries: 25 })
       )
     })
 
@@ -201,7 +201,7 @@ describe("Agent Router (per-request)", () => {
 
       expect(mockPrompt).toHaveBeenCalledWith(
         "hello",
-        expect.objectContaining({ maxSessionTurns: undefined })
+        expect.objectContaining({ maxSessionQueries: undefined })
       )
     })
 
@@ -368,7 +368,7 @@ describe("Agent Router (per-request)", () => {
       expect(body.text).toBe("Hello world")
       expect(body.sessionId).toBe("sess-new")
       expect(registry.create).toHaveBeenCalledWith("a1", "sess-old")
-      expect(agent.prompt).toHaveBeenCalledWith("hello", { maxSessionTurns: undefined })
+      expect(agent.prompt).toHaveBeenCalledWith("hello", { maxSessionQueries: undefined })
       expect(agent.close).toHaveBeenCalledOnce()
       expect(metrics.recordRun).toHaveBeenCalledWith("a1", { input_tokens: 10, output_tokens: 20 }, undefined)
     })
@@ -419,7 +419,7 @@ describe("Agent Router (per-request)", () => {
       })
       expect(res.status).toBe(200)
       expect(streamAgentResponse).toHaveBeenCalledOnce()
-      expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true, maxSessionTurns: undefined })
+      expect(agent.query).toHaveBeenCalledWith("hello", { includePartialMessages: true, maxSessionQueries: undefined })
       // New contract: agent.close is invoked by runsRegistry.markTerminal(),
       // which fires via the onTerminal callback (4th-arg options) at stream end.
       const opts = vi.mocked(streamAgentResponse).mock.calls[0][3]

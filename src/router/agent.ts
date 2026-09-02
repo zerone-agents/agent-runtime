@@ -202,7 +202,9 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      const agentStream = agent.query(agentInput, { maxSessionTurns })
+      // maxSessionQueries is the SDK 3.0.3 name; `maxSessionTurns` here is
+      // the runtime's public contract name (HTTP body / agents.yaml).
+      const agentStream = agent.query(agentInput, { maxSessionQueries: maxSessionTurns })
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
         explicitHint,
@@ -213,7 +215,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-raw") {
-      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionTurns })
+      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionQueries: maxSessionTurns })
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
@@ -226,7 +228,7 @@ export function createAgentRouter(
 
     // JSON blocking response
     try {
-      const result = await agent.prompt(agentInput, { maxSessionTurns })
+      const result = await agent.prompt(agentInput, { maxSessionQueries: maxSessionTurns })
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)

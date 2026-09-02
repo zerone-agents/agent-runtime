@@ -157,14 +157,17 @@ describe("McpConnectionManager", () => {
     })
   })
 
-  describe("process-global console contract (#51)", () => {
-    it("never modifies console.error during connects — host logger identity is preserved", async () => {
+  describe("process-global output object contract (#51)", () => {
+    it("never modifies console.error or process.stderr.write during connects — host identities are preserved", async () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
       let identityInsideConnect: unknown
+      let writeIdentityInsideConnect: unknown
       mockConnect.mockImplementationOnce(async () => {
         // Captured INSIDE the connect window: with the old interception
         // this was the runtime's filter wrapper, not the host logger.
         identityInsideConnect = console.error
+        writeIdentityInsideConnect = process.stderr.write
         return {
           name: "db",
           status: "error",
@@ -177,17 +180,20 @@ describe("McpConnectionManager", () => {
       await expect(
         m.acquire("a", "db", { transport: "stdio", command: "node" }),
       ).rejects.toThrow('MCP server "db" failed to connect')
-      // SDK 3.0.2 logs sanitized fields only (server + stable errorType);
-      // the runtime must not wrap, replace, or filter the process-global
-      // logger at any point — before, during, or after the connect.
+      // SDK 3.0.3 logs sanitized fields only (server + stable errorType);
+      // the runtime must not wrap, replace, or filter any process-global
+      // output object at any point — before, during, or after the connect.
       expect(identityInsideConnect).toBe(errSpy)
       expect(console.error).toBe(errSpy)
+      expect(writeIdentityInsideConnect).toBe(writeSpy)
+      expect(process.stderr.write).toBe(writeSpy)
       errSpy.mockRestore()
+      writeSpy.mockRestore()
     })
   })
 
-  describe("stdio stderr wrap (#54 review r2: fd-2 leak fix)", () => {
-    it("wraps stdio spawns through /bin/sh with stderr discarded at fd level", async () => {
+  describe("stdio stderr policy (SDK 3.0.3, #51 follow-up)", () => {
+    it("explicitly injects stderr: 'ignore' for stdio configs — never relies on the upstream 'inherit' default", async () => {
       mockConnect.mockResolvedValueOnce(okConn("db") as never)
       const m = new McpConnectionManager()
       await m.acquire("a", "db", {
@@ -196,14 +202,15 @@ describe("McpConnectionManager", () => {
         args: ["-y", "srv", "--token=x"],
         env: { K: "v" },
       })
-      // The config handed to the SDK must route the child's fd 2 to
-      // /dev/null: exec replaces the shell, so stdin/stdout pipes and
-      // signal semantics are unchanged; env/cwd pass through.
+      // The config handed to the SDK must carry an explicit strict stderr
+      // policy: the SDK default is "inherit", which lets the child write
+      // straight to the runtime's fd 2 past every JS-level sanitizer.
       expect(mockConnect.mock.calls[0]![1]).toEqual({
         type: "stdio",
-        command: "/bin/sh",
-        args: ["-c", 'exec "$0" "$@" 2>/dev/null', "npx", "-y", "srv", "--token=x"],
+        command: "npx",
+        args: ["-y", "srv", "--token=x"],
         env: { K: "v" },
+        stderr: "ignore",
       })
     })
 
@@ -216,32 +223,6 @@ describe("McpConnectionManager", () => {
         url: "http://x",
         headers: { A: "b" },
       })
-    })
-
-    it("ZERONE_MCP_STDERR_PASSTHROUGH=1 bypasses the wrap (operator debug hatch)", async () => {
-      process.env.ZERONE_MCP_STDERR_PASSTHROUGH = "1"
-      try {
-        mockConnect.mockResolvedValueOnce(okConn("db") as never)
-        const m = new McpConnectionManager()
-        await m.acquire("a", "db", { transport: "stdio", command: "node" })
-        expect(mockConnect.mock.calls[0]![1]).toEqual({ type: "stdio", command: "node" })
-      } finally {
-        delete process.env.ZERONE_MCP_STDERR_PASSTHROUGH
-      }
-    })
-
-    it("sharing keys stay stable across passthrough toggling (key computed pre-wrap)", async () => {
-      mockConnect.mockResolvedValueOnce(okConn("db") as never)
-      const m = new McpConnectionManager()
-      await m.acquire("a", "db", { transport: "stdio", command: "node" })
-      process.env.ZERONE_MCP_STDERR_PASSTHROUGH = "1"
-      try {
-        await m.acquire("b", "db", { transport: "stdio", command: "node" })
-      } finally {
-        delete process.env.ZERONE_MCP_STDERR_PASSTHROUGH
-      }
-      // Same raw config ⇒ same key ⇒ one connection, wrap on or off.
-      expect(mockConnect).toHaveBeenCalledTimes(1)
     })
   })
 })
