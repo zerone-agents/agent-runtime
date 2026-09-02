@@ -104,4 +104,95 @@ describe("McpConnectionManager", () => {
     expect(c1.close).toHaveBeenCalledTimes(1)
     expect(c2.close).toHaveBeenCalledTimes(1)
   })
+
+  describe("release (#47 review: per-entry rollback of partial materialization)", () => {
+    it("closes and removes an exclusive connection when its last ref goes away", async () => {
+      const c = okConn("solo")
+      mockConnect.mockResolvedValueOnce(c as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "solo", { transport: "stdio", command: "node" })
+      await m.release("a")
+      expect(c.close).toHaveBeenCalledTimes(1)
+      expect(m.describe("a")).toEqual([])
+    })
+
+    it("keeps a shared connection open while other entries still reference it", async () => {
+      const c = okConn("db")
+      mockConnect.mockResolvedValueOnce(c as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "db", { transport: "stdio", command: "node" })
+      await m.acquire("b", "db", { transport: "stdio", command: "node" })
+      await m.release("a")
+      expect(c.close).not.toHaveBeenCalled()
+      expect(m.describe("b")).toEqual([
+        { name: "db", status: "connected", shared: false },
+      ])
+      await m.release("b")
+      expect(c.close).toHaveBeenCalledTimes(1)
+    })
+
+    it("caches zero-ref error connections (no resources, shared failure, no retry storm)", async () => {
+      mockConnect.mockResolvedValueOnce({
+        name: "dead",
+        status: "error",
+        tools: [],
+        error: new Error("raw"),
+        close: vi.fn(),
+      } as never)
+      const m = new McpConnectionManager()
+      await expect(
+        m.acquire("a", "dead", { transport: "stdio", command: "x" }),
+      ).rejects.toThrow('MCP server "dead" failed to connect')
+      await m.release("a")
+      // Same config by another entry: still shared failure, no new attempt.
+      await expect(
+        m.acquire("b", "dead", { transport: "stdio", command: "x" }),
+      ).rejects.toThrow('MCP server "dead" failed to connect')
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+    })
+
+    it("release of an unknown entry is a no-op", async () => {
+      const m = new McpConnectionManager()
+      await expect(m.release("nobody")).resolves.toBeUndefined()
+    })
+  })
+
+  describe("SDK raw log suppression (#47 review: sanitized failures)", () => {
+    it("drops the SDK's raw [MCP] console.error lines during the connect window; other output passes through", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const rawLine =
+        '[MCP] Failed to connect to "db": secret-token-xyz in https://user:pass@host'
+      // SDK behavior (mcp/client.ts): the raw error is console.error'd
+      // BEFORE the error-status connection is returned.
+      mockConnect.mockImplementationOnce(async () => {
+        console.error(rawLine)
+        console.error("unrelated noise")
+        return {
+          name: "db",
+          status: "error",
+          tools: [],
+          error: new Error("secret-token-xyz"),
+          close: async () => {},
+        }
+      })
+      const m = new McpConnectionManager()
+      await expect(
+        m.acquire("a", "db", { transport: "stdio", command: "node" }),
+      ).rejects.toThrow('MCP server "db" failed to connect')
+
+      // The raw SDK line (with credentials) never reached the real logger.
+      const mcpCalls = errSpy.mock.calls.filter((c) =>
+        String(c[0]).startsWith("[MCP]"),
+      )
+      expect(mcpCalls).toHaveLength(0)
+      // Suppression is scoped: non-MCP output still flows.
+      expect(
+        errSpy.mock.calls.some((c) => String(c[0]) === "unrelated noise"),
+      ).toBe(true)
+      // And the filter is removed after the window.
+      expect(console.error).toBe(errSpy) // not the wrapper
+
+      errSpy.mockRestore()
+    })
+  })
 })

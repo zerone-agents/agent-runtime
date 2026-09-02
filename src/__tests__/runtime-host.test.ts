@@ -246,6 +246,33 @@ describe("createRuntime lifecycle", () => {
     }
   })
 
+  it("stop() still releases MCP connections when Phase 5 fails (#47 review)", async () => {
+    const configDir = writeConfigDir(true)
+    try {
+      const { loadYamlConfig } = await import("../config.js")
+      const config = loadYamlConfig(join(configDir, "agents.yaml"))
+      const host = await createRuntime(config, { configDir })
+      await host.start()
+
+      const registryMod = await import("../registry.js")
+      const closeAllSpy = vi.spyOn(registryMod.AgentRegistry.prototype, "closeAll")
+      const stopSpy = vi
+        .spyOn(host.cron!, "stop")
+        .mockRejectedValueOnce(new Error("cron stop failed"))
+
+      // Rejection contract unchanged: stop() still rejects...
+      await expect(host.stop()).rejects.toThrow("cron stop failed")
+      // ...but Phase 6 is NOT skipped — materialized MCP connections are
+      // released even on a failed shutdown.
+      expect(closeAllSpy).toHaveBeenCalledTimes(1)
+
+      stopSpy.mockRestore()
+      closeAllSpy.mockRestore()
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
   it("startup rollback: construction failure after loadFromConfig closes the registry (#47)", async () => {
     const configDir = writeConfigDir(false)
     try {

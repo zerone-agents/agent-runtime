@@ -94,114 +94,186 @@ export class AgentRegistry {
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
     // ------------------------------------------------------------------
-    // Phase 1: materialize each entry's Agent-local assets independently
-    // (issue #47 §2). A failure marks ONLY this entry unavailable; other
-    // entries and shared connections are unaffected.
+    // Transactional load (review finding): a reload must atomically replace
+    // the previous state — agents deleted from the config and their
+    // connections must not linger. All new state is built in fresh
+    // containers and committed in one swap; on an unexpected whole-load
+    // failure the partial new state is discarded and the previous registry
+    // stays intact.
     // ------------------------------------------------------------------
-    for (const def of config.agents) {
-      this.defs.set(def.id, def)
-      try {
-        const prompt = resolveSystemPrompt(def, configDir) ?? ""
+    const mcp = new McpConnectionManager()
+    const defs = new Map<string, AgentDefinition>()
+    const statuses = new Map<string, "ready" | "unavailable">()
+    const unavailableReasons = new Map<string, string>()
+    const materialized = new Map<string, MaterializedEntry>()
+    const scannedSkills = new Map<string, SkillSummary[]>()
+    const fileToolNames = new Map<string, string[]>()
 
-        // Connect this entry's OWN MCP servers via the runtime-owned
-        // manager (config-key dedup; failure throws a sanitized error).
-        const connectionTools: ToolDefinition[] = []
-        if (def.mcpServers) {
-          for (const [name, cfg] of Object.entries(def.mcpServers)) {
-            const conn = await this.mcp.acquire(
-              def.id,
-              name,
-              cfg as Record<string, unknown>,
-            )
-            connectionTools.push(...conn.tools)
+    try {
+      // ----------------------------------------------------------------
+      // Phase 1: materialize each entry's Agent-local assets independently
+      // (issue #47 §2). A failure marks ONLY this entry unavailable; other
+      // entries and shared connections are unaffected.
+      // ----------------------------------------------------------------
+      const failedEntryIds: string[] = []
+      for (const def of config.agents) {
+        defs.set(def.id, def)
+        try {
+          const entry = await this.materializeEntry(def, configDir, mcp)
+          materialized.set(def.id, entry)
+          const summaries = toSummaries(entry.skills)
+          if (summaries.length > 0) {
+            scannedSkills.set(def.id, summaries)
+          }
+          if (entry.customTools.length > 0) {
+            fileToolNames.set(def.id, entry.customTools.map((t) => t.name))
+          }
+          statuses.set(def.id, "ready")
+        } catch (err) {
+          const reason =
+            err instanceof McpConnectionError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "materialization failed"
+          statuses.set(def.id, "unavailable")
+          unavailableReasons.set(def.id, reason)
+          failedEntryIds.push(def.id)
+          console.error(`Failed to configure agent "${def.id}": ${reason}`)
+        }
+      }
+
+      // Roll back failed entries' connection refs AFTER the full pass, when
+      // every entry's refs are known: a connection shared with any
+      // successful entry survives; connections that served only failed
+      // entries are closed instead of leaking until shutdown (review
+      // finding).
+      for (const failedId of failedEntryIds) {
+        await mcp.release(failedId)
+      }
+
+      // ----------------------------------------------------------------
+      // Phase 2: assemble root CreateOpts. Mounted-child usability is
+      // phase-1 materialization success (materialized.has) — NEVER the
+      // mutable statuses — so assembly is independent of config order: an
+      // entry whose own root assembly failed can still be mounted by its
+      // parent (its phase-1 capabilities are complete; its own subagent
+      // references are irrelevant at delegation depth 1).
+      // ----------------------------------------------------------------
+      const createOpts = new Map<string, CreateOpts>()
+      for (const def of config.agents) {
+        if (statuses.get(def.id) !== "ready") continue
+        const own = materialized.get(def.id)!
+        let subAgents: Record<string, SdkAgentDefinition> | undefined
+        if (def.subagents?.length) {
+          subAgents = {}
+          let failed: string | undefined
+          for (const id of def.subagents) {
+            const child = materialized.get(id)
+            if (!child) {
+              failed = id
+              break
+            }
+            subAgents[id] = this.toSdkDefinition(child)
+          }
+          if (failed !== undefined) {
+            // Explicit failure — never silently mount an empty-capability child.
+            statuses.set(def.id, "unavailable")
+            unavailableReasons.set(def.id, `subagent "${failed}" unavailable`)
+            continue
           }
         }
+        createOpts.set(
+          def.id,
+          this.buildCreateOpts(def, this.toSdkDefinition(own), subAgents),
+        )
+      }
 
-        // Load this entry's file tools (relative paths anchor to configDir).
-        const customTools = def.customTools?.length
-          ? await loadToolFiles(def.customTools.map((p) => resolve(configDir, p)))
-          : []
+      // Commit: swap all state at once, then release the previous load's
+      // connections.
+      const previousMcp = this.mcp
+      this.mcp = mcp
+      this.defs = defs
+      this.statuses = statuses
+      this.unavailableReasons = unavailableReasons
+      this.materialized = materialized
+      this.scannedSkills = scannedSkills
+      this.fileToolNames = fileToolNames
+      this.createOpts = createOpts
+      await previousMcp.closeAll()
+    } catch (err) {
+      // Whole-load failure (defensive — per-entry errors are contained
+      // above): discard the partial new state, keep the previous registry.
+      await mcp.closeAll()
+      throw err
+    }
+  }
 
-        // Materialize the entry's full skill set — agent-local by
-        // construction; the SDK session-registry view never applies.
-        const skills = await materializeSkills({
-          cwd: process.cwd(),
-          settingSources: def.settingSources,
-          extraUserSkillDirs: def.extraUserSkillDirs,
-        })
+  /**
+   * Phase 1 helper: materialize ONE entry's Agent-local assets — resolved
+   * prompt (own datasets injected), MCP connectionTools via the manager,
+   * file customTools, and the full skill set. Throws on failure; state
+   * mutation is limited to the manager's connection refs (rolled back by
+   * the caller for failed entries).
+   */
+  private async materializeEntry(
+    def: AgentDefinition,
+    configDir: string,
+    mcp: McpConnectionManager,
+  ): Promise<MaterializedEntry> {
+    const prompt = resolveSystemPrompt(def, configDir) ?? ""
 
-        this.materialized.set(def.id, {
-          description: def.description,
-          prompt,
-          maxTurns: def.maxTurns,
-          connectionTools,
-          customTools,
-          skills,
-          allowedTools: def.allowedTools,
-          disallowedTools: def.disallowedTools,
-        })
-        const summaries = toSummaries(skills)
-        if (summaries.length > 0) {
-          this.scannedSkills.set(def.id, summaries)
-        }
-        if (customTools.length > 0) {
-          this.fileToolNames.set(def.id, customTools.map((t) => t.name))
-        }
-        this.statuses.set(def.id, "ready")
-      } catch (err) {
-        const reason =
-          err instanceof McpConnectionError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "materialization failed"
-        this.statuses.set(def.id, "unavailable")
-        this.unavailableReasons.set(def.id, reason)
-        console.error(`Failed to configure agent "${def.id}": ${reason}`)
+    // Connect this entry's OWN MCP servers via the runtime-owned manager
+    // (config-key dedup; failure throws a sanitized error).
+    const connectionTools: ToolDefinition[] = []
+    if (def.mcpServers) {
+      for (const [name, cfg] of Object.entries(def.mcpServers)) {
+        const conn = await mcp.acquire(def.id, name, cfg as Record<string, unknown>)
+        connectionTools.push(...conn.tools)
       }
     }
 
-    // ------------------------------------------------------------------
-    // Phase 2: assemble root CreateOpts. Mounted-child usability is
-    // phase-1 materialization success (materialized.has) — NEVER the
-    // mutable statuses — so assembly is independent of config order: an
-    // entry whose own root assembly failed can still be mounted by its
-    // parent (its phase-1 capabilities are complete; its own subagent
-    // references are irrelevant at delegation depth 1).
-    // ------------------------------------------------------------------
-    for (const def of config.agents) {
-      if (this.statuses.get(def.id) !== "ready") continue
-      const own = this.materialized.get(def.id)!
-      let subAgents: Record<string, SdkAgentDefinition> | undefined
-      if (def.subagents?.length) {
-        subAgents = {}
-        let failed: string | undefined
-        for (const id of def.subagents) {
-          const child = this.materialized.get(id)
-          if (!child) {
-            failed = id
-            break
-          }
-          subAgents[id] = this.toSdkDefinition(child)
-        }
-        if (failed !== undefined) {
-          // Explicit failure — never silently mount an empty-capability child.
-          this.statuses.set(def.id, "unavailable")
-          this.unavailableReasons.set(def.id, `subagent "${failed}" unavailable`)
-          continue
-        }
-      }
-      this.createOpts.set(def.id, {
-        model: process.env.ZERONE_AGENT_MODEL ?? def.model,
-        apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? (def.apiType as any) ?? undefined,
-        apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
-        baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
-        agent: this.toSdkDefinition(own),
-        maxSessionTurns: def.maxSessionTurns,
-        permissionMode: def.permissionMode,
-        thinking: def.thinking as any,
-        ...(subAgents ? { subAgents } : {}),
-      })
+    // Load this entry's file tools (relative paths anchor to configDir).
+    const customTools = def.customTools?.length
+      ? await loadToolFiles(def.customTools.map((p) => resolve(configDir, p)))
+      : []
+
+    // Materialize the entry's full skill set — agent-local by construction;
+    // the SDK session-registry view never applies.
+    const skills = await materializeSkills({
+      cwd: process.cwd(),
+      settingSources: def.settingSources,
+      extraUserSkillDirs: def.extraUserSkillDirs,
+    })
+
+    return {
+      description: def.description,
+      prompt,
+      maxTurns: def.maxTurns,
+      connectionTools,
+      customTools,
+      skills,
+      allowedTools: def.allowedTools,
+      disallowedTools: def.disallowedTools,
+    }
+  }
+
+  /** Phase 2 helper: root CreateOpts from the entry's SDK definition. */
+  private buildCreateOpts(
+    def: AgentDefinition,
+    agent: SdkAgentDefinition,
+    subAgents?: Record<string, SdkAgentDefinition>,
+  ): CreateOpts {
+    return {
+      model: process.env.ZERONE_AGENT_MODEL ?? def.model,
+      apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? (def.apiType as any) ?? undefined,
+      apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
+      baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
+      agent,
+      maxSessionTurns: def.maxSessionTurns,
+      permissionMode: def.permissionMode,
+      thinking: def.thinking as any,
+      ...(subAgents ? { subAgents } : {}),
     }
   }
 

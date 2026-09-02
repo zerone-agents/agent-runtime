@@ -813,6 +813,68 @@ describe("AgentRegistry (factory)", () => {
       expect(registry.getStatus("gp")).toBe("ready")
     })
 
+    it("releases the entry's already-acquired connections when materialization fails mid-way (#47 review)", async () => {
+      const goodClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) => {
+        if (n === "bad") {
+          return {
+            name: n,
+            status: "error",
+            tools: [],
+            error: new Error("down"),
+            close: async () => {},
+          }
+        }
+        return { name: n, status: "connected", tools: [], close: goodClose }
+      })
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          {
+            id: "two-servers",
+            model: "gpt-4",
+            mcpServers: {
+              good: { transport: "stdio", command: "ok" },
+              bad: { transport: "stdio", command: "nope" },
+            },
+          },
+          { id: "sharer", model: "gpt-4", mcpServers: { good: { transport: "stdio", command: "ok" } } },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("two-servers")).toBe("unavailable")
+      // "good" still serves the other entry — NOT closed.
+      expect(goodClose).not.toHaveBeenCalled()
+      expect(registry.getStatus("sharer")).toBe("ready")
+
+      // Now a failing entry whose "good" connection is exclusive.
+      const soloClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) => {
+        if (n === "bad2") {
+          return { name: n, status: "error", tools: [], error: new Error("down"), close: async () => {} }
+        }
+        return { name: n, status: "connected", tools: [], close: soloClose }
+      })
+      const registry2 = new AgentRegistry()
+      await registry2.loadFromConfig(
+        makeConfig([
+          {
+            id: "exclusive",
+            model: "gpt-4",
+            mcpServers: {
+              good2: { transport: "stdio", command: "solo" },
+              bad2: { transport: "stdio", command: "nope" },
+            },
+          },
+        ]),
+        "/tmp",
+      )
+      expect(registry2.getStatus("exclusive")).toBe("unavailable")
+      // Exclusive connection rolled back with the failed entry — not leaked
+      // until shutdown.
+      expect(soloClose).toHaveBeenCalledTimes(1)
+    })
+
     it("closes all managed MCP connections on closeAll", async () => {
       const close = vi.fn(async () => {})
       mockConnectMcp.mockResolvedValue({
@@ -831,6 +893,48 @@ describe("AgentRegistry (factory)", () => {
       )
       await registry.closeAll()
       expect(close).toHaveBeenCalledTimes(1) // 共享连接只关一次
+    })
+
+    it("reload atomically replaces state: removed agents and stale connections are gone (#47 review)", async () => {
+      const oldClose = vi.fn(async () => {})
+      const newClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) =>
+        ({
+          name: n,
+          status: "connected",
+          tools: [{ name: `mcp__${n}__tool`, execute: vi.fn() }],
+          close: n === "oldSrv" ? oldClose : newClose,
+        }) as never)
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "gone", model: "gpt-4", mcpServers: { oldSrv: { transport: "stdio", command: "old" } } },
+          { id: "stays", model: "gpt-4" },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("gone")).toBe("ready")
+
+      // Reload without "gone": its agent entry AND its exclusive connection
+      // must not linger.
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "stays", model: "gpt-4", mcpServers: { newSrv: { transport: "stdio", command: "new" } } },
+        ]),
+        "/tmp",
+      )
+
+      expect(registry.getStatus("gone")).toBe("not_found")
+      expect(registry.getDetail("gone")).toBeNull()
+      expect(registry.list().map((a) => a.id)).toEqual(["stays"])
+      expect(oldClose).toHaveBeenCalledTimes(1) // stale connection released
+      expect(newClose).not.toHaveBeenCalled() // live connection intact
+
+      registry.create("stays")
+      const opts = mockCreateAgent.mock.calls.at(-1)![0] as any
+      expect(
+        opts.agent.capabilities.connectionTools.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__newSrv__tool"])
     })
   })
 })

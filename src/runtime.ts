@@ -168,10 +168,25 @@ export async function createRuntime(
             // bounded by drainMs, independent of how long this takes.
             await shutdownGate.drained()
             // Phase 5: Run cleanup joins the already-running Cron shutdown.
-            await Promise.all([runs.finishCleanup(), ...(cronStop ? [cronStop] : [])])
+            // A Phase-5 failure must NOT skip Phase 6 (review): connections
+            // are released either way, then the original error propagates.
+            let phase5Error: unknown
+            let phase5Failed = false
+            try {
+              await Promise.all([runs.finishCleanup(), ...(cronStop ? [cronStop] : [])])
+            } catch (err) {
+              phase5Error = err
+              phase5Failed = true
+            }
             // Phase 6: registry cleanup — releases runtime-owned MCP
-            // connections (#47 §3).
-            await agents.closeAll()
+            // connections (#47 §3). Runs even after a failed Phase 5.
+            try {
+              await agents.closeAll()
+            } catch (cleanupErr) {
+              if (!phase5Failed) throw cleanupErr
+              // Phase 5 already failing: prefer the original error.
+            }
+            if (phase5Failed) throw phase5Error
           })()
         }
         return stopPromise

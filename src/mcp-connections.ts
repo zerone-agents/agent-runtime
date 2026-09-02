@@ -53,6 +53,29 @@ interface ManagedConnection {
   refs: Set<string>
 }
 
+/**
+ * Scoped suppression of the SDK client's raw `[MCP] ...` console.error
+ * lines (sdk mcp/client.ts prints the underlying error text — potentially
+ * URLs, commands, or credentials — BEFORE the runtime can wrap it, so the
+ * runtime's sanitized message alone cannot keep logs clean). We drop those
+ * lines during the connect window; the runtime re-emits its own sanitized
+ * failure. Other console.error output passes through untouched. Assumes
+ * connects are not concurrent (the registry loads entries sequentially);
+ * the conditional restore keeps an overlapping window from unwinding the
+ * wrong filter.
+ */
+function withSdkMcpLogSuppression<T>(fn: () => Promise<T>): Promise<T> {
+  const original = console.error
+  const filtered = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith("[MCP]")) return
+    original(...args)
+  }
+  console.error = filtered as typeof console.error
+  return fn().finally(() => {
+    if (console.error === filtered) console.error = original
+  })
+}
+
 export class McpConnectionManager {
   private byKey = new Map<string, ManagedConnection>()
 
@@ -75,7 +98,9 @@ export class McpConnectionManager {
       if (existing.conn.status === "connected") return existing.conn
       throw new McpConnectionError(name)
     }
-    const conn = await connectMCPServer(name, config as never)
+    const conn = await withSdkMcpLogSuppression(() =>
+      connectMCPServer(name, config as never),
+    )
     this.byKey.set(key, { conn, refs: new Set([entryId]) })
     if (conn.status !== "connected") throw new McpConnectionError(name)
     return conn
@@ -90,6 +115,34 @@ export class McpConnectionManager {
         status: m.conn.status,
         shared: m.refs.size > 1,
       }))
+  }
+
+  /**
+   * Roll back one entry's references (review finding: a partially failed
+   * materialization must not leave exclusive connections open until
+   * shutdown). Zero-ref CONNECTED connections are closed and dropped;
+   * zero-ref ERROR connections stay cached — they hold no live resources
+   * and keep failure shared, so N entries pointing at a dead server do not
+   * retry N times.
+   */
+  async release(entryId: string): Promise<void> {
+    const toClose: MCPConnection[] = []
+    for (const [key, m] of this.byKey) {
+      if (!m.refs.delete(entryId)) continue
+      if (m.refs.size === 0 && m.conn.status === "connected") {
+        toClose.push(m.conn)
+        this.byKey.delete(key)
+      }
+    }
+    await Promise.all(
+      toClose.map(async (conn) => {
+        try {
+          await conn.close()
+        } catch {
+          // Best-effort release: never block teardown.
+        }
+      }),
+    )
   }
 
   /** Release every managed connection exactly once; idempotent and best-effort. */
