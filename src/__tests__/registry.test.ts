@@ -571,7 +571,7 @@ describe("AgentRegistry (factory)", () => {
       mockCreateAgent.mockReturnValue(mockAgent as any)
     })
 
-    it("materializes subAgents from id references with 5-field mapping", async () => {
+    it("materializes subAgents from id references with policy in capabilities", async () => {
       const config = makeConfig([
         { id: "parent", description: "coordinator", model: "gpt-4", subagents: ["coder"] },
         {
@@ -593,9 +593,11 @@ describe("AgentRegistry (factory)", () => {
             coder: {
               description: "writes code",
               prompt: "test-prompt",
-              allowedTools: ["Read", "Write"],
-              disallowedTools: ["Bash"],
               maxTurns: 30,
+              capabilities: {
+                allowedTools: ["Read", "Write"],
+                disallowedTools: ["Bash"],
+              },
             },
           },
         }),

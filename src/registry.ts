@@ -37,9 +37,11 @@ function buildSubAgents(
     result[id] = {
       description: sub.description,
       prompt: resolveSystemPrompt(sub, configDir) ?? "",
-      allowedTools: sub.allowedTools,
-      disallowedTools: sub.disallowedTools,
       maxTurns: sub.maxTurns,
+      capabilities: {
+        ...(sub.allowedTools ? { allowedTools: sub.allowedTools } : {}),
+        ...(sub.disallowedTools ? { disallowedTools: sub.disallowedTools } : {}),
+      },
     }
   }
   return result
@@ -147,9 +149,11 @@ export class AgentRegistry {
           agent: {
             description: def.description,
             prompt: systemPrompt ?? "",
-            allowedTools: def.allowedTools,
-            disallowedTools: def.disallowedTools,
             maxTurns: def.maxTurns,
+            capabilities: {
+              ...(def.allowedTools ? { allowedTools: def.allowedTools } : {}),
+              ...(def.disallowedTools ? { disallowedTools: def.disallowedTools } : {}),
+            },
           },
           maxSessionTurns: def.maxSessionTurns,
           permissionMode: def.permissionMode,
