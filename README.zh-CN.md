@@ -149,7 +149,7 @@ agents:
     model: "claude-sonnet-4-6"
     systemPromptFile: "./prompts/researcher.md"
     maxTurns: 10
-    maxSessionTurns: 50
+    maxSessionQueries: 50
     allowedTools:
       - WebFetch
       - WebSearch
@@ -183,7 +183,7 @@ agents:
 | `systemPrompt` | 否 | — | 内联 system prompt |
 | `systemPromptFile` | 否 | — | `.md` 文件路径（相对配置目录） |
 | `maxTurns` | 否 | `10` | agent 循环最大轮数 |
-| `maxSessionTurns` | 否 | 不限 | 发送给 LLM 的最大对话轮数（上下文窗口） |
+| `maxSessionQueries` | 否 | 不限 | 发送给 LLM 的最大对话轮数（上下文窗口） |
 | `allowedTools` | 否 | 全部工具 | 工具名白名单 |
 | `disallowedTools` | 否 | — | 工具名黑名单 |
 | `settingSources` | 否 | — | 扫描哪些 skill 目录：`user`（~/.openagent/skills/）、`project`（<cwd>/.openagent/skills/）、`local`（无操作）。扫描到的 skill 全部暴露——无白名单 |

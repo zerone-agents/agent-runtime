@@ -57,7 +57,7 @@ export function createAgentRouter(
       return c.json({ error: "Invalid request: message is required" }, 400)
     }
 
-    const { message, sessionId, stream, maxSessionTurns, runId: callerRunId } = body
+    const { message, sessionId, stream, maxSessionQueries, runId: callerRunId } = body
 
     const status = registry.getStatus(agentId)
     if (status === "not_found") {
@@ -202,9 +202,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      // maxSessionQueries is the SDK 3.1.0 name; `maxSessionTurns` here is
-      // the runtime's public contract name (HTTP body / agents.yaml).
-      const agentStream = agent.query(agentInput, { maxSessionQueries: maxSessionTurns })
+      const agentStream = agent.query(agentInput, { maxSessionQueries })
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
         explicitHint,
@@ -215,7 +213,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-raw") {
-      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionQueries: maxSessionTurns })
+      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionQueries })
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
@@ -228,7 +226,7 @@ export function createAgentRouter(
 
     // JSON blocking response
     try {
-      const result = await agent.prompt(agentInput, { maxSessionQueries: maxSessionTurns })
+      const result = await agent.prompt(agentInput, { maxSessionQueries })
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)

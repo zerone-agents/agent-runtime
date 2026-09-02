@@ -552,14 +552,14 @@ describe("AgentRegistry (factory)", () => {
     })
   })
 
-  describe("maxSessionTurns", () => {
-    it("passes maxSessionTurns to createAgent when configured", async () => {
+  describe("maxSessionQueries", () => {
+    it("passes maxSessionQueries to createAgent when configured", async () => {
       const registry = new AgentRegistry()
       const config = makeConfig([{
         id: "test",
         model: "claude-sonnet-4-6",
         maxTurns: 10,
-        maxSessionTurns: 50,
+        maxSessionQueries: 50,
       }])
 
       await registry.loadFromConfig(config, "/tmp")
@@ -570,7 +570,7 @@ describe("AgentRegistry (factory)", () => {
       )
     })
 
-    it("passes undefined maxSessionTurns when not configured", async () => {
+    it("passes undefined maxSessionQueries when not configured", async () => {
       const registry = new AgentRegistry()
       const config = makeConfig([{
         id: "test",
@@ -586,22 +586,22 @@ describe("AgentRegistry (factory)", () => {
       )
     })
 
-    it("includes maxSessionTurns in getDetail when configured", async () => {
+    it("includes maxSessionQueries in getDetail when configured", async () => {
       const registry = new AgentRegistry()
       const config = makeConfig([{
         id: "test",
         model: "claude-sonnet-4-6",
         maxTurns: 10,
-        maxSessionTurns: 50,
+        maxSessionQueries: 50,
       }])
 
       await registry.loadFromConfig(config, "/tmp")
       const detail = registry.getDetail("test")
 
-      expect(detail?.maxSessionTurns).toBe(50)
+      expect(detail?.maxSessionQueries).toBe(50)
     })
 
-    it("omits maxSessionTurns from getDetail when not configured", async () => {
+    it("omits maxSessionQueries from getDetail when not configured", async () => {
       const registry = new AgentRegistry()
       const config = makeConfig([{
         id: "test",
@@ -612,8 +612,8 @@ describe("AgentRegistry (factory)", () => {
       await registry.loadFromConfig(config, "/tmp")
       const detail = registry.getDetail("test")
 
-      expect(detail?.maxSessionTurns).toBeUndefined()
-      expect(detail).not.toHaveProperty("maxSessionTurns")
+      expect(detail?.maxSessionQueries).toBeUndefined()
+      expect(detail).not.toHaveProperty("maxSessionQueries")
     })
   })
 

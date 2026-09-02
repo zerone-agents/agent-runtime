@@ -73,7 +73,7 @@ const AgentDefinitionSchema = z.object({
   systemPrompt: z.string().optional(),
   systemPromptFile: z.string().optional(),
   maxTurns: z.number().default(10),
-  maxSessionTurns: z.number().optional(),
+  maxSessionQueries: z.number().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project"])).optional(),

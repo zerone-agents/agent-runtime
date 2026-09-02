@@ -82,8 +82,8 @@ describe("Agent Router (per-request)", () => {
     })
   })
 
-  describe("maxSessionTurns parameter", () => {
-    it("passes maxSessionTurns to agent.query in blocking mode", async () => {
+  describe("maxSessionQueries parameter", () => {
+    it("passes maxSessionQueries to agent.query in blocking mode", async () => {
       const mockQuery = vi.fn().mockReturnValue(async function* () {
         yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
       })
@@ -103,7 +103,7 @@ describe("Agent Router (per-request)", () => {
         body: JSON.stringify({
           message: "hello",
           stream: "block",
-          maxSessionTurns: 20,
+          maxSessionQueries: 20,
         }),
       })
 
@@ -113,7 +113,7 @@ describe("Agent Router (per-request)", () => {
       )
     })
 
-    it("passes maxSessionTurns to agent.query in SSE mode", async () => {
+    it("passes maxSessionQueries to agent.query in SSE mode", async () => {
       const mockQuery = vi.fn().mockReturnValue(async function* () {
         yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
       })
@@ -133,7 +133,7 @@ describe("Agent Router (per-request)", () => {
         body: JSON.stringify({
           message: "hello",
           stream: true,
-          maxSessionTurns: 15,
+          maxSessionQueries: 15,
         }),
       })
 
@@ -143,7 +143,7 @@ describe("Agent Router (per-request)", () => {
       )
     })
 
-    it("passes maxSessionTurns to agent.prompt in sync mode", async () => {
+    it("passes maxSessionQueries to agent.prompt in sync mode", async () => {
       const mockPrompt = vi.fn().mockResolvedValue({
         text: "response",
         usage: {},
@@ -166,7 +166,7 @@ describe("Agent Router (per-request)", () => {
         body: JSON.stringify({
           message: "hello",
           stream: false,
-          maxSessionTurns: 25,
+          maxSessionQueries: 25,
         }),
       })
 
@@ -176,7 +176,7 @@ describe("Agent Router (per-request)", () => {
       )
     })
 
-    it("passes undefined maxSessionTurns when not provided", async () => {
+    it("passes undefined maxSessionQueries when not provided", async () => {
       const mockPrompt = vi.fn().mockResolvedValue({
         text: "response",
         usage: {},
