@@ -6,6 +6,7 @@
  * 扁平目录，生命周期跟随容器。
  */
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { open, mkdir, rm, realpath, lstat, type FileHandle } from "node:fs/promises"
 import { join } from "node:path"
 import { Readable } from "node:stream"
@@ -126,9 +127,20 @@ export async function processUpload(
     throw new Error(`${UPLOADS_DIR} must be a real directory inside the working directory`)
   }
 
-  // 受信目录 inode 钉住（review PR #48 R3）：后续探针与 canonical 复核都
-  // 与该 dev/ino 比对——路径换链不改变已打开对象的身份。
-  const pinned = await lstat(realUploadsDir)
+  // 固定目录句柄（review PR #48 R3 复盘）：Linux 下 create 与 cleanup 全部经
+  // /proc/self/fd/<dirFd>/ 解析——内核 fd 表不受词法路径换链影响（实证：
+  // 换链后经 fd 路径仍可读到原目录内容、inode 比对一致、unlink 不触外部）。
+  // 非 Linux 回退到 resolved 词法路径 + bracket 复检（残余窗口见 PR 说明）。
+  const dirHandle = await open(realUploadsDir, "r")
+  const pinned = await dirHandle.stat() // fd 自身 stat：受信目录身份
+  const pathSt = await lstat(realUploadsDir).catch(() => null)
+  if (!pathSt || pathSt.isSymbolicLink() || pathSt.dev !== pinned.dev || pathSt.ino !== pinned.ino) {
+    await dirHandle.close().catch(() => {})
+    throw new Error("uploads directory changed — possible symlink swap")
+  }
+  const trustedDir = existsSync("/proc/self/fd")
+    ? `/proc/self/fd/${dirHandle.fd}`
+    : realUploadsDir
 
   interface CreatedFile {
     canonicalPath: string
@@ -160,6 +172,7 @@ export async function processUpload(
       await unlinkIfNodeMatches(f.canonicalPath, f.dev, f.ino)
     }
     created.length = 0
+    await dirHandle.close().catch(() => {})
   }
 
   let bb: ReturnType<typeof busboy>
@@ -182,7 +195,13 @@ export async function processUpload(
     const fail = (err: unknown): void => {
       if (settled) return
       settled = true
-      bb.destroy()
+      try {
+        bb.destroy()
+      } catch {
+        // busboy Multipart._destroy 在未完成解析被销毁时会经 checkEndState
+        // 同步抛 "Unexpected end of file"——已在失败路径，吞掉以免逃逸为
+        // uncaught exception（vitest 会以非零码中断整个测试运行）
+      }
       source.destroy()
       void cleanup().then(
         () => reject(err),
@@ -193,6 +212,11 @@ export async function processUpload(
     let work: Promise<void> = Promise.resolve()
 
     bb.on("file", (_fieldName, stream, info) => {
+      // busboy 被销毁时会向进行中的 part 流注入 error（checkEndState 的
+      // "Unexpected end of file"）——若此刻无人迭代该流（如探针在 for-await
+      // 前抛错），无监听器的 error 会逃逸为 uncaught exception。
+      // no-op 监听仅阻断逃逸；迭代中的错误仍由 for-await 正常抛出。
+      stream.on("error", () => {})
       work = work.then(() =>
         (async () => {
           if (settled) return
@@ -203,18 +227,26 @@ export async function processUpload(
               `Too many files: limit is ${MAX_FILE_COUNT}`,
             )
           }
-          // 探针：可变路径此刻仍解析到初检钉住的受信目录（dev/ino 一致）
-          const dirSt = await lstat(dir).catch(() => null)
+          // 探针：canonical 路径此刻仍钉在受信目录（dev/ino 一致）
+          const dirSt = await lstat(realUploadsDir).catch(() => null)
           if (dirSt === null || dirSt.dev !== pinned.dev || dirSt.ino !== pinned.ino) {
             throw new Error("uploads directory changed — possible symlink swap")
           }
-          const dest = await allocateDestination(dir, info.filename)
-          // canonical inode 复核（review PR #48 R3）：open 发生在可变路径上，
-          // 打开后立即以受信 canonical 路径再开一次并比对 dev/ino——不一致
-          // 或不可达即落点逃逸；在任何字节写入之前中止，逃逸文件清零后
-          // 仅在 inode 匹配时 unlink（不误删换链目标里的他人文件）。
+          const dest = await allocateDestination(trustedDir, info.filename)
           const fst = await dest.handle.stat()
-          const canonicalPath = join(realUploadsDir, dest.name)
+          // bracket 复检：open 后再核一次 canonical 路径——探针→open 窗口内
+          // 的换链在此抓住（Linux 下 create 本身经 fd 表，数据不会逃逸）
+          const bracketSt = await lstat(realUploadsDir).catch(() => null)
+          if (bracketSt === null || bracketSt.dev !== pinned.dev || bracketSt.ino !== pinned.ino) {
+            await dest.handle.truncate(0).catch(() => {})
+            await dest.handle.close().catch(() => {})
+            await unlinkIfNodeMatches(dest.absPath, fst.dev, fst.ino)
+            throw new Error("uploads directory changed — possible symlink swap")
+          }
+          // canonical inode 复核：经受信路径（Linux=内核 fd 表，免疫换链）
+          // 再开一次并比对 dev/ino——不一致或不可达即落点逃逸；在任何
+          // 字节写入之前中止，逃逸文件清零后仅在 inode 匹配时 unlink。
+          const canonicalPath = join(trustedDir, dest.name)
           const verify = await open(canonicalPath, "r").catch(() => null)
           let contained = false
           if (verify !== null) {
@@ -278,8 +310,14 @@ export async function processUpload(
           if (metas.length === 0) {
             throw new UploadError("invalid_multipart", "No files in request")
           }
+          // 终态一致性：请求全程 canonical 路径必须钉在受信 inode 上
+          const endSt = await lstat(realUploadsDir).catch(() => null)
+          if (!endSt || endSt.isSymbolicLink() || endSt.dev !== pinned.dev || endSt.ino !== pinned.ino) {
+            throw new Error("uploads directory changed during upload — possible symlink swap")
+          }
           // 成功路径：统一关闭本请求持有的全部句柄
           await Promise.all(created.map((f) => f.handle.close().catch(() => {})))
+          await dirHandle.close().catch(() => {})
           resolve(metas)
         })
         .catch(fail)
