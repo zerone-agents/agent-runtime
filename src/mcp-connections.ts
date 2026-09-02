@@ -85,7 +85,16 @@ function withSdkMcpLogSuppression<T>(fn: () => Promise<T>): Promise<T> {
   return fn().finally(() => {
     suppressWindows--
     if (suppressWindows === 0) {
-      console.error = realConsoleError!
+      // Identity-checked restore (review r3): if the host replaced
+      // console.error DURING the window, the current function is no longer
+      // ours — restoring would permanently override the host's new logger
+      // with our stale reference. Leave the host's logger untouched and
+      // disarm; the next window re-arms against whatever is installed
+      // then. In this degraded window the SDK's raw [MCP] lines may
+      // surface — host interference takes precedence over sanitization.
+      if (console.error === sdkMcpLogFilter) {
+        console.error = realConsoleError!
+      }
       realConsoleError = undefined
     }
   })

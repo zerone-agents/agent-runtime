@@ -235,5 +235,38 @@ describe("McpConnectionManager", () => {
 
       errSpy.mockRestore()
     })
+
+    it("never clobbers a logger installed by the host during the window (#47 review r3)", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      const hostLogger = vi.fn()
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      mockConnect.mockImplementation(async () => {
+        await gate
+        // The host swaps in its own logger mid-window...
+        console.error = hostLogger as unknown as typeof console.error
+        return {
+          name: "db",
+          status: "connected",
+          tools: [],
+          close: async () => {},
+        } as never
+      })
+
+      const m = new McpConnectionManager()
+      const p = m.acquire("a", "db", { transport: "stdio", command: "node" })
+      await new Promise((r) => setTimeout(r, 5))
+      release()
+      await p
+
+      // ...and the window close must NOT restore the stale saved logger
+      // on top of it (the R3 P1: permanent override of host-installed
+      // loggers). Host logger stays in place, nothing leaks or rewraps.
+      expect(console.error).toBe(hostLogger)
+      expect(errSpy).not.toHaveBeenCalledAfter(hostLogger as never)
+
+      errSpy.mockRestore()
+      vi.restoreAllMocks()
+    })
   })
 })
