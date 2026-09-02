@@ -194,5 +194,46 @@ describe("McpConnectionManager", () => {
 
       errSpy.mockRestore()
     })
+
+    it("concurrent connect windows leave no permanent filter and swallow nothing afterwards (#47 review r2)", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+      // Staggered gates force a deterministic non-LIFO overlap: window A
+      // opens, window B opens, A closes first, B closes last.
+      let releaseA!: () => void
+      let releaseB!: () => void
+      const gateA = new Promise<void>((r) => { releaseA = r })
+      const gateB = new Promise<void>((r) => { releaseB = r })
+      mockConnect.mockImplementation(async (n: string) => {
+        await (n === "first" ? gateA : gateB)
+        return {
+          name: n,
+          status: "connected",
+          tools: [],
+          close: async () => {},
+        } as never
+      })
+
+      const m1 = new McpConnectionManager()
+      const m2 = new McpConnectionManager()
+      const p1 = m1.acquire("a", "first", { transport: "stdio", command: "x" })
+      const p2 = m2.acquire("b", "second", { transport: "stdio", command: "x" })
+      await new Promise((r) => setTimeout(r, 5))
+      releaseA()
+      await new Promise((r) => setTimeout(r, 5))
+      releaseB()
+      await Promise.all([p1, p2])
+
+      // No permanent filter: console.error is fully restored...
+      expect(console.error).toBe(errSpy)
+      // ...and later [MCP] lines from anywhere are NOT swallowed by a
+      // stale wrapper.
+      console.error("[MCP] later line from elsewhere")
+      expect(
+        errSpy.mock.calls.some((c) => String(c[0]) === "[MCP] later line from elsewhere"),
+      ).toBe(true)
+
+      errSpy.mockRestore()
+    })
   })
 })

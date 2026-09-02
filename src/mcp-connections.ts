@@ -59,20 +59,35 @@ interface ManagedConnection {
  * URLs, commands, or credentials — BEFORE the runtime can wrap it, so the
  * runtime's sanitized message alone cannot keep logs clean). We drop those
  * lines during the connect window; the runtime re-emits its own sanitized
- * failure. Other console.error output passes through untouched. Assumes
- * connects are not concurrent (the registry loads entries sequentially);
- * the conditional restore keeps an overlapping window from unwinding the
- * wrong filter.
+ * failure. Other console.error output passes through untouched.
+ *
+ * Concurrency-safe by refcounting (review r2): the FIRST window installs
+ * ONE shared filter and saves the real logger; the LAST window out restores
+ * it — regardless of the order windows close. Overlapping windows (e.g.
+ * concurrent Runtime loads) therefore never nest wrappers, never leak a
+ * filter, and never swallow logs after the last window closes.
  */
+let suppressWindows = 0
+let realConsoleError: typeof console.error | undefined
+
+/** The single filter installed while ≥1 suppression window is open. */
+const sdkMcpLogFilter = (...args: unknown[]): void => {
+  if (typeof args[0] === "string" && args[0].startsWith("[MCP]")) return
+  realConsoleError!(...args)
+}
+
 function withSdkMcpLogSuppression<T>(fn: () => Promise<T>): Promise<T> {
-  const original = console.error
-  const filtered = (...args: unknown[]) => {
-    if (typeof args[0] === "string" && args[0].startsWith("[MCP]")) return
-    original(...args)
+  suppressWindows++
+  if (suppressWindows === 1) {
+    realConsoleError = console.error
+    console.error = sdkMcpLogFilter
   }
-  console.error = filtered as typeof console.error
   return fn().finally(() => {
-    if (console.error === filtered) console.error = original
+    suppressWindows--
+    if (suppressWindows === 0) {
+      console.error = realConsoleError!
+      realConsoleError = undefined
+    }
   })
 }
 
