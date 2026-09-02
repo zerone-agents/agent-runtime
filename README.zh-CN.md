@@ -327,7 +327,7 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"请总结这份报告","attachments":[{"id":"…","name":"report.pdf","mime":"application/pdf","size":123,"path":".zerone-uploads/report.pdf"}]}'
 ```
 
-可解码的 JPEG/PNG/GIF/WebP 直接进入模型 image block（长边超过 1536px 时等比缩放，需转码时 JPEG quality 85，原文件不被修改）；SVG、伪图片及其他格式以安全的工作区相对路径交给 Agent 用 `Read` 工具读取。每次 Run 都会重新校验附件描述（扁平路径、普通文件、真实 size，数量/大小限额在读取任何内容之前复核），绝不信任调用方；交给 Agent 的路径是从校验字节物化的按次快照（`.zerone-uploads/snap-…`），校验后的文件系统改动（含对原始上传的 symlink 换链）无法影响本次 Run 实际读到的内容。Agent 的 `Read` 工具同样在 runtime 层被加固：`.zerone-uploads/` 下的读取在执行时重新校验（拒绝 symlink 与越界）。
+可解码的 JPEG/PNG/GIF/WebP 直接进入模型 image block（长边超过 1536px 时等比缩放，需转码时 JPEG quality 85，原文件不被修改）；SVG、伪图片及其他格式以安全的工作区相对路径交给 Agent 用 `Read` 工具读取。每次 Run 都会重新校验附件描述（扁平路径、普通文件、真实 size，数量/大小限额在读取任何内容之前复核），绝不信任调用方；交给 Agent 的路径是从校验字节物化的按次快照（`.zerone-uploads/snap-…`），校验后的文件系统改动（含对原始上传的 symlink 换链）无法影响本次 Run 实际读到的内容。Agent 的 `Read` 工具同样在 runtime 层被加固：`.zerone-uploads/` 下的读取在执行时重新校验（拒绝 symlink 与越界），并经内核 fd 引用（`/proc/self/fd`）委托，SDK 实际打开的就是校验过的字节。**平台要求**：上传、快照物化与 Read 委托都绑定内核 fd 引用（Linux `/proc/self/fd`）；其他平台一律 fail-closed 拒绝（500 / 工具错误），不降级为不安全的路径方案。
 
 ## 作为库使用
 

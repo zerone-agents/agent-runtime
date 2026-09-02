@@ -13,6 +13,10 @@ import {
 } from "../uploads.js"
 import { MB, multipartStream, bigChunks } from "./helpers/multipart.js"
 
+// processUpload 全部行为依赖内核 fd 绑定（/proc/self/fd）；无该机制的平台
+// fail-closed 拒绝——行为测试仅在此类平台执行（CI Linux 全覆盖）
+const describeProcfs = existsSync("/proc/self/fd") ? describe : describe.skip
+
 describe("uploads constants", () => {
   it("exposes the spec limits", () => {
     expect(UPLOADS_DIR).toBe(".zerone-uploads")
@@ -113,7 +117,7 @@ describe("UploadError", () => {
   })
 })
 
-describe("processUpload", () => {
+describeProcfs("processUpload", () => {
   let cwd: string
   beforeEach(() => { cwd = mkdtempSync(join(tmpdir(), "process-upload-")) })
   afterEach(() => { rmSync(cwd, { recursive: true, force: true }) })

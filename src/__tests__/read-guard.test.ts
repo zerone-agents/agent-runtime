@@ -8,6 +8,8 @@ import { FileReadTool, type ToolContext } from "@zerone-agent/agent-sdk"
 
 /** fd 钉住委托仅在 /proc/self/fd 可用（Linux）时可证；其他平台跳过 */
 const itProcfs = existsSync("/proc/self/fd") ? it : it.skip
+/** fail-closed 反向验证：无内核 fd 绑定的平台必须拒绝 uploads 文件读取 */
+const itFallback = existsSync("/proc/self/fd") ? it.skip : it
 
 /** 最小 ToolContext：Read 路径只消费 cwd，其余字段按类型补齐 */
 const ctx = (cwd: string): ToolContext => ({
@@ -28,7 +30,7 @@ describe("buildReadGuardTool", () => {
   })
   afterEach(() => rmSync(cwd, { recursive: true, force: true }))
 
-  it("delegates normal reads under uploads to the base tool", async () => {
+  itProcfs("delegates normal reads under uploads to the base tool", async () => {
     writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "hello-guard")
     const tool = buildReadGuardTool(cwd)
     const res = await tool.call({ file_path: ".zerone-uploads/a.txt" }, ctx(cwd))
@@ -95,6 +97,14 @@ describe("buildReadGuardTool", () => {
     }
   })
 
+  itFallback("uploads file reads fail closed without kernel fd binding", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "hello-guard")
+    const tool = buildReadGuardTool(cwd)
+    const res = await tool.call({ file_path: ".zerone-uploads/a.txt" }, ctx(cwd))
+    expect(res).toMatchObject({ is_error: true })
+    expect(JSON.stringify(res)).toContain("/proc/self/fd")
+  })
+
   it("leaves paths outside uploads untouched (base behavior, even symlinks)", async () => {    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
     try {
       writeFileSync(join(outside, "ok.txt"), "FINE")
@@ -107,7 +117,7 @@ describe("buildReadGuardTool", () => {
     }
   })
 
-  it("reviewer repro: snapshot swapped after buildAgentInput is rejected at Read time", async () => {
+  itProcfs("reviewer repro: snapshot swapped after buildAgentInput is rejected at Read time", async () => {
     // R3 P1 端到端复现：物化快照后 unlink + symlink 指向 cwd 外 secret，
     // 防护版 Read 必须拒绝（不再读到 OUTSIDE SECRET）
     writeFileSync(join(cwd, ".zerone-uploads", "doc.txt"), "SAFE CONTENT")

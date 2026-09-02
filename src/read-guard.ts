@@ -76,7 +76,14 @@ export function buildReadGuardTool(cwd: string): typeof FileReadTool {
               context,
             )
           }
-          return await FileReadTool.call(input, context)
+          // fail-closed（review R5 P1）：无内核 fd 引用的平台不接受词法委托，
+          // 校验与打开之间的换链窗口在该平台上无法消除
+          return {
+            type: "tool_result" as const,
+            tool_use_id: toolUseId,
+            content: `Error reading file: attachments require a /proc/self/fd-capable platform (Linux) on this runtime: ${input.file_path}`,
+            is_error: true,
+          }
         } finally {
           await handle.close().catch(() => {})
         }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync, readdirSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync, readdirSync, existsSync } from "node:fs"
 import { readFile, open } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -300,7 +300,12 @@ describe("composeAttachmentText", () => {
   })
 })
 
-describe("buildAgentInput", () => {
+// 快照物化依赖内核 fd 绑定：无 /proc/self/fd 的平台由 pinDirectory fail-closed，
+// 物化行为测试仅在此类平台执行（CI Linux 全覆盖）；itFallback 验证反向拒绝。
+const describeProcfs = existsSync("/proc/self/fd") ? describe : describe.skip
+const itFallback = existsSync("/proc/self/fd") ? it.skip : it
+
+describeProcfs("buildAgentInput", () => {
   let cwd: string
   beforeEach(() => {
 
@@ -469,5 +474,23 @@ describe("buildAgentInput", () => {
     const text = (input[0] as { type: "text"; text: string }).text
     expect(text).toMatch(/- 图片 \.zerone-uploads\/snap-[0-9a-f]{8}-img\.png 已直接提供/)
     expect(text).toMatch(/- 文件 \.zerone-uploads\/snap-[0-9a-f]{8}-doc\.pdf：请使用 Read 工具读取后再回答/)
+  })
+})
+
+describe("buildAgentInput fail-closed (no /proc/self/fd)", () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "att-fallback-"))
+    mkdirSync(join(cwd, ".zerone-uploads"), { recursive: true })
+  })
+  afterEach(() => { rmSync(cwd, { recursive: true, force: true }) })
+
+  itFallback("rejects attachment runs on platforms without kernel fd binding", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "doc.txt"), "SAFE")
+    const validated = await validateAttachments(cwd, [
+      { id: randomUUID(), name: "doc.txt", mime: "text/plain", size: 4, path: ".zerone-uploads/doc.txt" },
+    ])
+    // pinDirectory fail-closed：拒绝而不是静默走不安全路径（review R5 P1）
+    await expect(buildAgentInput("m", validated)).rejects.toThrow(/refusing to run insecurely/)
   })
 })

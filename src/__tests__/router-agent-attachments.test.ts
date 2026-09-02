@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { Hono } from "hono"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import sharp from "sharp"
 import { createAgentRouter } from "../router/agent.js"
 import { RunRegistry } from "../runs.js"
+
+// 附件 run 集成测试走快照物化（依赖内核 fd 绑定）；无 /proc/self/fd 的
+// 平台 fail-closed 拒绝，由 attachments.test.ts 的 itFallback 反向覆盖
+const describeProcfs = existsSync("/proc/self/fd") ? describe : describe.skip
 
 vi.mock("../sse.js", () => ({
   streamAgentResponse: vi.fn().mockReturnValue(new Response("sse-stream", { status: 200 })),
@@ -49,7 +53,7 @@ async function stageUpload(tmpRoot: string, name: string, bytes: Buffer) {
   }
 }
 
-describe("POST /v1/agents/:agentId/runs with attachments", () => {
+describeProcfs("POST /v1/agents/:agentId/runs with attachments", () => {
   let tmpRoot: string
   beforeEach(() => { tmpRoot = mkdtempSync(join(tmpdir(), "agent-attachments-")) })
   afterEach(() => { rmSync(tmpRoot, { recursive: true, force: true }) })

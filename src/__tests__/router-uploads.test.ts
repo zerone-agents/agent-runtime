@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { Hono } from "hono"
-import { mkdtempSync, rmSync, readdirSync } from "node:fs"
+import { mkdtempSync, rmSync, readdirSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFilesRouter } from "../router/files.js"
 import { createAuthMiddleware } from "../auth.js"
 import { MB, multipartStream, bigChunks } from "./helpers/multipart.js"
+
+// 上传端点行为依赖内核 fd 绑定；无 /proc/self/fd 的平台 fail-closed 拒绝
+const describeProcfs = existsSync("/proc/self/fd") ? describe : describe.skip
 
 function formRequest(path: string, files: { name: string; type: string; bytes: Uint8Array }[]): Request {
   const fd = new FormData()
@@ -15,7 +18,7 @@ function formRequest(path: string, files: { name: string; type: string; bytes: U
   return new Request(`http://localhost${path}`, { method: "POST", body: fd })
 }
 
-describe("POST /v1/files/uploads", () => {
+describeProcfs("POST /v1/files/uploads", () => {
   let tmpRoot: string
   let app: Hono
 

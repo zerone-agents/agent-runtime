@@ -107,9 +107,9 @@ export interface UploadedFileMeta {
 // —— 跨模块共享的目录钉住助手（review PR #48 R4） ——
 
 export interface PinnedDir {
-  /** Linux fd-relative 模式持有的目录句柄（请求/run 期间保持打开）；fallback 平台为 undefined */
-  handle?: FileHandle
-  /** 受信路径前缀：Linux 为 /proc/self/fd/<fd>（内核 fd 表解析，免疫词法换链）；fallback 为 resolved 词法路径 */
+  /** 钉住的目录句柄（请求/run 期间保持打开） */
+  handle: FileHandle
+  /** 受信路径前缀：/proc/self/fd/<fd>（内核 fd 表解析，免疫词法换链） */
   trustedDir: string
   /** 钉住目录的 dev/ino（探针/bracket/终态检查基准） */
   dev: number
@@ -120,16 +120,16 @@ export function fdRelativeSupported(): boolean {
   return existsSync("/proc/self/fd")
 }
 
-let warnedFdFallback = false
+let warnedFdUnsupported = false
 
-/** 非 Linux 显式告警（review R4 P1：不得静默退回不安全路径）；测试环境静默以保持输出干净 */
+/** 非 fd-relative 平台显式告警一次（fail-closed 之前的说明；测试环境静默） */
 export function fdRelativeSupportedOrWarn(): boolean {
   const ok = fdRelativeSupported()
-  if (!ok && !warnedFdFallback) {
-    warnedFdFallback = true
+  if (!ok && !warnedFdUnsupported) {
+    warnedFdUnsupported = true
     if (!process.env.VITEST) {
       console.warn(
-        "[uploads] /proc/self/fd 不可用：本平台回退 resolved 词法路径，symlink 换链抗性减弱（生产 Linux 使用内核 fd 绑定）",
+        "[uploads] /proc/self/fd 不可用：本平台无法安全绑定目录，uploads/attachments/Read 防护将 fail-closed 拒绝（生产请使用 Linux）",
       )
     }
   }
@@ -137,9 +137,11 @@ export function fdRelativeSupportedOrWarn(): boolean {
 }
 
 /**
- * 钉住目录：先 lstat 确认词法路径末级为真实目录（realpath 会跟随换链，
- * 预置换链必须在此之前拦截），再 realpath + open 目录 fd，以 fd 自身
- * stat 为受信身份并复核路径此刻仍解析到同一 inode。
+ * 钉住目录（fail-closed，review PR #48 R5）：先 lstat 确认词法路径末级为
+ * 真实目录（realpath 会跟随换链，预置换链必须在此之前拦截），再 realpath
+ * + open 目录 fd，以 fd 自身 stat 为受信身份并复核路径此刻仍解析到同一
+ * inode。无 /proc/self/fd 的平台直接拒绝——不存在跨平台的 fd 相对路径
+ * 机制（Node 无 openat2 等价物），静默降级不安全，宁可 fail-closed。
  */
 export async function pinDirectory(dirAbs: string): Promise<PinnedDir> {
   const lex = await lstat(dirAbs).catch(() => null)
@@ -155,13 +157,29 @@ export async function pinDirectory(dirAbs: string): Promise<PinnedDir> {
       throw new Error("uploads directory changed — possible symlink swap")
     }
     if (!fdRelativeSupportedOrWarn()) {
-      await handle.close().catch(() => {})
-      return { handle: undefined, trustedDir: real, dev: st.dev, ino: st.ino }
+      throw new Error("attachments require a /proc/self/fd-capable platform (Linux); refusing to run insecurely")
     }
     return { handle, trustedDir: `/proc/self/fd/${handle.fd}`, dev: st.dev, ino: st.ino }
   } catch (err) {
     await handle.close().catch(() => {})
     throw err
+  }
+}
+
+/** 丢弃自己创建的文件：fd truncate 清零自身 inode → 关闭 → inode 复核
+ * unlink（路径被换链时宁留空文件也不误删他人文件）。三处调用共用一个
+ * 实现（review PR #48 R5 P2）。 */
+export async function discardFile(
+  handle: FileHandle,
+  path: string,
+  dev: number,
+  ino: number,
+): Promise<void> {
+  await handle.truncate(0).catch(() => {})
+  await handle.close().catch(() => {})
+  const st = await lstat(path).catch(() => null)
+  if (st !== null && st.dev === dev && st.ino === ino) {
+    await rm(path, { force: true }).catch(() => {})
   }
 }
 
@@ -207,26 +225,14 @@ export async function processUpload(
   let fileCount = 0
   let totalBytes = 0
 
-  /** inode 复核的 unlink：路径当前解析结果与记录的 dev/ino 一致才删除；
-   * 换链后宁留（已清零的）自有文件也不误删他人文件。 */
-  const unlinkIfNodeMatches = async (path: string, dev: number, ino: number): Promise<void> => {
-    const st = await lstat(path).catch(() => null)
-    if (st !== null && st.dev === dev && st.ino === ino) {
-      await rm(path, { force: true }).catch(() => {})
-    }
-  }
-
-  // fd 钉住清理（review PR #48 R3）：句柄全程保持打开直至请求终结，
-  // truncate 只作用于自身 inode（不可被路径重定向）；失败时逐文件
-  // 先清零、再关闭、最后做 inode 复核 unlink。
+  // fd 钉住清理（review PR #48 R3）：句柄全程保持打开直至请求终结；
+  // 失败时逐文件经 discardFile 清零自身 inode 后再做 inode 复核 unlink。
   const cleanup = async (): Promise<void> => {
     for (const f of created) {
-      await f.handle.truncate(0).catch(() => {})
-      await f.handle.close().catch(() => {})
-      await unlinkIfNodeMatches(f.canonicalPath, f.dev, f.ino)
+      await discardFile(f.handle, f.canonicalPath, f.dev, f.ino)
     }
     created.length = 0
-    await pinnedDir.handle?.close().catch(() => {})
+    await pinnedDir.handle.close().catch(() => {})
   }
 
   let bb: ReturnType<typeof busboy>
@@ -292,9 +298,7 @@ export async function processUpload(
           // 的换链在此抓住（Linux 下 create 本身经 fd 表，数据不会逃逸）
           const bracketSt = await lstat(realUploadsDir).catch(() => null)
           if (bracketSt === null || bracketSt.dev !== pinned.dev || bracketSt.ino !== pinned.ino) {
-            await dest.handle.truncate(0).catch(() => {})
-            await dest.handle.close().catch(() => {})
-            await unlinkIfNodeMatches(dest.absPath, fst.dev, fst.ino)
+            await discardFile(dest.handle, dest.absPath, fst.dev, fst.ino)
             throw new Error("uploads directory changed — possible symlink swap")
           }
           // canonical inode 复核：经受信路径（Linux=内核 fd 表，免疫换链）
@@ -309,9 +313,7 @@ export async function processUpload(
             await verify.close().catch(() => {})
           }
           if (!contained) {
-            await dest.handle.truncate(0).catch(() => {})
-            await dest.handle.close().catch(() => {})
-            await unlinkIfNodeMatches(dest.absPath, fst.dev, fst.ino)
+            await discardFile(dest.handle, dest.absPath, fst.dev, fst.ino)
             throw new Error("upload destination escaped .zerone-uploads — possible symlink swap")
           }
           created.push({ canonicalPath, handle: dest.handle, dev: fst.dev, ino: fst.ino })
@@ -371,7 +373,7 @@ export async function processUpload(
           }
           // 成功路径：统一关闭本请求持有的全部句柄
           await Promise.all(created.map((f) => f.handle.close().catch(() => {})))
-          await pinnedDir.handle?.close().catch(() => {})
+          await pinnedDir.handle.close().catch(() => {})
           resolve(metas)
         })
         .catch(fail)

@@ -315,10 +315,10 @@ export function composeAttachmentText(
 }
 
 /**
- * 物化快照（review PR #48 R2/R4）：把校验时钉住的字节写入 wx 独占创建的
- * 新文件（随机名，不可预放置）。创建经钉住目录（Linux = /proc/self/fd/<dirFd>，
- * 内核 fd 表解析，写入前换链无法使快照逃出 cwd）；fallback 平台保留
- * realpath 一致性复核（抗性减弱，见 fdRelativeSupportedOrWarn 告警）。
+ * 物化快照（review PR #48 R2/R4/R5）：把校验时钉住的字节写入 wx 独占创建的
+ * 新文件（随机名，不可预放置）。创建经钉住目录（/proc/self/fd/<dirFd>，
+ * 内核 fd 表解析，写入前换链无法使快照逃出 cwd；无该机制的平台由
+ * pinDirectory fail-closed 拒绝，不存在不安全降级）。
  * 快照与上传物同目录同生命周期（.zerone-uploads，随容器）。
  */
 async function materializeSnapshot(att: ValidatedAttachment, pinnedDir: PinnedDir): Promise<string> {
@@ -327,13 +327,6 @@ async function materializeSnapshot(att: ValidatedAttachment, pinnedDir: PinnedDi
   const dest = join(pinnedDir.trustedDir, unique)
   const handle = await open(dest, "wx")
   try {
-    if (!pinnedDir.handle) {
-      const realDir = await realpath(dirname(att.absPath))
-      const realFile = await realpath(dest)
-      if (realFile !== join(realDir, unique)) {
-        throw new Error("snapshot escaped uploads directory — possible symlink swap")
-      }
-    }
     await handle.write(att.bytes)
     return `${UPLOADS_DIR}/${unique}`
   } catch (err) {
@@ -378,6 +371,6 @@ export async function buildAgentInput(
       ...imageBlocks,
     ]
   } finally {
-    await pinnedDir.handle?.close().catch(() => {})
+    await pinnedDir.handle.close().catch(() => {})
   }
 }
