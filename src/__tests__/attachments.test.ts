@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
+import sharp from "sharp"
 import {
   AttachmentError, parseAttachmentDescriptors, validateAttachments,
-  type AttachmentDescriptor,
+  buildAgentInput, composeAttachmentText, MAX_IMAGE_EDGE,
+  type AttachmentDescriptor, type ValidatedAttachment,
 } from "../attachments.js"
 
 const MB = 1024 * 1024
@@ -130,5 +133,124 @@ describe("validateAttachments", () => {
     }
     await expect(validateAttachments(cwd, descriptors))
       .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+  })
+})
+
+// fixture：sharp 现场造图；GIF 用字面量（1×1 GIF89a）
+async function makePng(w: number, h: number): Promise<Buffer> {
+  return sharp({ create: { width: w, height: h, channels: 3, background: "#ff0000" } }).png().toBuffer()
+}
+const TINY_GIF = Buffer.from(
+  "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64",
+)
+
+async function stageValidated(
+  cwd: string, name: string, bytes: Buffer,
+): Promise<ValidatedAttachment> {
+  writeFileSync(join(cwd, ".zerone-uploads", name), bytes)
+  return {
+    descriptor: { id: randomUUID(), name, mime: "application/octet-stream", size: bytes.length, path: `.zerone-uploads/${name}` },
+    absPath: join(cwd, ".zerone-uploads", name),
+    realSize: bytes.length,
+  }
+}
+
+describe("composeAttachmentText", () => {
+  it("renders image and file lines after the message", () => {
+    const text = composeAttachmentText("请总结", [".zerone-uploads/a.png"], [".zerone-uploads/b.pdf"])
+    expect(text).toContain("请总结")
+    expect(text).toContain("[附件]")
+    expect(text).toContain("- 图片 .zerone-uploads/a.png 已直接提供")
+    expect(text).toContain("- 文件 .zerone-uploads/b.pdf：请使用 Read 工具读取后再回答")
+  })
+})
+
+describe("buildAgentInput", () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "build-input-"))
+    mkdirSync(join(cwd, ".zerone-uploads"), { recursive: true })
+  })
+  afterEach(() => { rmSync(cwd, { recursive: true, force: true }) })
+
+  it("returns the message string unchanged for empty attachments", async () => {
+    const msg = "hello"
+    await expect(buildAgentInput(msg, [])).resolves.toBe(msg)
+  })
+
+  it("small PNG → original bytes as image/png block, text first", async () => {
+    const png = await makePng(10, 10)
+    const att = await stageValidated(cwd, "1.png", png)
+    const input = await buildAgentInput("看图", [att])
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    expect(input).toHaveLength(2)
+    expect(input[0]).toMatchObject({ type: "text" })
+    expect((input[0] as { type: "text"; text: string }).text).toContain(".zerone-uploads/1.png")
+    expect(input[1]).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
+    })
+  })
+
+  it("oversized PNG → scaled JPEG q85 in memory, original file untouched", async () => {
+    const big = await makePng(2000, 1000)
+    const att = await stageValidated(cwd, "big.png", big)
+    const input = await buildAgentInput("看大图", [att])
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    const image = input.find((b) => b.type === "image")
+    if (image?.type !== "image") throw new Error("missing image block")
+    const src = image.source as { media_type: string; data: string }
+    expect(src.media_type).toBe("image/jpeg")
+    const meta = await sharp(Buffer.from(src.data, "base64")).metadata()
+    expect(meta.width).toBe(MAX_IMAGE_EDGE)
+    expect(meta.height).toBe(768)
+    const onDisk = await readFile(att.absPath)
+    expect((await sharp(onDisk).metadata()).width).toBe(2000) // 原文件未被修改
+  })
+
+  it("JPEG / WebP / GIF decode to their media types", async () => {
+    const jpeg = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#00ff00" } }).jpeg().toBuffer()
+    const webp = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#0000ff" } }).webp().toBuffer()
+    const atts = [
+      await stageValidated(cwd, "j.jpg", jpeg),
+      await stageValidated(cwd, "w.webp", webp),
+      await stageValidated(cwd, "g.gif", TINY_GIF),
+    ]
+    const input = await buildAgentInput("m", atts)
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    const media = input.filter((b) => b.type === "image").map(
+      (b) => (b as { type: "image"; source: { media_type: string } }).source.media_type,
+    )
+    expect(media).toEqual(["image/jpeg", "image/webp", "image/gif"])
+  })
+
+  it("SVG and truncated (fake) images are treated as normal files", async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>')
+    const jpeg = await sharp({ create: { width: 40, height: 40, channels: 3, background: "#123456" } }).jpeg().toBuffer()
+    const truncated = jpeg.subarray(0, Math.floor(jpeg.length / 2))
+    const atts = [
+      await stageValidated(cwd, "d.svg", svg),
+      await stageValidated(cwd, "fake.jpg", truncated),
+    ]
+    const input = await buildAgentInput("m", atts)
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    expect(input).toHaveLength(1) // 只有 text block，无 image block
+    const text = (input[0] as { type: "text"; text: string }).text
+    expect(text).toContain("- 文件 .zerone-uploads/d.svg：请使用 Read 工具读取后再回答")
+    expect(text).toContain("- 文件 .zerone-uploads/fake.jpg：请使用 Read 工具读取后再回答")
+  })
+
+  it("mixed: image + normal file → text lists both kinds", async () => {
+    const png = await makePng(4, 4)
+    const atts = [
+      await stageValidated(cwd, "img.png", png),
+      await stageValidated(cwd, "doc.pdf", Buffer.from("%PDF-1.4 fake")),
+    ]
+    const input = await buildAgentInput("m", atts)
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    expect(input).toHaveLength(2)
+    const text = (input[0] as { type: "text"; text: string }).text
+    expect(text).toContain("- 图片 .zerone-uploads/img.png 已直接提供")
+    expect(text).toContain("- 文件 .zerone-uploads/doc.pdf：请使用 Read 工具读取后再回答")
   })
 })

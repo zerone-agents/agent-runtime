@@ -3,8 +3,10 @@
  * （路径安全、真实文件、真实 size），聚合复核限额；图片管线与
  * AgentInput 构造见 Task 6 追加。
  */
-import { lstat } from "node:fs/promises"
+import { lstat, readFile } from "node:fs/promises"
 import { isAbsolute, relative } from "node:path"
+import sharp from "sharp"
+import type { AgentInput, ContentBlockParam } from "@zerone-agent/agent-sdk"
 import { safeResolve } from "./files.js"
 import { MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TOTAL_BYTES, UPLOADS_DIR } from "./uploads.js"
 
@@ -150,4 +152,99 @@ export async function validateAttachments(
     )
   }
   return validated
+}
+
+export const MAX_IMAGE_EDGE = 1536
+export const JPEG_QUALITY = 85
+export const PIXEL_CAP = 100_000_000
+
+const IMAGE_FORMATS = new Set(["jpeg", "png", "gif", "webp"])
+const MEDIA_TYPES: Record<string, string> = {
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+}
+
+interface DecodedImage {
+  data: string
+  mediaType: string
+}
+
+/**
+ * 实测解码：只信 sharp 解码结果，不信任 MIME/扩展名。
+ * 返回 null = 非图片（含 SVG）或解码失败（截断/损坏）→ 按普通文件处理。
+ */
+async function tryDecodeImage(bytes: Buffer): Promise<DecodedImage | null> {
+  let meta: sharp.Metadata
+  try {
+    meta = await sharp(bytes, { limitInputPixels: PIXEL_CAP }).metadata()
+  } catch {
+    return null
+  }
+  const format = meta.format ?? ""
+  if (!IMAGE_FORMATS.has(format) || meta.width === undefined || meta.height === undefined) {
+    return null
+  }
+  try {
+    const longEdge = Math.max(meta.width, meta.height)
+    if (longEdge > MAX_IMAGE_EDGE) {
+      const out = await sharp(bytes, { limitInputPixels: PIXEL_CAP })
+        .rotate() // 尊重 EXIF 方向（spec 外的有意增强，不影响限额语义）
+        .resize({ width: MAX_IMAGE_EDGE, height: MAX_IMAGE_EDGE, fit: "inside", withoutEnlargement: true })
+        .flatten({ background: "#FFFFFF" })
+        .jpeg({ quality: JPEG_QUALITY })
+        .toBuffer()
+      return { data: out.toString("base64"), mediaType: "image/jpeg" }
+    }
+    // 全像素解码验证：截断/损坏文件在此抛错（header 解析抓不住）
+    await sharp(bytes, { limitInputPixels: PIXEL_CAP }).resize(1, 1).raw().toBuffer()
+    return { data: bytes.toString("base64"), mediaType: MEDIA_TYPES[format] }
+  } catch {
+    return null
+  }
+}
+
+/** text block 文案：只拼校验过的 path，不拼请求 name 字段。 */
+export function composeAttachmentText(
+  message: string,
+  imagePaths: string[],
+  filePaths: string[],
+): string {
+  const lines = [message, "", "[附件]"]
+  for (const p of imagePaths) {
+    lines.push(`- 图片 ${p} 已直接提供（如需再次查看可用 Read 工具读取该路径）`)
+  }
+  for (const p of filePaths) {
+    lines.push(`- 文件 ${p}：请使用 Read 工具读取后再回答`)
+  }
+  return lines.join("\n")
+}
+
+/** 构造模型输入：无附件原样 string；有附件 → [text, ...images]。 */
+export async function buildAgentInput(
+  message: string,
+  attachments: ValidatedAttachment[],
+): Promise<AgentInput> {
+  if (attachments.length === 0) return message
+  const imageBlocks: ContentBlockParam[] = []
+  const imagePaths: string[] = []
+  const filePaths: string[] = []
+  for (const att of attachments) {
+    const bytes = await readFile(att.absPath)
+    const decoded = await tryDecodeImage(bytes)
+    if (decoded) {
+      imageBlocks.push({
+        type: "image",
+        source: { type: "base64", media_type: decoded.mediaType, data: decoded.data },
+      })
+      imagePaths.push(att.descriptor.path)
+    } else {
+      filePaths.push(att.descriptor.path)
+    }
+  }
+  return [
+    { type: "text", text: composeAttachmentText(message, imagePaths, filePaths) },
+    ...imageBlocks,
+  ]
 }
