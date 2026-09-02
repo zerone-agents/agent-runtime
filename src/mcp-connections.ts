@@ -9,11 +9,13 @@
  * rollback / shutdown. Tool visibility remains per-agent: each entry's
  * capabilities receive the shared connection's tools independently.
  *
- * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.1.0
+ * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.0.2
  * (issue #51): connectMCPServer() logs only sanitized structured fields
  * (server name + stable errorType) and never the raw Error.message, so the
  * runtime does NOT intercept the process-global console. The full raw error
  * still travels on MCPConnection.error for runtime-side diagnostics.
+ * (The strict stdio stderr policy came with SDK 3.1.0 — see
+ * withStrictStdioStderr.)
  */
 
 import { connectMCPServer, type MCPConnection } from "@zerone-agent/agent-sdk"

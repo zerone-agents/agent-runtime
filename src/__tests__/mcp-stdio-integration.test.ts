@@ -9,43 +9,11 @@ import { describe, it, expect, vi } from "vitest"
 import { fileURLToPath } from "node:url"
 import { spawn } from "node:child_process"
 import { McpConnectionManager } from "../mcp-connections.js"
+import { deepInspect, capturedOutput } from "./helpers/deep-log.js"
 
 const fixture = fileURLToPath(
   new URL("../../test/fixtures/mcp-echo-server.mjs", import.meta.url),
 )
-
-/**
- * Deep inspection of logged console arguments (#54 review): String(args)
- * collapses structured objects to "[object Object]" and JSON.stringify
- * hides non-enumerable Error fields (message/stack) — both are leak blind
- * spots. This walker renders nested objects, arrays, and Errors
- * (name + message + stack) so a secret anywhere in a logged argument is
- * detectable.
- */
-function deepInspect(value: unknown, depth = 0): string {
-  if (value === null || typeof value !== "object") return String(value)
-  if (value instanceof Error) {
-    return `${value.name}: ${value.message} ${value.stack ?? ""}`
-  }
-  if (depth > 6) return "[Depth]"
-  if (Array.isArray(value)) {
-    return `[${value.map((v) => deepInspect(v, depth + 1)).join(", ")}]`
-  }
-  try {
-    const entries = Object.entries(value as Record<string, unknown>)
-    return `{${entries.map(([k, v]) => `${k}=${deepInspect(v, depth + 1)}`).join(", ")}}`
-  } catch {
-    return "[Uninspectable]"
-  }
-}
-
-/** Render everything captured by console spies through deepInspect. */
-function capturedOutput(callSets: unknown[][][]): string {
-  return callSets
-    .flat()
-    .map((call) => call.map((arg) => deepInspect(arg)).join(" "))
-    .join("\n")
-}
 
 describe("McpConnectionManager stdio integration (real connectMCPServer)", () => {
   it("connects to the echo fixture and materializes its tool", async () => {

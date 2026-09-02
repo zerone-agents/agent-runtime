@@ -10,6 +10,7 @@ import {
   McpConnectionError,
   canonicalMcpConfig,
 } from "../mcp-connections.js"
+import { capturedOutput } from "./helpers/deep-log.js"
 
 const mockConnect = vi.mocked(connectMCPServer)
 
@@ -73,13 +74,27 @@ describe("McpConnectionManager", () => {
   })
 
   it("throws sanitized McpConnectionError on error status (no raw error text)", async () => {
-    mockConnect.mockResolvedValueOnce({
-      name: "db",
-      status: "error",
-      tools: [],
-      error: new Error("secret-token-xyz in https://user:pass@host"),
-      close: vi.fn(),
-    } as never)
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const SECRET = "secret-token-xyz"
+    mockConnect.mockImplementationOnce(async () => {
+      // SDK 3.1.0 contract: the client logs sanitized structured fields
+      // (server + stable errorType) only, keeping the raw credential-bearing
+      // error on MCPConnection.error. Model that here — with the raw error
+      // in play end to end, the FULL captured runtime logs must stay clean
+      // (deep-inspected so nested objects/errors cannot hide a secret).
+      console.error("[MCP] Failed to connect to server", {
+        server: "db",
+        errorType: "init_failed",
+      })
+      return {
+        name: "db",
+        status: "error",
+        tools: [],
+        error: new Error(`${SECRET} in https://user:pass@host`),
+        close: vi.fn(),
+      } as never
+    })
     const m = new McpConnectionManager()
     await expect(
       m.acquire("a", "db", { transport: "stdio", command: "node" }),
@@ -88,6 +103,14 @@ describe("McpConnectionManager", () => {
       m.acquire("a", "db", { transport: "stdio", command: "node" }),
     ).rejects.toBeInstanceOf(McpConnectionError)
     expect(mockConnect).toHaveBeenCalledTimes(1) // 失败连接被共享，不重试
+
+    // Log contract (#54 review r4): full captured logs never carry the
+    // credential-bearing raw error text.
+    const logged = capturedOutput([errSpy.mock.calls, warnSpy.mock.calls])
+    expect(logged).not.toContain(SECRET)
+    expect(logged).not.toContain("user:pass@")
+    errSpy.mockRestore()
+    warnSpy.mockRestore()
   })
 
   it("closeAll closes each unique connection once and is idempotent", async () => {
