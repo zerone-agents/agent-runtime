@@ -3,44 +3,9 @@ import { Hono } from "hono"
 import { mkdtempSync, rmSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Readable } from "node:stream"
 import { createFilesRouter } from "../router/files.js"
 import { createAuthMiddleware } from "../auth.js"
-
-const MB = 1024 * 1024
-
-// 与 uploads.test.ts 相同的流式构造辅助（测试文件保持自包含）
-function multipartStream(
-  parts: { filename: string; type?: string; chunks: Buffer[] }[],
-  boundary = "testbound",
-): { contentType: string; body: ReadableStream<Uint8Array> } {
-  const out: Buffer[] = []
-  for (const p of parts) {
-    const headers = [
-      `--${boundary}`,
-      `Content-Disposition: form-data; name="files"; filename="${p.filename}"`,
-      ...(p.type ? [`Content-Type: ${p.type}`] : []),
-      "",
-      "",
-    ].join("\r\n")
-    out.push(Buffer.from(headers), ...p.chunks, Buffer.from("\r\n"))
-  }
-  out.push(Buffer.from(`--${boundary}--\r\n`))
-  return {
-    contentType: `multipart/form-data; boundary=${boundary}`,
-    body: Readable.toWeb(Readable.from(out)) as unknown as ReadableStream<Uint8Array>,
-  }
-}
-
-function bigChunks(totalBytes: number): Buffer[] {
-  const chunkSize = 1024 * 1024
-  const zero = Buffer.alloc(chunkSize)
-  const n = Math.ceil(totalBytes / chunkSize)
-  return Array.from(
-    { length: n },
-    (_, i) => (i === n - 1 ? zero.subarray(0, totalBytes - (n - 1) * chunkSize) : zero),
-  )
-}
+import { MB, multipartStream, bigChunks } from "./helpers/multipart.js"
 
 function formRequest(path: string, files: { name: string; type: string; bytes: Uint8Array }[]): Request {
   const fd = new FormData()

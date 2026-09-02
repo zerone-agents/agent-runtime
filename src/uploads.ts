@@ -6,7 +6,7 @@
  * 扁平目录，生命周期跟随容器。
  */
 import { randomUUID } from "node:crypto"
-import { open, mkdir, rm, type FileHandle } from "node:fs/promises"
+import { open, mkdir, rm, realpath, type FileHandle } from "node:fs/promises"
 import { join } from "node:path"
 import { Readable } from "node:stream"
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
@@ -118,6 +118,13 @@ export async function processUpload(
   }
   const dir = join(cwd, UPLOADS_DIR)
   await mkdir(dir, { recursive: true })
+  // 防 symlink 逃逸（review PR #48 P1a）：mkdir(recursive) 对已存在的
+  // symlink 静默成功，上传目录必须真实解析为 <cwd>/.zerone-uploads。
+  const realCwd = await realpath(cwd)
+  const realDir = await realpath(dir)
+  if (realDir !== join(realCwd, UPLOADS_DIR)) {
+    throw new Error(`${UPLOADS_DIR} must be a real directory inside the working directory`)
+  }
 
   const created: string[] = []
   const metas: UploadedFileMeta[] = []

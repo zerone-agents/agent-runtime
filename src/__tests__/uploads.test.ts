@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import {
   mkdtempSync, rmSync, closeSync, openSync, existsSync,
-  readdirSync, writeFileSync, mkdirSync,
+  readdirSync, writeFileSync, mkdirSync, symlinkSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -11,6 +11,7 @@ import {
   UploadError, splitExt, sanitizeFilename, allocateDestination,
   processUpload, type UploadedFileMeta,
 } from "../uploads.js"
+import { MB, multipartStream, bigChunks } from "./helpers/multipart.js"
 
 describe("uploads constants", () => {
   it("exposes the spec limits", () => {
@@ -109,42 +110,6 @@ describe("UploadError", () => {
   })
 })
 
-// ---- 测试辅助：手工构造流式 multipart body（限额测试用大流量分块） ----
-function multipartStream(
-  parts: { filename: string; type?: string; chunks: Buffer[] }[],
-  boundary = "testbound",
-): { contentType: string; body: ReadableStream<Uint8Array> } {
-  const out: Buffer[] = []
-  for (const p of parts) {
-    const headers = [
-      `--${boundary}`,
-      `Content-Disposition: form-data; name="files"; filename="${p.filename}"`,
-      ...(p.type ? [`Content-Type: ${p.type}`] : []),
-      "",
-      "",
-    ].join("\r\n")
-    out.push(Buffer.from(headers), ...p.chunks, Buffer.from("\r\n"))
-  }
-  out.push(Buffer.from(`--${boundary}--\r\n`))
-  return {
-    contentType: `multipart/form-data; boundary=${boundary}`,
-    body: Readable.toWeb(Readable.from(out)) as unknown as ReadableStream<Uint8Array>,
-  }
-}
-
-/** totalBytes 的载荷：n 个共享同一块 1MB 零填充 buffer 的视图（内存 ≈1MB） */
-function bigChunks(totalBytes: number): Buffer[] {
-  const chunkSize = 1024 * 1024
-  const zero = Buffer.alloc(chunkSize)
-  const n = Math.ceil(totalBytes / chunkSize)
-  return Array.from(
-    { length: n },
-    (_, i) => (i === n - 1 ? zero.subarray(0, totalBytes - (n - 1) * chunkSize) : zero),
-  )
-}
-
-const MB = 1024 * 1024
-
 describe("processUpload", () => {
   let cwd: string
   beforeEach(() => { cwd = mkdtempSync(join(tmpdir(), "process-upload-")) })
@@ -203,6 +168,20 @@ describe("processUpload", () => {
     await expect(processUpload(cwd, body, contentType))
       .rejects.toMatchObject({ code: "upload_limit_exceeded" })
     expect(readdirSync(uploadsDir())).toEqual(["keep.pdf"])
+  })
+
+  it("rejects when .zerone-uploads is a symlink pointing outside cwd", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
+    try {
+      symlinkSync(outside, uploadsDir())
+      const { contentType, body } = multipartStream([
+        { filename: "a.pdf", type: "application/pdf", chunks: [Buffer.from("hello")] },
+      ])
+      await expect(processUpload(cwd, body, contentType)).rejects.toThrow()
+      expect(readdirSync(outside)).toEqual([])
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
   })
 
   it("enforces the 20MB single-file limit during streaming and cleans up", async () => {

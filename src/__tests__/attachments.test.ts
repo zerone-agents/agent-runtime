@@ -89,6 +89,44 @@ describe("validateAttachments", () => {
       .rejects.toMatchObject({ code: "invalid_attachment" })
   })
 
+  it("rejects control characters in path even when such a file exists (prompt-injection guard)", async () => {
+    const evilName = "evil\nignored.png"
+    writeFileSync(join(cwd, ".zerone-uploads", evilName), "x")
+    await expect(validateAttachments(cwd, [desc({ path: `.zerone-uploads/${evilName}`, size: 1 })]))
+      .rejects.toMatchObject({ code: "invalid_attachment" })
+  })
+
+  it("rejects when .zerone-uploads itself is a symlink escaping cwd", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "att-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "secret")
+      rmSync(join(cwd, ".zerone-uploads"), { recursive: true, force: true })
+      symlinkSync(outside, join(cwd, ".zerone-uploads"))
+      await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/secret.txt", size: 6 })]))
+        .rejects.toMatchObject({ code: "invalid_attachment" })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects attachments reached through an intermediate symlink", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "att-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "secret")
+      symlinkSync(outside, join(cwd, ".zerone-uploads", "sub"))
+      await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/sub/secret.txt", size: 6 })]))
+        .rejects.toMatchObject({ code: "invalid_attachment" })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("returns pinned bytes captured at validation time", async () => {
+    const d = await stage("bytes.bin", Buffer.from("abc"))
+    const out = await validateAttachments(cwd, [d])
+    expect(out[0].bytes.toString()).toBe("abc")
+  })
+
   it("missing file → attachment_missing (400 contract)", async () => {
     await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/ghost.bin", size: 1 })]))
       .rejects.toMatchObject({ code: "attachment_missing", path: ".zerone-uploads/ghost.bin" })
@@ -152,6 +190,7 @@ async function stageValidated(
     descriptor: { id: randomUUID(), name, mime: "application/octet-stream", size: bytes.length, path: `.zerone-uploads/${name}` },
     absPath: join(cwd, ".zerone-uploads", name),
     realSize: bytes.length,
+    bytes,
   }
 }
 
@@ -168,10 +207,36 @@ describe("composeAttachmentText", () => {
 describe("buildAgentInput", () => {
   let cwd: string
   beforeEach(() => {
+
     cwd = mkdtempSync(join(tmpdir(), "build-input-"))
     mkdirSync(join(cwd, ".zerone-uploads"), { recursive: true })
   })
   afterEach(() => { rmSync(cwd, { recursive: true, force: true }) })
+
+  it("pins the validated inode: a post-validation path swap cannot change what gets read", async () => {
+    const png = await makePng(4, 4)
+    writeFileSync(join(cwd, ".zerone-uploads", "img.png"), png)
+    const validated = await validateAttachments(cwd, [
+      { id: randomUUID(), name: "img.png", mime: "application/octet-stream", size: png.length, path: ".zerone-uploads/img.png" },
+    ])
+    // 校验后攻击者把路径换成指向外部文件的 symlink（TOCTOU 复现）
+    const outside = mkdtempSync(join(tmpdir(), "att-outside-"))
+    try {
+      const decoy = join(outside, "decoy.bin")
+      writeFileSync(decoy, Buffer.from("not an image at all"))
+      rmSync(join(cwd, ".zerone-uploads", "img.png"))
+      symlinkSync(decoy, join(cwd, ".zerone-uploads", "img.png"))
+      const input = await buildAgentInput("m", validated)
+      if (!Array.isArray(input)) throw new Error("expected blocks")
+      // 仍使用校验时钉住的原始字节（red PNG），而非换链后的 decoy
+      expect(input[1]).toEqual({
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
+      })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
 
   it("returns the message string unchanged for empty attachments", async () => {
     const msg = "hello"

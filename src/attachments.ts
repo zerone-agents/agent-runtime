@@ -3,8 +3,8 @@
  * （路径安全、真实文件、真实 size），聚合复核限额；图片管线与
  * AgentInput 构造见 Task 6 追加。
  */
-import { lstat, readFile } from "node:fs/promises"
-import { isAbsolute, relative } from "node:path"
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises"
+import { isAbsolute, join, relative, sep } from "node:path"
 import sharp from "sharp"
 import type { AgentInput, ContentBlockParam } from "@zerone-agent/agent-sdk"
 import { safeResolve } from "./files.js"
@@ -35,9 +35,17 @@ export interface ValidatedAttachment {
   descriptor: AttachmentDescriptor
   absPath: string
   realSize: number
+  /**
+   * 校验时通过 fd 钉住（open + fstat 比对 dev/ino 后读出的字节）。
+   * 消费方必须使用这里的 bytes，不得再按路径读盘（防 TOCTOU 换链）。
+   */
+  bytes: Buffer
 }
 
 const UPLOADS_PREFIX = `${UPLOADS_DIR}/`
+
+/** C0 控制字符 + DEL：路径中出现即拒绝（防换行注入模型 prompt） */
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/
 
 /** 解析并校验 attachments 数组的 shape；非法抛 AttachmentError(invalid_attachment)。 */
 export function parseAttachmentDescriptors(input: unknown): AttachmentDescriptor[] {
@@ -90,8 +98,19 @@ export async function validateAttachments(
     )
   }
   const validated: ValidatedAttachment[] = []
+  // realpath containment（review PR #48 P1a）：词法检查挡不住中间组件 symlink，
+  // 上传目录自身必须是 cwd 内的真实目录（非 symlink），每个附件解析后的真实
+  // 路径必须落在其内。目录不存在时跳过（逐文件 lstat 会报 attachment_missing）。
+  const realCwd = await realpath(cwd)
+  const realUploadsDir = await realpath(join(cwd, UPLOADS_DIR)).catch(() => null)
+  if (realUploadsDir !== null && realUploadsDir !== join(realCwd, UPLOADS_DIR)) {
+    throw new AttachmentError(
+      "invalid_attachment",
+      `${UPLOADS_DIR} must be a real directory inside the working directory`,
+    )
+  }
   for (const att of descriptors) {
-    if (att.path.includes("\0") || isAbsolute(att.path) || !att.path.startsWith(UPLOADS_PREFIX)) {
+    if (CONTROL_CHARS.test(att.path) || isAbsolute(att.path) || !att.path.startsWith(UPLOADS_PREFIX)) {
       throw new AttachmentError(
         "invalid_attachment",
         `Invalid attachment path: ${att.path}`,
@@ -132,7 +151,43 @@ export async function validateAttachments(
         att.path,
       )
     }
-    validated.push({ descriptor: att, absPath: abs, realSize: st.size })
+    if (realUploadsDir !== null) {
+      const realAbs = await realpath(abs).catch(() => null)
+      if (realAbs === null) {
+        throw new AttachmentError("attachment_missing", `Attachment not found: ${att.path}`, att.path)
+      }
+      if (!realAbs.startsWith(realUploadsDir + sep)) {
+        throw new AttachmentError(
+          "invalid_attachment",
+          `Attachment path must stay inside ${UPLOADS_PREFIX}: ${att.path}`,
+          att.path,
+        )
+      }
+    }
+    // TOCTOU 钉住（review PR #48 P1b）：open 后 fstat 比对 dev/ino，
+    // 确认拿到的 fd 与刚 lstat 的是同一 inode；字节从该 fd 读出并随
+    // ValidatedAttachment 传递，消费方不再按路径读盘。
+    const handle: FileHandle | null = await open(abs, "r").catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
+      throw err
+    })
+    if (handle === null) {
+      throw new AttachmentError("attachment_missing", `Attachment not found: ${att.path}`, att.path)
+    }
+    try {
+      const fst = await handle.stat()
+      if (!fst.isFile() || fst.dev !== st.dev || fst.ino !== st.ino) {
+        throw new AttachmentError(
+          "invalid_attachment",
+          `Attachment changed during validation: ${att.path}`,
+          att.path,
+        )
+      }
+      const bytes = await handle.readFile()
+      validated.push({ descriptor: att, absPath: abs, realSize: st.size, bytes })
+    } finally {
+      await handle.close().catch(() => {})
+    }
   }
 
   for (const v of validated) {
@@ -231,8 +286,8 @@ export async function buildAgentInput(
   const imagePaths: string[] = []
   const filePaths: string[] = []
   for (const att of attachments) {
-    const bytes = await readFile(att.absPath)
-    const decoded = await tryDecodeImage(bytes)
+    // 使用校验时钉住的字节（fd + inode 比对），绝不按路径重读（防 TOCTOU）
+    const decoded = await tryDecodeImage(att.bytes)
     if (decoded) {
       imageBlocks.push({
         type: "image",
