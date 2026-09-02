@@ -184,11 +184,12 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
       (c) => (c[0] as string) === "childASrv",
     )
     expect(childASrvCalls).toHaveLength(1)
-    // canonical (transport→type) config reached the SDK
+    // canonical (transport→type) config reached the SDK, with the stdio
+    // stderr-discard wrap applied (#54 review r2)
     expect(mockConnectMcp).toHaveBeenCalledWith("childASrv", {
       type: "stdio",
-      command: "node",
-      args: ["child-a.js"],
+      command: "/bin/sh",
+      args: ["-c", 'exec "$0" "$@" 2>/dev/null', "node", "child-a.js"],
     })
   })
 

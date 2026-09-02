@@ -46,11 +46,42 @@ function sortKeys(value: unknown): unknown {
 /**
  * Sanitized failure: NEVER carries the SDK/raw error text (it may embed
  * command lines, URLs, or credentials). Only the server name is echoed.
+ *
+ * NOTE: no constructor parameter properties — this module is imported by
+ * test/fixtures/mcp-fd2-runner.mjs via Node's native type stripping,
+ * which supports erasable syntax only.
  */
 export class McpConnectionError extends Error {
-  constructor(readonly serverName: string) {
+  readonly serverName: string
+  constructor(serverName: string) {
     super(`MCP server "${serverName}" failed to connect`)
     this.name = "McpConnectionError"
+    this.serverName = serverName
+  }
+}
+
+/**
+ * Wrap stdio server configs so the spawned server's stderr cannot leak
+ * into the runtime's terminal (#54 review r2): SDK 3.0.2 exposes no
+ * stderr option and the MCP transport defaults to `inherit`, so the child
+ * writes straight to the runtime's fd 2 — bypassing every JS-level
+ * sanitizer (console spies cannot even observe it). Routing the spawn
+ * through `/bin/sh -c 'exec "$0" "$@" 2>/dev/null'` redirects the child's
+ * fd 2 at the OS level; `exec` replaces the shell, so stdin/stdout pipes,
+ * signals, exit codes, and env/cwd semantics are unchanged. POSIX-only
+ * (the supported deployment targets). Operators debugging a broken server
+ * can opt out per-process with ZERONE_MCP_STDERR_PASSTHROUGH=1.
+ */
+const STDERR_DISCARD_SCRIPT = 'exec "$0" "$@" 2>/dev/null'
+
+function wrapStdioStderr(config: Record<string, unknown>): Record<string, unknown> {
+  if (process.env.ZERONE_MCP_STDERR_PASSTHROUGH === "1") return config
+  if (config.type !== "stdio") return config
+  const args = Array.isArray(config.args) ? (config.args as unknown[]).map(String) : []
+  return {
+    ...config,
+    command: "/bin/sh",
+    args: ["-c", STDERR_DISCARD_SCRIPT, String(config.command), ...args],
   }
 }
 
@@ -81,7 +112,10 @@ export class McpConnectionManager {
       if (existing.conn.status === "connected") return existing.conn
       throw new McpConnectionError(name)
     }
-    const conn = await connectMCPServer(name, config as never)
+    // Wrap AFTER the key is computed: sharing keys are derived from the
+    // canonical (user-authored) config, so toggling the passthrough hatch
+    // never splits a shared connection.
+    const conn = await connectMCPServer(name, wrapStdioStderr(config) as never)
     this.byKey.set(key, { conn, refs: new Set([entryId]) })
     if (conn.status !== "connected") throw new McpConnectionError(name)
     return conn

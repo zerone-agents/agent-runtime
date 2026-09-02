@@ -7,6 +7,7 @@
 // materialization, and closeAll release.
 import { describe, it, expect, vi } from "vitest"
 import { fileURLToPath } from "node:url"
+import { spawn } from "node:child_process"
 import { McpConnectionManager } from "../mcp-connections.js"
 
 const fixture = fileURLToPath(
@@ -124,4 +125,35 @@ describe("McpConnectionManager stdio integration (real connectMCPServer)", () =>
       warnSpy.mockRestore()
     }
   })
+
+  it("real child stderr never reaches the terminal fd — end-to-end probe (#54 review r2)", async () => {
+    const SECRET = "hunter2-token-xyz"
+    const runner = fileURLToPath(
+      new URL("../../test/fixtures/mcp-fd2-runner.mjs", import.meta.url),
+    )
+    // The runner performs a REAL acquisition of a server that prints the
+    // secret to its own stderr, with the runner's stdio PIPED back here.
+    // Inherited child stderr would surface in the captured pipe — console
+    // spies cannot observe fd-2 writes, so this is the only honest check.
+    const child = spawn(process.execPath, [runner], {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let out = ""
+    let err = ""
+    child.stdout.on("data", (d) => {
+      out += d
+    })
+    child.stderr.on("data", (d) => {
+      err += d
+    })
+    const code = await new Promise<number | null>((res) =>
+      child.on("close", (c) => res(c)),
+    )
+    expect(code).toBe(0)
+    expect(out).toContain("acquire rejected as expected")
+    // The leaky child wrote its secret to ITS stderr; with fd-level
+    // redirection in place it must not surface in the runner's inherited
+    // stderr — i.e. this captured pipe.
+    expect(err).not.toContain(SECRET)
+  }, 30_000)
 })

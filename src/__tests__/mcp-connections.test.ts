@@ -185,4 +185,63 @@ describe("McpConnectionManager", () => {
       errSpy.mockRestore()
     })
   })
+
+  describe("stdio stderr wrap (#54 review r2: fd-2 leak fix)", () => {
+    it("wraps stdio spawns through /bin/sh with stderr discarded at fd level", async () => {
+      mockConnect.mockResolvedValueOnce(okConn("db") as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "db", {
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "srv", "--token=x"],
+        env: { K: "v" },
+      })
+      // The config handed to the SDK must route the child's fd 2 to
+      // /dev/null: exec replaces the shell, so stdin/stdout pipes and
+      // signal semantics are unchanged; env/cwd pass through.
+      expect(mockConnect.mock.calls[0]![1]).toEqual({
+        type: "stdio",
+        command: "/bin/sh",
+        args: ["-c", 'exec "$0" "$@" 2>/dev/null', "npx", "-y", "srv", "--token=x"],
+        env: { K: "v" },
+      })
+    })
+
+    it("leaves non-stdio configs untouched", async () => {
+      mockConnect.mockResolvedValueOnce(okConn("api") as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "api", { transport: "http", url: "http://x", headers: { A: "b" } })
+      expect(mockConnect.mock.calls[0]![1]).toEqual({
+        type: "http",
+        url: "http://x",
+        headers: { A: "b" },
+      })
+    })
+
+    it("ZERONE_MCP_STDERR_PASSTHROUGH=1 bypasses the wrap (operator debug hatch)", async () => {
+      process.env.ZERONE_MCP_STDERR_PASSTHROUGH = "1"
+      try {
+        mockConnect.mockResolvedValueOnce(okConn("db") as never)
+        const m = new McpConnectionManager()
+        await m.acquire("a", "db", { transport: "stdio", command: "node" })
+        expect(mockConnect.mock.calls[0]![1]).toEqual({ type: "stdio", command: "node" })
+      } finally {
+        delete process.env.ZERONE_MCP_STDERR_PASSTHROUGH
+      }
+    })
+
+    it("sharing keys stay stable across passthrough toggling (key computed pre-wrap)", async () => {
+      mockConnect.mockResolvedValueOnce(okConn("db") as never)
+      const m = new McpConnectionManager()
+      await m.acquire("a", "db", { transport: "stdio", command: "node" })
+      process.env.ZERONE_MCP_STDERR_PASSTHROUGH = "1"
+      try {
+        await m.acquire("b", "db", { transport: "stdio", command: "node" })
+      } finally {
+        delete process.env.ZERONE_MCP_STDERR_PASSTHROUGH
+      }
+      // Same raw config ⇒ same key ⇒ one connection, wrap on or off.
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+    })
+  })
 })
