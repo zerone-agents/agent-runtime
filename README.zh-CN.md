@@ -253,7 +253,7 @@ agents:
     subagents: ["coder", "researcher"]
 ```
 
-挂载时只映射 `description`、`systemPrompt`（解析后）、`allowedTools`、`disallowedTools`、`maxTurns` 五个字段——凭证、skills、自定义工具、datasets 在挂载上下文中不生效。委派深度为 1：subagent 不能再挂载 subagent。`subagents` 中的未知 id 或重复 id 会在启动时报错。
+挂载时映射 `description`、解析后的 `systemPrompt`、`allowedTools`、`disallowedTools`、`maxTurns`；子 Agent 的 `datasets` 会在解析 system prompt 时注入。凭证、skills、自定义工具在挂载上下文中不生效。委派深度为 1：subagent 不能再挂载 subagent。`subagents` 中的未知 id 或重复 id 会在启动时报错。
 
 字段参考与 TypeScript 模式：[`docs/configuration.md`](docs/configuration.md)。
 

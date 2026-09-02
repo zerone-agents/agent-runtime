@@ -20,8 +20,9 @@ function convertMcpServers(
 
 /**
  * Materialize SDK subAgents from id references. Only the 5 fields the SDK
- * actually consumes are mapped; credentials, skills, customTools, datasets
- * and the mounted agent's own subagents do NOT apply in mounted context
+ * actually consumes are mapped. A child dataset catalog is folded into its
+ * resolved prompt by resolveSystemPrompt before mapping; credentials, skills,
+ * customTools and the mounted agent's own subagents do NOT apply in mounted context
  * (delegation depth is 1, matching the SDK's spawn-subagent design).
  */
 function buildSubAgents(

@@ -257,7 +257,7 @@ agents:
     subagents: ["coder", "researcher"]
 ```
 
-Mounting maps only `description`, `systemPrompt` (resolved), `allowedTools`, `disallowedTools` and `maxTurns` — credentials, skills, custom tools and datasets do not apply in the mounted context. Delegation depth is 1: a subagent cannot mount further subagents. Unknown or duplicate ids in `subagents` fail at startup.
+Mounting maps `description`, resolved `systemPrompt`, `allowedTools`, `disallowedTools` and `maxTurns`. A subagent's `datasets` catalog is included while resolving its system prompt; credentials, skills and custom tools do not apply in the mounted context. Delegation depth is 1: a subagent cannot mount further subagents. Unknown or duplicate ids in `subagents` fail at startup.
 
 Field reference and TypeScript mode: [`docs/configuration.md`](docs/configuration.md).
 
