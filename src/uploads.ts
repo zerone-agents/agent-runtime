@@ -183,6 +183,19 @@ export async function discardFile(
   }
 }
 
+/** 循环写入直到全部落盘：FileHandle.write 可能短写（磁盘满/平台行为），
+ * 不检查会把截断文件当成功结果返回（review R6 P1）；零进展视为失败。 */
+export async function writeAll(handle: FileHandle, data: Buffer): Promise<void> {
+  let offset = 0
+  while (offset < data.length) {
+    const { bytesWritten } = await handle.write(data, offset, data.length - offset)
+    if (bytesWritten <= 0) {
+      throw new Error("short write made no progress — aborting")
+    }
+    offset += bytesWritten
+  }
+}
+
 /**
  * 流式处理 multipart 上传：边读边执行 个数/单文件/总量 三限额，任何
  * 失败都清理本请求已创建的全部文件（all-or-none）。成功返回元数据数组。
@@ -333,7 +346,7 @@ export async function processUpload(
                 `Total upload size exceeds the ${MAX_TOTAL_BYTES / MB}MB request limit`,
               )
             }
-            await dest.handle.write(buf)
+            await writeAll(dest.handle, buf)
           }
           if (truncated || fileBytes > MAX_FILE_BYTES) {
             throw new UploadError(

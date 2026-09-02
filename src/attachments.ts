@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto"
 import sharp from "sharp"
 import type { AgentInput, ContentBlockParam } from "@zerone-agent/agent-sdk"
 import { safeResolve } from "./files.js"
-import { MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TOTAL_BYTES, UPLOADS_DIR, pinDirectory, type PinnedDir } from "./uploads.js"
+import { MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TOTAL_BYTES, UPLOADS_DIR, pinDirectory, writeAll, type PinnedDir } from "./uploads.js"
 
 export type AttachmentErrorCode = "invalid_attachment" | "attachment_missing" | "upload_limit_exceeded"
 
@@ -327,7 +327,7 @@ async function materializeSnapshot(att: ValidatedAttachment, pinnedDir: PinnedDi
   const dest = join(pinnedDir.trustedDir, unique)
   const handle = await open(dest, "wx")
   try {
-    await handle.write(att.bytes)
+    await writeAll(handle, att.bytes)
     return `${UPLOADS_DIR}/${unique}`
   } catch (err) {
     await rm(dest, { force: true }).catch(() => {})

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, renameSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildReadGuardTool, readGuardApplies } from "../read-guard.js"
@@ -37,7 +37,7 @@ describe("buildReadGuardTool", () => {
     expect(asText(res)).toContain("hello-guard")
   })
 
-  it("allows listing the uploads directory itself (real directory)", async () => {
+  itProcfs("allows listing the uploads directory itself (real directory)", async () => {
     writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "x")
     const tool = buildReadGuardTool(cwd)
     const res = await tool.call({ file_path: ".zerone-uploads" }, ctx(cwd))
@@ -97,12 +97,41 @@ describe("buildReadGuardTool", () => {
     }
   })
 
-  itFallback("uploads file reads fail closed without kernel fd binding", async () => {
+  itProcfs("directory listing is fd-pinned: a swap before the SDK open cannot list outside names", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "x")
+    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "s")
+      const orig = FileReadTool.call.bind(FileReadTool)
+      const spy = vi.spyOn(FileReadTool, "call").mockImplementation(async (input: any, ctx: any) => {
+        // 校验后、SDK 真正打开前换链：真实目录改名保内容，词法位置换成
+        // 指向外部的 symlink（review R6 P1 复现）
+        renameSync(join(cwd, ".zerone-uploads"), join(cwd, ".zerone-uploads-stolen"))
+        symlinkSync(outside, join(cwd, ".zerone-uploads"))
+        return orig(input, ctx)
+      })
+      try {
+        const tool = buildReadGuardTool(cwd)
+        const res = await tool.call({ file_path: ".zerone-uploads" }, ctx(cwd))
+        const text = typeof res === "string" ? res : JSON.stringify(res)
+        expect(text).toContain("a.txt") // 钉住目录的条目可见
+        expect(text).not.toContain("secret.txt") // 外部名字绝不出现在列表
+      } finally {
+        spy.mockRestore()
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  itFallback("uploads reads fail closed without kernel fd binding (file and directory)", async () => {
     writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "hello-guard")
     const tool = buildReadGuardTool(cwd)
-    const res = await tool.call({ file_path: ".zerone-uploads/a.txt" }, ctx(cwd))
-    expect(res).toMatchObject({ is_error: true })
-    expect(JSON.stringify(res)).toContain("/proc/self/fd")
+    const fileRes = await tool.call({ file_path: ".zerone-uploads/a.txt" }, ctx(cwd))
+    expect(fileRes).toMatchObject({ is_error: true })
+    expect(JSON.stringify(fileRes)).toContain("/proc/self/fd")
+    const dirRes = await tool.call({ file_path: ".zerone-uploads" }, ctx(cwd))
+    expect(dirRes).toMatchObject({ is_error: true })
   })
 
   it("leaves paths outside uploads untouched (base behavior, even symlinks)", async () => {    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))

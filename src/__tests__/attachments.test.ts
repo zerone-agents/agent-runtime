@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync, readdirSync, existsSync } from "node:fs"
-import { readFile, open } from "node:fs/promises"
+import { readFile, open, type FileHandle } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -346,6 +346,39 @@ describeProcfs("buildAgentInput", () => {
     const text = (input[0] as { type: "text"; text: string }).text
     expect(text).toMatch(/\.zerone-uploads\/snap-[0-9a-f]{8}-doc\.pdf/)
     expect(text).not.toContain(".zerone-uploads/doc.pdf")
+  })
+
+  it("snapshot survives a short write from FileHandle.write (review R6 P1)", async () => {
+    const content = Buffer.from("snapshot-short-write-payload-".repeat(40))
+    const att = await stageValidated(cwd, "doc.txt", content)
+    const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
+    const proto = Object.getPrototypeOf(probe) as Pick<FileHandle, "write">
+    const origWrite = proto.write
+    await probe.close()
+    let shortCount = 0
+    // 手工包装原型（vitest 对 FileHandle.write 重载的类型推断不可靠）：
+    // 第一次写入只实际写一半（模拟短写），writeAll 必须补写完整
+    proto.write = (async function (
+      this: FileHandle,
+      buf: Buffer, offset = 0, length = buf.length, position: number | null = null,
+    ) {
+      if (shortCount === 0 && length > 1) {
+        shortCount += 1
+        const half = Math.floor(length / 2)
+        return Reflect.apply(origWrite, this, [buf, offset, half, position])
+      }
+      return Reflect.apply(origWrite, this, [buf, offset, length, position])
+    }) as typeof proto.write
+    try {
+      const input = await buildAgentInput("m", [att])
+      const text = (input as Array<{ type: string; text?: string }>)[0].text ?? ""
+      const m = text.match(/\.zerone-uploads\/(snap-[0-9a-f]{8}-doc\.txt)/)
+      expect(m).not.toBeNull()
+      expect(readFileSync(join(cwd, ".zerone-uploads", m![1])).equals(content)).toBe(true)
+      expect(shortCount).toBe(1)
+    } finally {
+      proto.write = origWrite
+    }
   })
 
   it("snapshot is a real regular file with pinned content, immune to post-validation swap of the original", async () => {

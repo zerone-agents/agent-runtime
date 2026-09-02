@@ -56,34 +56,28 @@ export function buildReadGuardTool(cwd: string): typeof FileReadTool {
         if (realDir === null || real === null || (real !== realDir && !real.startsWith(realDir + sep))) {
           return err(`Error reading file: attachment path resolves outside ${UPLOADS_DIR}: ${input.file_path}`)
         }
-        if (st.isDirectory()) {
-          return FileReadTool.call(input, context) // 目录列表仅暴露名字，透传
-        }
-        // fd 钉住委托（review R4 P1）：open 后比对 inode（校验→open 间隙的
-        // 换链在此拒绝）；此后 fd 即钉住该 inode，委托期间的换链无效。
+        // fd 钉住委托（review R4/R6 P1）：文件与目录统一——open 后比对 inode
+        // （校验→open 间隙的换链在此拒绝），此后 fd 即钉住目标；经
+        // /proc/self/fd/<fd> 委托，FileReadTool 的 stat/readdir 都解析到内核
+        // fd 表引用，委托期间任何换链都无法改变列出的目录或读到的内容
         const handle = await open(target, "r").catch(() => null)
         if (handle === null) {
           return err(`Error reading file: attachment path is missing or not a regular file: ${input.file_path}`)
         }
         try {
           const fst = await handle.stat()
-          if (!fst.isFile() || fst.dev !== st.dev || fst.ino !== st.ino) {
+          if (fst.dev !== st.dev || fst.ino !== st.ino || (!fst.isFile() && !fst.isDirectory())) {
             return err(`Error reading file: attachment changed during validation: ${input.file_path}`)
           }
-          if (fdRelativeSupportedOrWarn()) {
-            return await FileReadTool.call(
-              { ...input, file_path: `/proc/self/fd/${handle.fd}` },
-              context,
-            )
+          if (!fdRelativeSupportedOrWarn()) {
+            // fail-closed（review R5/R6 P1）：无内核 fd 引用的平台不接受词法
+            // 委托（文件与目录皆然），该校验→打开窗口在该平台上无法消除
+            return err(`Error reading file: attachments require a /proc/self/fd-capable platform (Linux) on this runtime: ${input.file_path}`)
           }
-          // fail-closed（review R5 P1）：无内核 fd 引用的平台不接受词法委托，
-          // 校验与打开之间的换链窗口在该平台上无法消除
-          return {
-            type: "tool_result" as const,
-            tool_use_id: toolUseId,
-            content: `Error reading file: attachments require a /proc/self/fd-capable platform (Linux) on this runtime: ${input.file_path}`,
-            is_error: true,
-          }
+          return await FileReadTool.call(
+            { ...input, file_path: `/proc/self/fd/${handle.fd}` },
+            context,
+          )
         } finally {
           await handle.close().catch(() => {})
         }

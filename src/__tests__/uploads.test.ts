@@ -1,15 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import {
   mkdtempSync, rmSync, closeSync, openSync, existsSync,
   readdirSync, writeFileSync, mkdirSync, symlinkSync, readFileSync,
 } from "node:fs"
+import { open as openHandle, type FileHandle } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
 import {
   UPLOADS_DIR, MAX_FILE_COUNT, MAX_FILE_BYTES, MAX_TOTAL_BYTES,
   UploadError, splitExt, sanitizeFilename, allocateDestination,
-  processUpload, type UploadedFileMeta,
+  processUpload, writeAll, type UploadedFileMeta,
 } from "../uploads.js"
 import { MB, multipartStream, bigChunks } from "./helpers/multipart.js"
 
@@ -225,6 +226,41 @@ describeProcfs("processUpload", () => {
     }
   })
 
+  it("a short write mid-upload does not truncate the stored file", async () => {
+    const payload = Buffer.from("Z".repeat(8 * 1024 + 17))
+    // probe 需要上传目录先行（processUpload 内部 mkdir 在 body 解析前）
+    mkdirSync(join(cwd, ".zerone-uploads"), { recursive: true })
+    const probe = await openHandle(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
+    const proto = Object.getPrototypeOf(probe) as Pick<FileHandle, "write">
+    const origWrite = proto.write
+    await probe.close()
+    let shortCount = 0
+    // 手工包装原型（vitest 对 FileHandle.write 重载的类型推断不可靠）：
+    // 第一次写入只实际写一半（模拟短写），writeAll 必须补写完整
+    proto.write = (async function (
+      this: FileHandle,
+      buf: Buffer, offset = 0, length = buf.length, position: number | null = null,
+    ) {
+      if (shortCount === 0 && length > 1) {
+        shortCount += 1
+        const half = Math.floor(length / 2)
+        return Reflect.apply(origWrite, this, [buf, offset, half, position])
+      }
+      return Reflect.apply(origWrite, this, [buf, offset, length, position])
+    }) as typeof proto.write
+    try {
+      const { contentType, body } = multipartStream([
+        { filename: "big.txt", type: "text/plain", chunks: [payload] },
+      ])
+      const metas = await processUpload(cwd, body, contentType)
+      expect(metas).toHaveLength(1)
+      expect(readFileSync(join(cwd, ".zerone-uploads", "big.txt")).equals(payload)).toBe(true)
+      expect(shortCount).toBe(1)
+    } finally {
+      proto.write = origWrite
+    }
+  })
+
   it("failure cleanup never deletes a victim at the swapped-in path", async () => {
     const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
     try {
@@ -299,5 +335,44 @@ describeProcfs("processUpload", () => {
     const stream = Readable.toWeb(Readable.from([Buffer.from("x")])) as unknown as ReadableStream<Uint8Array>
     await expect(processUpload(cwd, stream, "multipart/form-data"))
       .rejects.toMatchObject({ code: "invalid_multipart" })
+  })
+})
+
+describe("writeAll", () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "wa-")) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  it("loops until the whole buffer is on disk when write short-writes (review R6 P1)", async () => {
+    const dest = join(dir, "out.bin")
+    const payload = Buffer.alloc(64 * 1024 + 3, 7)
+    const probe = await openHandle(dest, "w")
+    const proto = Object.getPrototypeOf(probe) as Pick<FileHandle, "write">
+    const origWrite = proto.write
+    await probe.close()
+    let shortCount = 0
+    proto.write = (async function (
+      this: FileHandle,
+      buf: Buffer, offset = 0, length = buf.length, position: number | null = null,
+    ) {
+      if (shortCount === 0 && length > 1) {
+        shortCount += 1
+        const half = Math.floor(length / 2)
+        return Reflect.apply(origWrite, this, [buf, offset, half, position])
+      }
+      return Reflect.apply(origWrite, this, [buf, offset, length, position])
+    }) as typeof proto.write
+    try {
+      const handle = await openHandle(dest, "w")
+      try {
+        await writeAll(handle, payload)
+      } finally {
+        await handle.close()
+      }
+      expect(shortCount).toBe(1)
+      expect(readFileSync(dest).equals(payload)).toBe(true)
+    } finally {
+      proto.write = origWrite
+    }
   })
 })
