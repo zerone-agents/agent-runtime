@@ -399,7 +399,7 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.allowedTools).toEqual(["Read"])
     })
 
-    it("sanitizes MCP stdio env values (keeps command and args)", async () => {
+    it("sanitizes MCP stdio config: command/args fully masked, env values masked (#54 review)", async () => {
       const config = makeConfig([{
         id: "stdio-agent",
         model: "gpt-4",
@@ -407,7 +407,7 @@ describe("AgentRegistry (factory)", () => {
           local: {
             transport: "stdio",
             command: "npx",
-            args: ["-y", "some-server"],
+            args: ["-y", "some-server", "--token=hunter2"],
             env: { API_KEY: "secret-token", OTHER: "x" },
           },
         },
@@ -418,21 +418,21 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.mcpServers).toEqual({
         local: {
           transport: "stdio",
-          command: "npx",
-          args: ["-y", "some-server"],
+          command: "***",
+          args: ["***", "***", "***"], // arity preserved, values masked
           env: { API_KEY: "***", OTHER: "***" },
         },
       })
     })
 
-    it("sanitizes MCP sse headers (keeps url)", async () => {
+    it("sanitizes MCP sse url to structure (no userinfo/query) and masks header values (#54 review)", async () => {
       const config = makeConfig([{
         id: "sse-agent",
         model: "gpt-4",
         mcpServers: {
           remote: {
             transport: "sse",
-            url: "https://example.com/sse",
+            url: "https://user:pass@example.com/sse?token=hunter2",
             headers: { Authorization: "Bearer xxx" },
           },
         },
@@ -449,14 +449,19 @@ describe("AgentRegistry (factory)", () => {
       })
     })
 
-    it("sanitizes MCP http headers (keeps url)", async () => {
+    it("sanitizes MCP http url to structure; unparseable urls are fully masked (#54 review)", async () => {
       const config = makeConfig([{
         id: "http-agent",
         model: "gpt-4",
         mcpServers: {
           api: {
             transport: "http",
-            url: "https://example.com/mcp",
+            url: "https://api.example.com:8443/mcp?key=hunter2",
+            headers: { "X-API-Key": "abc" },
+          },
+          weird: {
+            transport: "http",
+            url: "not a valid url",
             headers: { "X-API-Key": "abc" },
           },
         },
@@ -467,7 +472,12 @@ describe("AgentRegistry (factory)", () => {
       expect(detail.mcpServers).toEqual({
         api: {
           transport: "http",
-          url: "https://example.com/mcp",
+          url: "https://api.example.com:8443/mcp",
+          headers: { "X-API-Key": "***" },
+        },
+        weird: {
+          transport: "http",
+          url: "***",
           headers: { "X-API-Key": "***" },
         },
       })

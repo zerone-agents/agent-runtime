@@ -436,14 +436,33 @@ export class AgentRegistry {
 type McpServerConfig = NonNullable<AgentDefinition["mcpServers"]>[string]
 
 /**
+ * Redact a URL to its safe structural parts: scheme, host, port, path.
+ * Userinfo (`user:pass@`) and query/hash (frequent token carriers, e.g.
+ * `?token=xxx`) are stripped; unparseable values are fully masked — a
+ * non-URL string could embed anything.
+ */
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw)
+    u.username = ""
+    u.password = ""
+    u.search = ""
+    u.hash = ""
+    return u.toString()
+  } catch {
+    return "***"
+  }
+}
+
+/**
  * Sanitize MCP server config for safe HTTP exposure.
  *
- * Policy: `env` and `headers` values are replaced with "***" (keys preserved).
- * `command`, `args`, and `url` are returned as-is.
- *
- * Note: `args` and `url` may carry secrets in user-supplied forms (e.g.,
- * `--token=xxx` in args, `?token=xxx` or `user:pass@host` in url). These are
- * NOT redacted — callers must avoid logging them verbatim.
+ * Policy (#54 review): NO raw config value leaves the process.
+ * - `command` → "***" (executable paths can leak infrastructure details)
+ * - `args` → array of "***" (arity preserved — values may carry `--token=`)
+ * - `url` → structural form only (scheme://host[:port]/path; userinfo,
+ *   query, hash stripped; unparseable → "***")
+ * - `env` / `headers` values → "***" (keys preserved)
  */
 function sanitizeMcpServers(
   servers: Record<string, McpServerConfig> | undefined,
@@ -454,8 +473,8 @@ function sanitizeMcpServers(
   for (const [name, cfg] of Object.entries(servers)) {
     const summary: McpServerSummary = { transport: cfg.transport }
     if (cfg.transport === "stdio") {
-      if (cfg.command !== undefined) summary.command = cfg.command
-      if (cfg.args !== undefined) summary.args = cfg.args
+      if (cfg.command !== undefined) summary.command = "***"
+      if (cfg.args !== undefined) summary.args = cfg.args.map(() => "***")
       if (cfg.env !== undefined) {
         summary.env = Object.fromEntries(
           Object.keys(cfg.env).map((k) => [k, "***"]),
@@ -463,7 +482,7 @@ function sanitizeMcpServers(
       }
     } else {
       // sse | http
-      if (cfg.url !== undefined) summary.url = cfg.url
+      if (cfg.url !== undefined) summary.url = redactUrl(cfg.url)
       if (cfg.headers !== undefined) {
         summary.headers = Object.fromEntries(
           Object.keys(cfg.headers).map((k) => [k, "***"]),
