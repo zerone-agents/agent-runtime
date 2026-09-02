@@ -74,6 +74,19 @@ const AgentDefinitionSchema = z.object({
   systemPromptFile: z.string().optional(),
   maxTurns: z.number().default(10),
   maxSessionQueries: z.number().optional(),
+  /**
+   * Legacy name, explicitly rejected (was renamed to maxSessionQueries):
+   * stripping it silently would drop a configured session cap to
+   * unlimited. Declaring the key keeps strip-mode from removing it
+   * before validation, so any supplied value fails loudly.
+   */
+  maxSessionTurns: z
+    .unknown()
+    .optional()
+    .refine(
+      (v) => v === undefined,
+      "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
+    ),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project"])).optional(),

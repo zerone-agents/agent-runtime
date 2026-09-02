@@ -260,6 +260,16 @@ describe("RuntimeConfigSchema", () => {
       })
       expect(result.agents[0].maxSessionQueries).toBeUndefined()
     })
+
+    it("rejects the legacy maxSessionTurns key loudly (no silent strip)", () => {
+      expect(() =>
+        RuntimeConfigSchema.parse({
+          agents: [
+            { id: "assistant", description: "assistant", maxSessionTurns: 50 },
+          ],
+        }),
+      ).toThrow(/maxSessionTurns was renamed to maxSessionQueries/)
+    })
   })
 })
 

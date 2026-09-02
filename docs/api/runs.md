@@ -99,6 +99,12 @@ For new integrations, prefer the `Accept` header approach (Streamable HTTP) as i
 
 `message` (string) is always required. All other fields are optional.
 
+### `maxSessionQueries` (optional)
+
+Maximum conversation rounds sent to the LLM (context window); unlimited when omitted.
+
+**Legacy field name rejected:** the old name `maxSessionTurns` is intentionally NOT accepted — sending it returns HTTP 400 with `{ "error": "maxSessionTurns was renamed to maxSessionQueries — use the new field name" }`. It is never silently ignored (a dropped cap would silently become unlimited).
+
 ### `attachments` (optional, issue #43)
 
 An array of descriptors returned by `POST /v1/files/uploads`. Legacy text-only requests are unaffected. Descriptors are re-validated on every run: the `path` must be a flat filename directly under `.zerone-uploads/` (no subdirectories, dot-segments, or control characters), reference an existing regular file (no symlinks), and match its real `size`; count (≤10), per-file (≤20MB) and total (≤50MB) limits are re-checked before any content is read and again on the pinned fd's final size (bounded reads). Failures return `{ "error", "code", "path?" }` with `code` ∈ `attachment_missing`/`invalid_attachment` (400) / `upload_limit_exceeded` (413). Decodeable images become image blocks; the message also lists workspace-relative `Read` paths — these point to per-run snapshot copies (`.zerone-uploads/snap-<hex>-<name>`) materialized from the validated bytes, so later filesystem changes (including symlink swaps of the original uploads) cannot alter what a run reads. The agent's `Read` tool is additionally hardened at the runtime layer: any read under `.zerone-uploads/` re-enforces symlink rejection and realpath containment at execution time, and delegates through a kernel fd reference (`/proc/self/fd`) so the bytes the SDK opens are the validated ones. **Platform requirement:** uploads, snapshot materialization, and the guarded `Read` delegation bind to the uploads directory via a kernel fd reference (`/proc/self/fd`, Linux); on other platforms these operations fail closed (`500` / tool error) instead of degrading to unsafe path-based behavior.

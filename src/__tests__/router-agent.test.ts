@@ -113,6 +113,19 @@ describe("Agent Router (per-request)", () => {
       )
     })
 
+    it("rejects the legacy maxSessionTurns body field with 400 (no silent ignore)", async () => {
+      const app = createApp(registry, metrics)
+      const res = await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", maxSessionTurns: 20 }),
+      })
+
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: string }
+      expect(body.error).toContain("maxSessionQueries")
+    })
+
     it("passes maxSessionQueries to agent.query in SSE mode", async () => {
       const mockQuery = vi.fn().mockReturnValue(async function* () {
         yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }

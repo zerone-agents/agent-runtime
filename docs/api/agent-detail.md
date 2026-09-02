@@ -191,6 +191,7 @@ agent 配置解析失败时（例如 `systemPromptFile` 找不到文件），`st
 | `permissionMode` | string | 工具权限模式：`default` / `acceptEdits` / `bypassPermissions` / `plan` / `dontAsk` / `auto` |
 | `allowedTools` | string[] | 工具白名单 |
 | `disallowedTools` | string[] | 工具黑名单 |
+| `maxSessionQueries` | number | 发送给 LLM 的最大对话轮数（上下文窗口），未配置即不限。旧名 `maxSessionTurns` 已废弃：在 agents.yaml 中使用旧名会报配置错误（显式拒绝，不静默忽略） |
 | `availableSkills` | `SkillSummary[]` | **运行时层**：runtime 启动时扫描文件系统得出的实际可用技能清单。仅在扫到 ≥1 个时出现。详见 [SkillSummary](#skillsummary-字段说明) |
 | `settingSources` | (`"user"` \| `"project"` \| `"local"`)[] | **配置层**：技能扫描来源：`user`→`~/.openagent/skills/`，`project`→`<cwd>/.openagent/skills/`，`local`→SDK 类型里有但 loader 未实现（no-op） |
 | `extraUserSkillDirs` | string[] | 额外用户级技能目录 |

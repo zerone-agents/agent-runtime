@@ -56,6 +56,14 @@ export function createAgentRouter(
     if (!body?.message) {
       return c.json({ error: "Invalid request: message is required" }, 400)
     }
+    // Legacy field name rejected explicitly (not silently ignored): a
+    // dropped session cap would silently become unlimited.
+    if (typeof body === "object" && body !== null && "maxSessionTurns" in body) {
+      return c.json(
+        { error: "maxSessionTurns was renamed to maxSessionQueries — use the new field name" },
+        400,
+      )
+    }
 
     const { message, sessionId, stream, maxSessionQueries, runId: callerRunId } = body
 
