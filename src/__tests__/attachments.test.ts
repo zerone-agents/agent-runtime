@@ -11,6 +11,22 @@ import {
   type AttachmentDescriptor, type ValidatedAttachment,
 } from "../attachments.js"
 
+// 复现"lstat 后同 inode 扩容"（review R3 P1）：按需把 lstat 压报为更小 size，
+// 默认 null = 原样透传。vi.mock 提升到模块图顶部，对本文件与 attachments.ts 同时生效。
+const lstatOverride = vi.hoisted(() => ({ reportedSize: null as number | null }))
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>()
+  return {
+    ...actual,
+    lstat: (p: string) =>
+      actual.lstat(p).then((st) =>
+        lstatOverride.reportedSize === null
+          ? st
+          : Object.assign(Object.create(Object.getPrototypeOf(st)), st, { size: lstatOverride.reportedSize }),
+      ),
+  }
+})
+
 const MB = 1024 * 1024
 
 function desc(over: Partial<AttachmentDescriptor> = {}): AttachmentDescriptor {
@@ -144,7 +160,7 @@ describe("validateAttachments", () => {
     const d = await stage("big.bin", Buffer.alloc(20 * MB + 1))
     // FileHandle 非运行时导出，经实例原型安装 spy
     const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
-    const spy = vi.spyOn(Object.getPrototypeOf(probe), "readFile")
+    const spy = vi.spyOn(Object.getPrototypeOf(probe), "read")
     await probe.close()
     try {
       await expect(validateAttachments(cwd, [d])).rejects.toMatchObject({ code: "upload_limit_exceeded" })
@@ -160,13 +176,50 @@ describe("validateAttachments", () => {
       descriptors.push(await stage(`p${i}.bin`, Buffer.alloc(17 * MB)))
     }
     const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
-    const spy = vi.spyOn(Object.getPrototypeOf(probe), "readFile")
+    const spy = vi.spyOn(Object.getPrototypeOf(probe), "read")
     await probe.close()
     try {
       await expect(validateAttachments(cwd, descriptors)).rejects.toMatchObject({ code: "upload_limit_exceeded" })
       expect(spy).toHaveBeenCalledTimes(2) // 17+17=34MB 已读，第三个在读取前拒绝
     } finally {
       spy.mockRestore()
+    }
+  })
+
+  it("re-checks the single-file limit on the fd's final size (same-inode growth)", async () => {
+    // 真文件 21MB，lstat 压报 5（descriptor 同步 5）骗过 lstat 侧检查；
+    // fd 终态 21MB 必须在读取前被 413 拒绝，不得先缓冲
+    const big = Buffer.alloc(21 * MB)
+    const d = await stage("grown.bin", big)
+    lstatOverride.reportedSize = 5
+    try {
+      const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
+      const spy = vi.spyOn(Object.getPrototypeOf(probe), "read")
+      await probe.close()
+      try {
+        await expect(validateAttachments(cwd, [{ ...d, size: 5 }]))
+          .rejects.toMatchObject({ code: "upload_limit_exceeded" })
+        expect(spy).toHaveBeenCalledTimes(0)
+      } finally {
+        spy.mockRestore()
+      }
+    } finally {
+      lstatOverride.reportedSize = null
+    }
+  })
+
+  it("bounded read length stays consistent with the accounted size", async () => {
+    // 真文件 6MB，lstat 压报 5 → fd 终态 6MB 限额内：恰读 6MB、计量 6MB
+    const content = Buffer.alloc(6 * MB, 7)
+    const d = await stage("grown2.bin", content)
+    lstatOverride.reportedSize = 5
+    try {
+      const out = await validateAttachments(cwd, [{ ...d, size: 5 }])
+      expect(out[0].bytes.length).toBe(6 * MB)
+      expect(out[0].realSize).toBe(6 * MB)
+      expect(out[0].bytes[0]).toBe(7)
+    } finally {
+      lstatOverride.reportedSize = null
     }
   })
 

@@ -5,6 +5,7 @@ import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 import { scanSkills, type SkillSummary } from "./skills.js"
 import { loadToolFiles } from "./tools/loader.js"
+import { buildReadGuardTool, readGuardApplies } from "./read-guard.js"
 
 function convertMcpServers(
   mcpServers: Record<string, any> | undefined,
@@ -139,6 +140,12 @@ export class AgentRegistry {
         // omitting it means "no filter" — every scanned skill is exposed.
         // SDK 1.0.0 API: systemPrompt/allowedTools/disallowedTools/maxTurns moved
         // into the `agent` field (AgentDefinition).
+        // Read 工具防护（issue #43）：同名 "Read" 作为 customTool 注入，
+        // SDK 工具池 later-wins 去重即接管内置 Read——uploads 子树在
+        // Read 执行处强制 containment（校验后换链的路径拒绝读取）。
+        const guardTools = readGuardApplies(def.allowedTools)
+          ? [buildReadGuardTool(process.cwd())]
+          : []
         const opts: CreateOpts = {
           model: process.env.ZERONE_AGENT_MODEL ?? def.model,
           apiType: (process.env.ZERONE_AGENT_API_TYPE as any) ?? (def.apiType as any) ?? undefined,
@@ -158,7 +165,7 @@ export class AgentRegistry {
           mcpServers: convertMcpServers(def.mcpServers),
           thinking: def.thinking as any,
           subAgents: buildSubAgents(def, defsById, configDir),
-          customTools: fileTools.length > 0 ? fileTools : undefined,
+          customTools: [...fileTools, ...guardTools],
         }
 
         this.defs.set(def.id, def)

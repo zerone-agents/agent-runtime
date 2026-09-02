@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/agent-sdk", () => ({
-  createAgent: vi.fn(),
-}))
+vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
+  return { ...actual, createAgent: vi.fn() }
+})
 
 vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),

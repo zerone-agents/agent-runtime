@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/agent-sdk", () => ({
-  createAgent: vi.fn(),
-}))
+vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
+  return { ...actual, createAgent: vi.fn() }
+})
 
 vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),
@@ -76,7 +77,8 @@ describe("AgentRegistry (file tools)", () => {
     registry.create("agent-a")
 
     const opts = mockCreateAgent.mock.calls[0][0] as any
-    expect(opts.customTools).toEqual([fileTool])
+    // Read 防护工具随 fileTools 一并注入（同名接管内置 Read，issue #43）
+    expect(opts.customTools).toEqual([fileTool, expect.objectContaining({ name: "Read" })])
   })
 
   it("marks only the failing agent unavailable when tool loading throws", async () => {

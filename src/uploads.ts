@@ -6,8 +6,8 @@
  * 扁平目录，生命周期跟随容器。
  */
 import { randomUUID } from "node:crypto"
-import { open, mkdir, rm, realpath, type FileHandle } from "node:fs/promises"
-import { join, sep } from "node:path"
+import { open, mkdir, rm, realpath, lstat, type FileHandle } from "node:fs/promises"
+import { join } from "node:path"
 import { Readable } from "node:stream"
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import busboy from "busboy"
@@ -126,13 +126,40 @@ export async function processUpload(
     throw new Error(`${UPLOADS_DIR} must be a real directory inside the working directory`)
   }
 
-  const created: string[] = []
+  // 受信目录 inode 钉住（review PR #48 R3）：后续探针与 canonical 复核都
+  // 与该 dev/ino 比对——路径换链不改变已打开对象的身份。
+  const pinned = await lstat(realUploadsDir)
+
+  interface CreatedFile {
+    canonicalPath: string
+    handle: FileHandle
+    dev: number
+    ino: number
+  }
+  const created: CreatedFile[] = []
   const metas: UploadedFileMeta[] = []
   let fileCount = 0
   let totalBytes = 0
 
+  /** inode 复核的 unlink：路径当前解析结果与记录的 dev/ino 一致才删除；
+   * 换链后宁留（已清零的）自有文件也不误删他人文件。 */
+  const unlinkIfNodeMatches = async (path: string, dev: number, ino: number): Promise<void> => {
+    const st = await lstat(path).catch(() => null)
+    if (st !== null && st.dev === dev && st.ino === ino) {
+      await rm(path, { force: true }).catch(() => {})
+    }
+  }
+
+  // fd 钉住清理（review PR #48 R3）：句柄全程保持打开直至请求终结，
+  // truncate 只作用于自身 inode（不可被路径重定向）；失败时逐文件
+  // 先清零、再关闭、最后做 inode 复核 unlink。
   const cleanup = async (): Promise<void> => {
-    await Promise.all(created.map((p) => rm(p, { force: true }).catch(() => {})))
+    for (const f of created) {
+      await f.handle.truncate(0).catch(() => {})
+      await f.handle.close().catch(() => {})
+      await unlinkIfNodeMatches(f.canonicalPath, f.dev, f.ino)
+    }
+    created.length = 0
   }
 
   let bb: ReturnType<typeof busboy>
@@ -176,36 +203,49 @@ export async function processUpload(
               `Too many files: limit is ${MAX_FILE_COUNT}`,
             )
           }
+          // 探针：可变路径此刻仍解析到初检钉住的受信目录（dev/ino 一致）
+          const dirSt = await lstat(dir).catch(() => null)
+          if (dirSt === null || dirSt.dev !== pinned.dev || dirSt.ino !== pinned.ino) {
+            throw new Error("uploads directory changed — possible symlink swap")
+          }
           const dest = await allocateDestination(dir, info.filename)
-          // 防“检查后换链”（review PR #48 R2 P1a）：初检只覆盖请求起点，
-          // 逐文件在 open 后复核真实落点——目录在检查后被换成 symlink 时，
-          // 本次 open 已落在 cwd 外，这里立即关闭、删除并中止。
-          const realFile = await realpath(dest.absPath)
-          if (!realFile.startsWith(realUploadsDir + sep)) {
+          // canonical inode 复核（review PR #48 R3）：open 发生在可变路径上，
+          // 打开后立即以受信 canonical 路径再开一次并比对 dev/ino——不一致
+          // 或不可达即落点逃逸；在任何字节写入之前中止，逃逸文件清零后
+          // 仅在 inode 匹配时 unlink（不误删换链目标里的他人文件）。
+          const fst = await dest.handle.stat()
+          const canonicalPath = join(realUploadsDir, dest.name)
+          const verify = await open(canonicalPath, "r").catch(() => null)
+          let contained = false
+          if (verify !== null) {
+            const vst = await verify.stat().catch(() => null)
+            contained = vst !== null && vst.dev === fst.dev && vst.ino === fst.ino
+            await verify.close().catch(() => {})
+          }
+          if (!contained) {
+            await dest.handle.truncate(0).catch(() => {})
             await dest.handle.close().catch(() => {})
-            await rm(dest.absPath, { force: true }).catch(() => {})
+            await unlinkIfNodeMatches(dest.absPath, fst.dev, fst.ino)
             throw new Error("upload destination escaped .zerone-uploads — possible symlink swap")
           }
-          created.push(dest.absPath)
+          created.push({ canonicalPath, handle: dest.handle, dev: fst.dev, ino: fst.ino })
           let fileBytes = 0
           let truncated = false
           // busboy fileSize 截断信号（双保险的另一半是我们自己的 fileBytes 计数）
           stream.on("limit", () => { truncated = true })
-          try {
-            for await (const chunk of stream) {
-              const buf = chunk as Buffer
-              fileBytes += buf.length
-              totalBytes += buf.length
-              if (totalBytes > MAX_TOTAL_BYTES) {
-                throw new UploadError(
-                  "upload_limit_exceeded",
-                  `Total upload size exceeds the ${MAX_TOTAL_BYTES / MB}MB request limit`,
-                )
-              }
-              await dest.handle.write(buf)
+          // 句柄保持打开直至请求终结（成功：finish 统一关闭；失败：cleanup
+          // 经句柄清零自身 inode 后再做 inode 复核 unlink）
+          for await (const chunk of stream) {
+            const buf = chunk as Buffer
+            fileBytes += buf.length
+            totalBytes += buf.length
+            if (totalBytes > MAX_TOTAL_BYTES) {
+              throw new UploadError(
+                "upload_limit_exceeded",
+                `Total upload size exceeds the ${MAX_TOTAL_BYTES / MB}MB request limit`,
+              )
             }
-          } finally {
-            await dest.handle.close().catch(() => {})
+            await dest.handle.write(buf)
           }
           if (truncated || fileBytes > MAX_FILE_BYTES) {
             throw new UploadError(
@@ -233,11 +273,13 @@ export async function processUpload(
 
     bb.on("finish", () => {
       work
-        .then(() => {
+        .then(async () => {
           if (settled) return
           if (metas.length === 0) {
             throw new UploadError("invalid_multipart", "No files in request")
           }
+          // 成功路径：统一关闭本请求持有的全部句柄
+          await Promise.all(created.map((f) => f.handle.close().catch(() => {})))
           resolve(metas)
         })
         .catch(fail)

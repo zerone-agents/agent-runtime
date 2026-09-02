@@ -211,8 +211,34 @@ export async function validateAttachments(
           att.path,
         )
       }
-      const bytes = await handle.readFile()
-      validated.push({ descriptor: att, absPath: abs, realSize: st.size, bytes })
+      // fd 终态 size 重验限额（review PR #48 R3 P1）：同 inode 扩容不改变
+      // dev/ino，单文件与累计限额必须在 fd 的最终 size 上重算，拒绝路径
+      // 不得因扩容绕过读取边界。
+      if (fst.size > MAX_FILE_BYTES) {
+        throw new AttachmentError(
+          "upload_limit_exceeded",
+          `Attachment exceeds the ${MAX_FILE_BYTES / (1024 * 1024)}MB single-file limit: ${att.path}`,
+          att.path,
+        )
+      }
+      if (totalSoFar - st.size + fst.size > MAX_TOTAL_BYTES) {
+        throw new AttachmentError(
+          "upload_limit_exceeded",
+          `Total attachment size exceeds the ${MAX_TOTAL_BYTES / (1024 * 1024)}MB limit`,
+        )
+      }
+      totalSoFar += fst.size - st.size
+      // 有界读取：读取长度与计量一致（恰为 fst.size 字节），杜绝读到 EOF
+      const bytes = Buffer.alloc(fst.size)
+      const { bytesRead } = await handle.read(bytes, 0, fst.size, 0)
+      if (bytesRead !== fst.size) {
+        throw new AttachmentError(
+          "invalid_attachment",
+          `Attachment changed during validation: ${att.path}`,
+          att.path,
+        )
+      }
+      validated.push({ descriptor: att, absPath: abs, realSize: fst.size, bytes })
     } finally {
       await handle.close().catch(() => {})
     }

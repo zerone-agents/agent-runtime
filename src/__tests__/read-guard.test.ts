@@ -1,0 +1,118 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { buildReadGuardTool, readGuardApplies } from "../read-guard.js"
+import { validateAttachments, buildAgentInput } from "../attachments.js"
+import type { ToolContext } from "@zerone-agent/agent-sdk"
+
+/** 最小 ToolContext：Read 路径只消费 cwd，其余字段按类型补齐 */
+const ctx = (cwd: string): ToolContext => ({
+  cwd,
+  agentId: "read-guard-test",
+  services: {} as ToolContext["services"],
+  subprocessEnv: {},
+})
+
+/** SDK Read 成功返回 string 或 { data } 对象，统一取文本断言 */
+const asText = (r: unknown): string => (typeof r === "string" ? r : JSON.stringify(r))
+
+describe("buildReadGuardTool", () => {
+  let cwd: string
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "read-guard-"))
+    mkdirSync(join(cwd, ".zerone-uploads"), { recursive: true })
+  })
+  afterEach(() => rmSync(cwd, { recursive: true, force: true }))
+
+  it("delegates normal reads under uploads to the base tool", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "hello-guard")
+    const tool = buildReadGuardTool(cwd)
+    const res = await tool.call({ file_path: ".zerone-uploads/a.txt" }, ctx(cwd))
+    expect(asText(res)).toContain("hello-guard")
+  })
+
+  it("allows listing the uploads directory itself (real directory)", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "a.txt"), "x")
+    const tool = buildReadGuardTool(cwd)
+    const res = await tool.call({ file_path: ".zerone-uploads" }, ctx(cwd))
+    expect(asText(res)).toContain("a.txt")
+  })
+
+  it("rejects a symlinked file under uploads at Read time", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE SECRET")
+      symlinkSync(join(outside, "secret.txt"), join(cwd, ".zerone-uploads", "link.txt"))
+      const tool = buildReadGuardTool(cwd)
+      const res = await tool.call({ file_path: ".zerone-uploads/link.txt" }, ctx(cwd))
+      expect(res).toMatchObject({ is_error: true })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects intermediate-symlink escape under uploads at Read time", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE SECRET")
+      symlinkSync(outside, join(cwd, ".zerone-uploads", "sub"))
+      const tool = buildReadGuardTool(cwd)
+      const res = await tool.call({ file_path: ".zerone-uploads/sub/secret.txt" }, ctx(cwd))
+      expect(res).toMatchObject({ is_error: true })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("leaves paths outside uploads untouched (base behavior, even symlinks)", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      writeFileSync(join(outside, "ok.txt"), "FINE")
+      symlinkSync(join(outside, "ok.txt"), join(cwd, "plain-link.txt"))
+      const tool = buildReadGuardTool(cwd)
+      const res = await tool.call({ file_path: "plain-link.txt" }, ctx(cwd))
+      expect(asText(res)).toContain("FINE")
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("reviewer repro: snapshot swapped after buildAgentInput is rejected at Read time", async () => {
+    // R3 P1 端到端复现：物化快照后 unlink + symlink 指向 cwd 外 secret，
+    // 防护版 Read 必须拒绝（不再读到 OUTSIDE SECRET）
+    writeFileSync(join(cwd, ".zerone-uploads", "doc.txt"), "SAFE CONTENT")
+    const validated = await validateAttachments(cwd, [
+      { id: "t", name: "doc.txt", mime: "text/plain", size: 12, path: ".zerone-uploads/doc.txt" },
+    ])
+    const input = await buildAgentInput("m", validated)
+    const text = (input as Array<{ type: string; text?: string }>)[0].text ?? ""
+    const m = text.match(/\.zerone-uploads\/(snap-[0-9a-f]{8}-doc\.txt)/)
+    expect(m).not.toBeNull()
+
+    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE SECRET")
+      rmSync(join(cwd, ".zerone-uploads", m![1]))
+      symlinkSync(join(outside, "secret.txt"), join(cwd, ".zerone-uploads", m![1]))
+      const tool = buildReadGuardTool(cwd)
+      const res = await tool.call({ file_path: `.zerone-uploads/${m![1]}` }, ctx(cwd))
+      expect(res).toMatchObject({ is_error: true })
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("readGuardApplies", () => {
+  it("applies by default and when the allow-list covers Read", () => {
+    expect(readGuardApplies(undefined)).toBe(true)
+    expect(readGuardApplies([])).toBe(true)
+    expect(readGuardApplies(["Read", "Bash"])).toBe(true)
+    expect(readGuardApplies(["Rea*"])).toBe(true)
+  })
+  it("skips when an allow-list excludes Read (custom tools bypass the SDK allow-list)", () => {
+    expect(readGuardApplies(["Bash"])).toBe(false)
+    expect(readGuardApplies(["Bash", "Write*"])).toBe(false)
+  })
+})

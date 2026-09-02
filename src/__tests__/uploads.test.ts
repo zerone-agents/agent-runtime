@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import {
   mkdtempSync, rmSync, closeSync, openSync, existsSync,
-  readdirSync, writeFileSync, mkdirSync, symlinkSync,
+  readdirSync, writeFileSync, mkdirSync, symlinkSync, readFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -187,8 +187,7 @@ describe("processUpload", () => {
     }
   })
 
-  it("rejects when the uploads dir is swapped to a symlink after the initial check", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
+  it("rejects when the uploads dir is swapped to a symlink after the initial check", async () => {    const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
     try {
       const raw = Buffer.from(
         [
@@ -217,6 +216,48 @@ describe("processUpload", () => {
         processUpload(cwd, body, "multipart/form-data; boundary=testbound"),
       ).rejects.toThrow(/escape|symlink/i)
       expect(readdirSync(outside)).toEqual([])
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("failure cleanup never deletes a victim at the swapped-in path", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
+    try {
+      // victim 预置于外部目录，名字与首个上传文件相同——旧实现的 cleanup
+      // 会经换链后的路径 rm 误删它（review R3 P1 复现）
+      writeFileSync(join(outside, "good.txt"), "VICTIM")
+      const head = (filename: string) =>
+        Buffer.from(
+          `--testbound\r\nContent-Disposition: form-data; name="files"; filename="${filename}"\r\nContent-Type: text/plain\r\n\r\n`,
+        )
+      const chunks = [
+        Buffer.concat([head("good.txt"), Buffer.from("A"), Buffer.from("\r\n"), head("big.bin")]),
+        ...bigChunks(20 * MB + 1),
+      ]
+      let i = 0
+      let swapped = false
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          // good.txt 已完整送入解析、big.bin 数据未到：此刻换链
+          if (i === 1 && !swapped) {
+            swapped = true
+            rmSync(uploadsDir(), { recursive: true, force: true })
+            symlinkSync(outside, uploadsDir())
+          }
+          const c = chunks[i++]
+          if (c === undefined) {
+            controller.close()
+            return
+          }
+          controller.enqueue(c)
+        },
+      }, { highWaterMark: 0 })
+      await expect(
+        processUpload(cwd, body, "multipart/form-data; boundary=testbound"),
+      ).rejects.toThrow()
+      // victim 必须完好：cleanup 只经句柄清零自身 inode + inode 复核 unlink
+      expect(readFileSync(join(outside, "good.txt"), "utf8")).toBe("VICTIM")
     } finally {
       rmSync(outside, { recursive: true, force: true })
     }
