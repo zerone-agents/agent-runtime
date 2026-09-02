@@ -253,7 +253,7 @@ agents:
     subagents: ["coder", "researcher"]
 ```
 
-挂载时只映射 `description`、`systemPrompt`（解析后）、`allowedTools`、`disallowedTools`、`maxTurns` 五个字段——凭证、skills、自定义工具、datasets 在挂载上下文中不生效。委派深度为 1：subagent 不能再挂载 subagent。`subagents` 中的未知 id 或重复 id 会在启动时报错。
+挂载时会物化子 agent 自己的 Agent-local 能力——解析后的 `systemPrompt`（注入它自己的 datasets）、MCP 工具、文件自定义工具、skills、`allowedTools`/`disallowedTools` 策略。这些能力不从父 agent 继承、不合并、不回退：未声明 MCP 的 subagent 看不到父级的 MCP 工具。凭证保持 runtime 全局：沿用父运行的 provider、model 和工作目录。委派深度为 1：subagent 不能再挂载 subagent。`subagents` 中的未知 id 或重复 id 会在启动时报错。
 
 字段参考与 TypeScript 模式：[`docs/configuration.md`](docs/configuration.md)。
 

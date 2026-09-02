@@ -3,23 +3,40 @@ import { AgentRegistry } from "../registry.js"
 
 vi.mock("@zerone-agent/agent-sdk", () => ({
   createAgent: vi.fn(),
+  connectMCPServer: vi.fn(async () => ({
+    name: "default",
+    status: "connected",
+    tools: [],
+    close: async () => {},
+  })),
 }))
 
 vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),
 }))
 
-// Mock scanSkills so registry tests don't touch the real filesystem.
-// Default returns empty; individual tests can override.
+// Mock skill materialization so registry tests don't touch the real
+// filesystem. Defaults return empty; individual tests override.
 vi.mock("../skills.js", () => ({
   scanSkills: vi.fn(async () => []),
+  materializeSkills: vi.fn(async () => []),
+  toSummaries: vi.fn(
+    (defs: Array<Record<string, unknown>>) =>
+      defs.map((s) => ({
+        name: s.name as string,
+        description: s.description as string,
+        source: (s.source ?? "project") as "user" | "project",
+        location: (s.location ?? "") as string,
+      })),
+  ),
 }))
 
-import { createAgent } from "@zerone-agent/agent-sdk"
-import { scanSkills } from "../skills.js"
+import { createAgent, connectMCPServer } from "@zerone-agent/agent-sdk"
+import { materializeSkills } from "../skills.js"
 
 const mockCreateAgent = vi.mocked(createAgent)
-const mockScanSkills = vi.mocked(scanSkills)
+const mockConnectMcp = vi.mocked(connectMCPServer)
+const mockMaterializeSkills = vi.mocked(materializeSkills)
 
 function makeConfig(agents: any[]) {
   return {
@@ -33,7 +50,13 @@ describe("AgentRegistry (factory)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mockScanSkills.mockResolvedValue([])
+    mockMaterializeSkills.mockResolvedValue([])
+    mockConnectMcp.mockResolvedValue({
+      name: "default",
+      status: "connected",
+      tools: [],
+      close: async () => {},
+    } as never)
     registry = new AgentRegistry()
   })
 
@@ -86,7 +109,7 @@ describe("AgentRegistry (factory)", () => {
       )
     })
 
-    it("does not pass allowedSkills to SDK (filesystem-only skill model)", async () => {
+    it("materializes skills runtime-side; no allowedSkills/settingSources passed to SDK (#47)", async () => {
       mockCreateAgent.mockReturnValue({ close: vi.fn().mockResolvedValue(undefined) } as any)
       const config = makeConfig([{
         id: "skill-agent",
@@ -97,7 +120,17 @@ describe("AgentRegistry (factory)", () => {
       registry.create("skill-agent")
       const opts = mockCreateAgent.mock.calls[0][0] as any
       expect(opts.allowedSkills).toBeUndefined()
-      expect(opts.settingSources).toEqual(["user"])
+      // Skills are materialized into agent.capabilities.skills by the
+      // runtime; the SDK session-registry view (settingSources) is no
+      // longer used, so parent/child skill sets cannot cross-contaminate.
+      expect(opts.settingSources).toBeUndefined()
+      expect(opts.extraUserSkillDirs).toBeUndefined()
+      expect(mockMaterializeSkills).toHaveBeenCalledWith({
+        cwd: process.cwd(),
+        settingSources: ["user"],
+        extraUserSkillDirs: undefined,
+      })
+      expect(opts.agent.capabilities.skills).toEqual([])
     })
 
     it("converts mcpServers transport field to type before passing to SDK", async () => {
@@ -117,12 +150,16 @@ describe("AgentRegistry (factory)", () => {
 
       registry.create("mcp-agent")
       const opts = mockCreateAgent.mock.calls[0][0] as any
-      expect(opts.mcpServers.web).toEqual({
+      // Agent-local (#47): no top-level mcpServers — connections are
+      // pre-materialized by the runtime manager and flow into capabilities.
+      expect(opts.mcpServers).toBeUndefined()
+      // canonical config (transport→type) reached connectMCPServer
+      expect(mockConnectMcp).toHaveBeenCalledWith("web", {
         type: "http",
         url: "https://example.com/mcp",
         headers: { Authorization: "Bearer token" },
       })
-      expect(opts.mcpServers.local).toEqual({
+      expect(mockConnectMcp).toHaveBeenCalledWith("local", {
         type: "stdio",
         command: "node",
         args: ["server.js"],
@@ -237,7 +274,7 @@ describe("AgentRegistry (factory)", () => {
       const fakeSkills = [
         { name: "cbt", description: "Cognitive therapy", source: "project" as const, location: "/tmp/.openagent/skills/cbt/SKILL.md" },
       ]
-      mockScanSkills.mockResolvedValue(fakeSkills)
+      mockMaterializeSkills.mockResolvedValue(fakeSkills as never)
 
       const config = makeConfig([{
         id: "full-agent",
@@ -273,7 +310,7 @@ describe("AgentRegistry (factory)", () => {
     })
 
     it("does not include availableSkills when scan returns empty", async () => {
-      mockScanSkills.mockResolvedValue([])
+      mockMaterializeSkills.mockResolvedValue([])
       const config = makeConfig([{
         id: "no-skills",
         model: "gpt-4",
@@ -434,10 +471,10 @@ describe("AgentRegistry (factory)", () => {
 
     it("availableSkills is per-agent isolated (multi-agent with different scans)", async () => {
       // Agent A scans and gets skill "cbt"; agent B scans and gets nothing.
-      mockScanSkills
+      mockMaterializeSkills
         .mockResolvedValueOnce([
           { name: "cbt", description: "therapy", source: "project" as const, location: "/a/SKILL.md" },
-        ])
+        ] as never)
         .mockResolvedValueOnce([])
 
       const config = makeConfig([
@@ -571,7 +608,7 @@ describe("AgentRegistry (factory)", () => {
       mockCreateAgent.mockReturnValue(mockAgent as any)
     })
 
-    it("materializes subAgents from id references with 5-field mapping", async () => {
+    it("materializes subAgents from id references with policy in capabilities", async () => {
       const config = makeConfig([
         { id: "parent", description: "coordinator", model: "gpt-4", subagents: ["coder"] },
         {
@@ -593,9 +630,14 @@ describe("AgentRegistry (factory)", () => {
             coder: {
               description: "writes code",
               prompt: "test-prompt",
-              allowedTools: ["Read", "Write"],
-              disallowedTools: ["Bash"],
               maxTurns: 30,
+              capabilities: {
+                connectionTools: [],
+                customTools: [],
+                skills: [],
+                allowedTools: ["Read", "Write"],
+                disallowedTools: ["Bash"],
+              },
             },
           },
         }),
@@ -644,6 +686,255 @@ describe("AgentRegistry (factory)", () => {
       await registry.closeAll()
 
       expect(mockCreateAgent).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("two-phase capability materialization (#47)", () => {
+    it("puts entry MCP tools into agent.capabilities.connectionTools, not top-level mcpServers", async () => {
+      mockConnectMcp.mockResolvedValueOnce({
+        name: "db",
+        status: "connected",
+        tools: [{ name: "mcp__db__query", execute: vi.fn() }],
+        close: async () => {},
+      } as never)
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "solo", model: "gpt-4", mcpServers: { db: { transport: "stdio", command: "node" } } },
+        ]),
+        "/tmp",
+      )
+      registry.create("solo")
+      const opts = mockCreateAgent.mock.calls[0]![0]!
+      expect(opts.mcpServers).toBeUndefined()
+      expect(
+        opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__db__query"])
+      // canonical config (transport→type) reached connectMCPServer
+      expect(mockConnectMcp).toHaveBeenCalledWith("db", { type: "stdio", command: "node" })
+    })
+
+    it("mounts child capabilities from the child entry's own assets", async () => {
+      mockConnectMcp.mockImplementation(async (n: string) =>
+        ({
+          name: n,
+          status: "connected",
+          tools: [{ name: `mcp__${n}__tool`, execute: vi.fn() }],
+          close: async () => {},
+        }) as never)
+      mockMaterializeSkills.mockImplementation(async (o: { settingSources?: string[] }) =>
+        o.settingSources?.[0] === "user"
+          ? [{ name: "skill-parent" } as never]
+          : ([{ name: "skill-child" }] as never))
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          {
+            id: "parent",
+            model: "gpt-4",
+            subagents: ["child"],
+            settingSources: ["user"],
+            mcpServers: { parentSrv: { transport: "stdio", command: "a" } },
+          },
+          {
+            id: "child",
+            model: "gpt-4",
+            settingSources: ["project"],
+            mcpServers: { childSrv: { transport: "stdio", command: "b" } },
+          },
+        ]),
+        "/tmp",
+      )
+      registry.create("parent")
+      const opts = mockCreateAgent.mock.calls[0]![0]!
+      expect(
+        opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__parentSrv__tool"])
+      expect(
+        opts.agent!.capabilities!.skills!.map((s: { name: string }) => s.name),
+      ).toEqual(["skill-parent"])
+      const child = opts.subAgents!.child!
+      expect(
+        child.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__childSrv__tool"])
+      expect(
+        child.capabilities!.skills!.map((s: { name: string }) => s.name),
+      ).toEqual(["skill-child"])
+      // 深度 1：挂载定义无 subAgents（SDK v3 类型本身无此字段——结构性保证，
+      // cast 仅为断言其不存在）
+      expect((child as { subAgents?: unknown }).subAgents).toBeUndefined()
+    })
+
+    it("marks parent unavailable when a referenced child failed phase-1 materialization", async () => {
+      mockConnectMcp.mockImplementation(
+        async (n: string) =>
+          n === "bad"
+            ? { name: n, status: "error", tools: [], error: new Error("raw secret"), close: async () => {} }
+            : { name: n, status: "connected", tools: [], close: async () => {} },
+      )
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "broken-child", model: "gpt-4", mcpServers: { bad: { transport: "stdio", command: "x" } } },
+          { id: "parent", model: "gpt-4", subagents: ["broken-child"] },
+          { id: "bystander", model: "gpt-4" },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("broken-child")).toBe("unavailable")
+      expect(registry.getStatus("parent")).toBe("unavailable")
+      expect(registry.getDetail("parent")!.unavailableReason).toBe(
+        'subagent "broken-child" unavailable',
+      )
+      expect(registry.getStatus("bystander")).toBe("ready") // 无引用关系不受污染
+    })
+
+    it("grandparent stays ready when child's own root assembly failed (order-independent)", async () => {
+      // child 物化成功但其引用的 grandchild 失败 → child-as-root unavailable,
+      // 但 grandparent 挂载的 child caps 完整 → grandparent ready
+      mockConnectMcp.mockImplementation(
+        async (n: string) =>
+          n === "dead"
+            ? { name: n, status: "error", tools: [], close: async () => {} }
+            : { name: n, status: "connected", tools: [], close: async () => {} },
+      )
+      const registry = new AgentRegistry()
+      // 配置顺序故意让 grandparent 在最前
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "gp", model: "gpt-4", subagents: ["mid"] },
+          { id: "mid", model: "gpt-4", subagents: ["dead-leaf"] },
+          { id: "dead-leaf", model: "gpt-4", mcpServers: { dead: { transport: "stdio", command: "x" } } },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("dead-leaf")).toBe("unavailable")
+      expect(registry.getStatus("mid")).toBe("unavailable")
+      expect(registry.getStatus("gp")).toBe("ready")
+    })
+
+    it("releases the entry's already-acquired connections when materialization fails mid-way (#47 review)", async () => {
+      const goodClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) => {
+        if (n === "bad") {
+          return {
+            name: n,
+            status: "error",
+            tools: [],
+            error: new Error("down"),
+            close: async () => {},
+          }
+        }
+        return { name: n, status: "connected", tools: [], close: goodClose }
+      })
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          {
+            id: "two-servers",
+            model: "gpt-4",
+            mcpServers: {
+              good: { transport: "stdio", command: "ok" },
+              bad: { transport: "stdio", command: "nope" },
+            },
+          },
+          { id: "sharer", model: "gpt-4", mcpServers: { good: { transport: "stdio", command: "ok" } } },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("two-servers")).toBe("unavailable")
+      // "good" still serves the other entry — NOT closed.
+      expect(goodClose).not.toHaveBeenCalled()
+      expect(registry.getStatus("sharer")).toBe("ready")
+
+      // Now a failing entry whose "good" connection is exclusive.
+      const soloClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) => {
+        if (n === "bad2") {
+          return { name: n, status: "error", tools: [], error: new Error("down"), close: async () => {} }
+        }
+        return { name: n, status: "connected", tools: [], close: soloClose }
+      })
+      const registry2 = new AgentRegistry()
+      await registry2.loadFromConfig(
+        makeConfig([
+          {
+            id: "exclusive",
+            model: "gpt-4",
+            mcpServers: {
+              good2: { transport: "stdio", command: "solo" },
+              bad2: { transport: "stdio", command: "nope" },
+            },
+          },
+        ]),
+        "/tmp",
+      )
+      expect(registry2.getStatus("exclusive")).toBe("unavailable")
+      // Exclusive connection rolled back with the failed entry — not leaked
+      // until shutdown.
+      expect(soloClose).toHaveBeenCalledTimes(1)
+    })
+
+    it("closes all managed MCP connections on closeAll", async () => {
+      const close = vi.fn(async () => {})
+      mockConnectMcp.mockResolvedValue({
+        name: "db",
+        status: "connected",
+        tools: [],
+        close,
+      } as never)
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "a", model: "gpt-4", mcpServers: { db: { transport: "stdio", command: "x" } } },
+          { id: "b", model: "gpt-4", mcpServers: { db: { transport: "stdio", command: "x" } } },
+        ]),
+        "/tmp",
+      )
+      await registry.closeAll()
+      expect(close).toHaveBeenCalledTimes(1) // 共享连接只关一次
+    })
+
+    it("reload atomically replaces state: removed agents and stale connections are gone (#47 review)", async () => {
+      const oldClose = vi.fn(async () => {})
+      const newClose = vi.fn(async () => {})
+      mockConnectMcp.mockImplementation(async (n: string) =>
+        ({
+          name: n,
+          status: "connected",
+          tools: [{ name: `mcp__${n}__tool`, execute: vi.fn() }],
+          close: n === "oldSrv" ? oldClose : newClose,
+        }) as never)
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "gone", model: "gpt-4", mcpServers: { oldSrv: { transport: "stdio", command: "old" } } },
+          { id: "stays", model: "gpt-4" },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("gone")).toBe("ready")
+
+      // Reload without "gone": its agent entry AND its exclusive connection
+      // must not linger.
+      await registry.loadFromConfig(
+        makeConfig([
+          { id: "stays", model: "gpt-4", mcpServers: { newSrv: { transport: "stdio", command: "new" } } },
+        ]),
+        "/tmp",
+      )
+
+      expect(registry.getStatus("gone")).toBe("not_found")
+      expect(registry.getDetail("gone")).toBeNull()
+      expect(registry.list().map((a) => a.id)).toEqual(["stays"])
+      expect(oldClose).toHaveBeenCalledTimes(1) // stale connection released
+      expect(newClose).not.toHaveBeenCalled() // live connection intact
+
+      registry.create("stays")
+      const opts = mockCreateAgent.mock.calls.at(-1)![0] as any
+      expect(
+        opts.agent.capabilities.connectionTools.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__newSrv__tool"])
     })
   })
 })

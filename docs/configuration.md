@@ -66,7 +66,7 @@ agents:
 Rules:
 
 - `description` is required on every agent — it drives Task routing and the detail endpoint.
-- Mounting maps only `description`, `systemPrompt`/`systemPromptFile` (resolved, including `datasets` concatenation), `allowedTools`, `disallowedTools`, `maxTurns`.
+- Mounting materializes each entry's own Agent-local capabilities — its resolved `systemPrompt`/`systemPromptFile` (including `datasets` concatenation), MCP tools, custom file tools, skills, and `allowedTools`/`disallowedTools` policy. Capabilities are never inherited from or merged with the parent; credentials stay runtime-global.
 - Unknown or duplicate ids in `subagents` fail at config load (the error lists available agent ids). Self/cyclic references are allowed.
 - Delegation depth is 1 — a mounted agent's own `subagents` apply only when that agent is run directly, never in the mounted context.
 
