@@ -107,7 +107,11 @@ const AgentDefinitionSchema = z.preprocess(
         code: "custom",
         message: "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
       })
-      return z.NEVER
+      // Return the original input — NOT a sentinel (review r4): short-
+      // circuiting the inner schema would surface spurious
+      // `id: Required` / `description: Required` issues next to the
+      // rename message. The inner schema parses normally and the issue
+      // set ends up containing only the rename problem.
     }
     return input
   },

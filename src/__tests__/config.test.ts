@@ -279,8 +279,12 @@ describe("RuntimeConfigSchema", () => {
       })
       expect(result.success).toBe(false)
       if (!result.success) {
-        expect(result.error.issues[0]!.message).toContain(
-          "maxSessionTurns was renamed to maxSessionQueries",
+        // Only the rename issue — no spurious `id: Required` /
+        // `description: Required` noise from a short-circuited inner
+        // schema (review r4).
+        expect(result.error.issues).toHaveLength(1)
+        expect(result.error.issues[0]!.message).toBe(
+          "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
         )
       }
     })
