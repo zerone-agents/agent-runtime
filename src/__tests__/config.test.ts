@@ -246,19 +246,47 @@ describe("RuntimeConfigSchema", () => {
     ).toThrow()
   })
 
-  describe("maxSessionTurns", () => {
-    it("parses maxSessionTurns when provided", () => {
+  describe("maxSessionQueries", () => {
+    it("parses maxSessionQueries when provided", () => {
       const result = RuntimeConfigSchema.parse({
-        agents: [{ id: "assistant", description: "assistant", maxSessionTurns: 50 }],
+        agents: [{ id: "assistant", description: "assistant", maxSessionQueries: 50 }],
       })
-      expect(result.agents[0].maxSessionTurns).toBe(50)
+      expect(result.agents[0].maxSessionQueries).toBe(50)
     })
 
-    it("leaves maxSessionTurns undefined when not provided", () => {
+    it("leaves maxSessionQueries undefined when not provided", () => {
       const result = RuntimeConfigSchema.parse({
         agents: [{ id: "assistant", description: "assistant" }],
       })
-      expect(result.agents[0].maxSessionTurns).toBeUndefined()
+      expect(result.agents[0].maxSessionQueries).toBeUndefined()
+    })
+
+    it("rejects the legacy maxSessionTurns key loudly (no silent strip)", () => {
+      expect(() =>
+        RuntimeConfigSchema.parse({
+          agents: [
+            { id: "assistant", description: "assistant", maxSessionTurns: 50 },
+          ],
+        }),
+      ).toThrow(/maxSessionTurns was renamed to maxSessionQueries/)
+    })
+
+    it("safeParse returns { success: false } for the legacy key instead of throwing (#56 review r3)", () => {
+      const result = RuntimeConfigSchema.safeParse({
+        agents: [
+          { id: "assistant", description: "assistant", maxSessionTurns: 50 },
+        ],
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        // Only the rename issue — no spurious `id: Required` /
+        // `description: Required` noise from a short-circuited inner
+        // schema (review r4).
+        expect(result.error.issues).toHaveLength(1)
+        expect(result.error.issues[0]!.message).toBe(
+          "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
+        )
+      }
     })
   })
 })

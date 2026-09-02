@@ -58,7 +58,7 @@ export interface AgentDetail {
   model: string
   status: "ready" | "unavailable"
   maxTurns: number
-  maxSessionTurns?: number
+  maxSessionQueries?: number
   hasSystemPrompt: boolean
   permissionMode?: string
   allowedTools?: string[]
@@ -271,10 +271,7 @@ export class AgentRegistry {
       apiKey: process.env.ZERONE_AGENT_API_KEY ?? def.apiKey ?? undefined,
       baseURL: process.env.ZERONE_AGENT_BASE_URL ?? def.baseURL ?? undefined,
       agent,
-      // SDK 3.1.0 renamed its option to maxSessionQueries; the runtime's
-      // public config contract (agents.yaml / AgentDetail) keeps the
-      // name maxSessionTurns.
-      maxSessionQueries: def.maxSessionTurns,
+      maxSessionQueries: def.maxSessionQueries,
       permissionMode: def.permissionMode,
       thinking: def.thinking as any,
       ...(subAgents ? { subAgents } : {}),
@@ -369,7 +366,7 @@ export class AgentRegistry {
       if (reason !== undefined) detail.unavailableReason = reason
     }
     if (def.permissionMode !== undefined) detail.permissionMode = def.permissionMode
-    if (def.maxSessionTurns !== undefined) detail.maxSessionTurns = def.maxSessionTurns
+    if (def.maxSessionQueries !== undefined) detail.maxSessionQueries = def.maxSessionQueries
     if (def.allowedTools !== undefined) detail.allowedTools = def.allowedTools
     if (def.disallowedTools !== undefined) detail.disallowedTools = def.disallowedTools
     const scanned = this.scannedSkills.get(agentId)

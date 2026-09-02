@@ -60,7 +60,7 @@ const ThinkingConfigSchema = z.object({
   budgetTokens: z.number().optional(),
 })
 
-const AgentDefinitionSchema = z.object({
+const AgentDefinitionSchemaCore = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
   /** Human-readable capability summary. Used for SDK agent.description and Task routing when mounted. */
@@ -73,7 +73,7 @@ const AgentDefinitionSchema = z.object({
   systemPrompt: z.string().optional(),
   systemPromptFile: z.string().optional(),
   maxTurns: z.number().default(10),
-  maxSessionTurns: z.number().optional(),
+  maxSessionQueries: z.number().optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(["user", "project"])).optional(),
@@ -89,6 +89,33 @@ const AgentDefinitionSchema = z.object({
 }).refine(
   (data) => !(data.systemPrompt && data.systemPromptFile),
   { message: "systemPrompt and systemPromptFile are mutually exclusive" },
+)
+
+/**
+ * Input-boundary guard: rejects the legacy `maxSessionTurns` key BEFORE
+ * the clean schema parses (zod strip mode would otherwise silently drop
+ * the unknown key, turning a configured session cap into unlimited).
+ * Kept out of the schema itself so the exported AgentDefinition type and
+ * the generated .d.ts expose only maxSessionQueries. Issues go through
+ * the standard ZodError path so `safeParse` returns `{ success: false }`
+ * instead of throwing (review r3).
+ */
+const AgentDefinitionSchema = z.preprocess(
+  (input, ctx) => {
+    if (typeof input === "object" && input !== null && "maxSessionTurns" in input) {
+      ctx.addIssue({
+        code: "custom",
+        message: "maxSessionTurns was renamed to maxSessionQueries — update agents.yaml",
+      })
+      // Return the original input — NOT a sentinel (review r4): short-
+      // circuiting the inner schema would surface spurious
+      // `id: Required` / `description: Required` issues next to the
+      // rename message. The inner schema parses normally and the issue
+      // set ends up containing only the rename problem.
+    }
+    return input
+  },
+  AgentDefinitionSchemaCore,
 )
 
 export const RuntimeConfigSchema = z.object({
