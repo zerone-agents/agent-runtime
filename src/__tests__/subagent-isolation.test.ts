@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/agent-sdk", () => ({
-  createAgent: vi.fn(),
-  connectMCPServer: vi.fn(),
-}))
+vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
+  return {
+    ...actual,
+    createAgent: vi.fn(),
+    connectMCPServer: vi.fn(),
+  }
+})
 
 vi.mock("../skills.js", () => ({
   scanSkills: vi.fn(async () => []),
@@ -190,13 +194,19 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
 
   it("2. CustomTools isolation: file tools are agent-local, no parent fallback", () => {
     const opts = parentOpts()
+    // Read 防护工具是 runtime 固定注入的固定层（每个 agent 一份，非继承；
+    // 排在用户工具之后，later-wins 覆盖同名内置 Read），不改变隔离语义
     expect(opts.agent.capabilities.customTools.map((t: any) => t.name)).toEqual([
       "parent-tool",
+      "Read",
     ])
     expect(opts.subAgents["child-a"].capabilities.customTools.map((t: any) => t.name)).toEqual([
       "child-a-tool",
+      "Read",
     ])
-    expect(opts.subAgents["child-b"].capabilities.customTools).toEqual([])
+    expect(opts.subAgents["child-b"].capabilities.customTools.map((t: any) => t.name)).toEqual([
+      "Read",
+    ])
   })
 
   it("3. Skills isolation: capabilities.skills is the entry's own materialized set", () => {

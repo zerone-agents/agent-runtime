@@ -1,15 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/agent-sdk", () => ({
-  createAgent: vi.fn(),
-  connectMCPServer: vi.fn(async () => ({
-    name: "default",
-    status: "connected",
-    tools: [],
-    close: async () => {},
-  })),
-}))
+vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
+  return {
+    ...actual,
+    createAgent: vi.fn(),
+    connectMCPServer: vi.fn(async () => ({
+      name: "default",
+      status: "connected",
+      tools: [],
+      close: async () => {},
+    })),
+  }
+})
 
 vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),
@@ -84,9 +88,10 @@ describe("AgentRegistry (file tools)", () => {
     registry.create("agent-a")
 
     const opts = mockCreateAgent.mock.calls[0][0] as any
-    // Agent-local (#47): file tools live in capabilities, no top-level customTools
+    // Agent-local (#47): tools live in capabilities, no top-level customTools;
+    // Read 防护工具随 fileTools 一并注入（同名接管内置 Read，issue #43）
     expect(opts.customTools).toBeUndefined()
-    expect(opts.agent.capabilities.customTools).toEqual([fileTool])
+    expect(opts.agent.capabilities.customTools).toEqual([fileTool, expect.objectContaining({ name: "Read" })])
   })
 
   it("marks only the failing agent unavailable when tool loading throws", async () => {

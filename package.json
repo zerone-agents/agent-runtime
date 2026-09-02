@@ -32,14 +32,17 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "dependencies": {
-    "@zerone-agent/agent-sdk": "^3.0.0",
-    "hono": "^4.7.0",
+"dependencies": {
+      "@zerone-agent/agent-sdk": "^3.0.0",
+      "busboy": "^1.6.0",
+      "hono": "^4.7.0",
+    "sharp": "^0.34.5",
     "tsx": "^4.19.0",
     "yaml": "^2.7.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.3",
     "vitest": "^3.1.0"

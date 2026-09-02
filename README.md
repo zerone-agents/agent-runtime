@@ -78,6 +78,7 @@ See [`docs/api/runs.md`](docs/api/runs.md) for the SSE event sequence, block mod
 | `GET` | `/v1/files` | List files in cwd (`?path`、`?recursive`、`?depth`) |
 | `GET` | `/v1/files/content` | Download a file (`?path=`) |
 | `HEAD` | `/v1/files/content` | File headers only (`?path=`) |
+| `POST` | `/v1/files/uploads` | Upload chat attachments (multipart; ≤10 files, ≤20MB each, ≤50MB per request) |
 
 ## Run lifecycle & cancellation
 
@@ -315,6 +316,24 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 **Trust model:** any caller with a valid API key has full read access to everything under cwd — including `agents.yaml`, `.env`, and any secrets. Configure `ZERONE_AGENT_HTTP_API_KEY` before deploying to production.
 
 See [`docs/api/files.md`](docs/api/files.md) for the full API reference.
+
+## Chat attachments
+
+Upload files to the runtime (they land in `<cwd>/.zerone-uploads`, flat, container-lifetime), then reference them in a run:
+
+```bash
+# 1. Upload (protected by the same x-api-key as other /v1 routes)
+curl -X POST http://localhost:3000/v1/files/uploads \
+  -H "x-api-key: $KEY" -F "files=@report.pdf"
+# → 201 { "files": [{ "id", "name", "mime", "size", "path": ".zerone-uploads/report.pdf" }] }
+
+# 2. Reference in a run (message stays required; attachments optional)
+curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
+  -H "Content-Type: application/json" -H "x-api-key: $KEY" \
+  -d '{"message":"Summarize this report","attachments":[{"id":"…","name":"report.pdf","mime":"application/pdf","size":123,"path":".zerone-uploads/report.pdf"}]}'
+```
+
+Decodeable JPEG/PNG/GIF/WebP become model image blocks (long edge scaled to ≤1536px, JPEG q85 when transcoded; the original file is never modified). SVG, broken images, and all other formats are handed to the agent as safe workspace-relative paths to read with the `Read` tool. Attachment descriptors are re-validated on every run (flat path, regular file, real size, count/size limits checked before any content is read) and never trusted from the caller; the paths given to the agent are per-run snapshot copies (`.zerone-uploads/snap-…`) materialized from the validated bytes, so post-validation filesystem swaps cannot change what a run reads. The agent's `Read` tool is also hardened at the runtime layer: reads under `.zerone-uploads/` re-enforce symlink rejection and containment at execution time, delegating through a kernel fd reference (`/proc/self/fd`) so the opened bytes are the validated ones. This requires a `/proc/self/fd`-capable platform (Linux): uploads, snapshot materialization, and guarded `Read` delegation fail closed on other platforms rather than degrade to unsafe path-based behavior.
 
 ## Library Usage
 

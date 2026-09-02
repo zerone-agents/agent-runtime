@@ -1,15 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { AgentRegistry } from "../registry.js"
 
-vi.mock("@zerone-agent/agent-sdk", () => ({
-  createAgent: vi.fn(),
-  connectMCPServer: vi.fn(async () => ({
-    name: "default",
-    status: "connected",
-    tools: [],
-    close: async () => {},
-  })),
-}))
+vi.mock("@zerone-agent/agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@zerone-agent/agent-sdk")>()
+  return {
+    ...actual,
+    createAgent: vi.fn(),
+    connectMCPServer: vi.fn(async () => ({
+      name: "default",
+      status: "connected",
+      tools: [],
+      close: async () => {},
+    })),
+  }
+})
 
 vi.mock("../config.js", () => ({
   resolveSystemPrompt: vi.fn(() => "test-prompt"),
@@ -633,7 +637,8 @@ describe("AgentRegistry (factory)", () => {
               maxTurns: 30,
               capabilities: {
                 connectionTools: [],
-                customTools: [],
+                // Read 防护工具为 runtime 固定注入（同名接管内置 Read，issue #43）
+                customTools: [expect.objectContaining({ name: "Read" })],
                 skills: [],
                 allowedTools: ["Read", "Write"],
                 disallowedTools: ["Bash"],

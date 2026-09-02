@@ -7,11 +7,20 @@ import { streamAgentResponse } from "../sse.js"
 import { buildAigcLabel, type AigcConfig } from "../aigc.js"
 import type { AigcAuditLog } from "../audit-log.js"
 import type { HubChatPusher, HubIdentity } from "../hub-push.js"
+import type { AgentInput } from "@zerone-agent/agent-sdk"
+import {
+  AttachmentError,
+  buildAgentInput,
+  parseAttachmentDescriptors,
+  validateAttachments,
+} from "../attachments.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
   auditLog?: AigcAuditLog
   hubPusher?: HubChatPusher
+  /** Working directory for attachment resolution. Default: process.cwd(). */
+  cwd?: string
 }
 
 // Hub rejects push-key sessions without user_name (HTTP 400); warn at most
@@ -25,6 +34,7 @@ export function createAgentRouter(
   options: AgentRouterOptions = {},
 ) {
   const router = new Hono()
+  const cwd = options.cwd ?? process.cwd()
 
   router.get("/", (c) => {
     return c.json(registry.list())
@@ -55,6 +65,33 @@ export function createAgentRouter(
     }
     if (status === "unavailable") {
       return c.json({ error: "Agent unavailable" }, 503)
+    }
+
+    // Attachments (issue #43): parse + validate BEFORE creating the agent so
+    // invalid requests never leak SDK resources. undefined/null/[] → legacy
+    // plain-text path with zero behavior change.
+    let agentInput: AgentInput = message
+    if (body.attachments !== undefined && body.attachments !== null) {
+      try {
+        const descriptors = parseAttachmentDescriptors(body.attachments)
+        if (descriptors.length > 0) {
+          const validated = await validateAttachments(cwd, descriptors)
+          agentInput = await buildAgentInput(message, validated)
+        }
+      } catch (err) {
+        if (err instanceof AttachmentError) {
+          const status = err.code === "upload_limit_exceeded" ? 413 : 400
+          return c.json(
+            {
+              error: err.message,
+              code: err.code,
+              ...(err.path !== undefined ? { path: err.path } : {}),
+            },
+            status,
+          )
+        }
+        throw err
+      }
     }
 
     const agent = registry.create(agentId, sessionId)
@@ -165,7 +202,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      const agentStream = agent.query(message, { maxSessionTurns })
+      const agentStream = agent.query(agentInput, { maxSessionTurns })
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
         explicitHint,
@@ -176,7 +213,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-raw") {
-      const agentStream = agent.query(message, { includePartialMessages: true, maxSessionTurns })
+      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionTurns })
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
@@ -189,7 +226,7 @@ export function createAgentRouter(
 
     // JSON blocking response
     try {
-      const result = await agent.prompt(message, { maxSessionTurns })
+      const result = await agent.prompt(agentInput, { maxSessionTurns })
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)

@@ -11,6 +11,7 @@ import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
 import { materializeSkills, toSummaries, type SkillSummary } from "./skills.js"
 import { loadToolFiles } from "./tools/loader.js"
+import { buildReadGuardTool, readGuardApplies } from "./read-guard.js"
 import { McpConnectionError, McpConnectionManager } from "./mcp-connections.js"
 
 /**
@@ -284,13 +285,21 @@ export class AgentRegistry {
    * merged. No subAgents field: delegation depth is structurally 1.
    */
   private toSdkDefinition(m: MaterializedEntry): SdkAgentDefinition {
+    // Read 工具防护（issue #43）：SDK v3 下自定义工具的唯一边界是
+    // capabilities.customTools（顶层与声明级都汇入同槽位，agent.js 合并），
+    // guard 作为 runtime 强制固定防护层注入每个 agent（root 与 mounted
+    // child 各一份，非继承/回退，与 #47 agent-local 语义不冲突）；放在
+    // customTools 末尾（later-wins）使防护恒生效，用户同名工具无法绕过。
+    const guardTools = readGuardApplies(m.allowedTools)
+      ? [buildReadGuardTool(process.cwd())]
+      : []
     return {
       description: m.description,
       prompt: m.prompt,
       maxTurns: m.maxTurns,
       capabilities: {
         connectionTools: m.connectionTools,
-        customTools: m.customTools,
+        customTools: [...m.customTools, ...guardTools],
         skills: m.skills,
         ...(m.allowedTools ? { allowedTools: m.allowedTools } : {}),
         ...(m.disallowedTools ? { disallowedTools: m.disallowedTools } : {}),
