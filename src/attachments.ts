@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto"
 import sharp from "sharp"
 import type { AgentInput, ContentBlockParam } from "@zerone-agent/agent-sdk"
 import { safeResolve } from "./files.js"
-import { MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TOTAL_BYTES, UPLOADS_DIR } from "./uploads.js"
+import { MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TOTAL_BYTES, UPLOADS_DIR, pinDirectory, type PinnedDir } from "./uploads.js"
 
 export type AttachmentErrorCode = "invalid_attachment" | "attachment_missing" | "upload_limit_exceeded"
 
@@ -315,22 +315,24 @@ export function composeAttachmentText(
 }
 
 /**
- * 物化快照（review PR #48 R2 P1c）：把校验时钉住的字节写入 wx 独占创建的
- * 新文件（随机名，不可预放置），Agent 的 Read 工具拿到的是这份快照路径——
- * 原路径在校验后被换成外部 symlink 也无法影响本次 run 读到的内容。
+ * 物化快照（review PR #48 R2/R4）：把校验时钉住的字节写入 wx 独占创建的
+ * 新文件（随机名，不可预放置）。创建经钉住目录（Linux = /proc/self/fd/<dirFd>，
+ * 内核 fd 表解析，写入前换链无法使快照逃出 cwd）；fallback 平台保留
+ * realpath 一致性复核（抗性减弱，见 fdRelativeSupportedOrWarn 告警）。
  * 快照与上传物同目录同生命周期（.zerone-uploads，随容器）。
  */
-async function materializeSnapshot(att: ValidatedAttachment): Promise<string> {
-  const dir = dirname(att.absPath)
+async function materializeSnapshot(att: ValidatedAttachment, pinnedDir: PinnedDir): Promise<string> {
   const base = att.descriptor.path.slice(UPLOADS_PREFIX.length)
   const unique = `snap-${randomBytes(4).toString("hex")}-${base}`
-  const dest = join(dir, unique)
-  const realDir = await realpath(dir)
+  const dest = join(pinnedDir.trustedDir, unique)
   const handle = await open(dest, "wx")
   try {
-    const realFile = await realpath(dest)
-    if (realFile !== join(realDir, unique)) {
-      throw new Error("snapshot escaped uploads directory — possible symlink swap")
+    if (!pinnedDir.handle) {
+      const realDir = await realpath(dirname(att.absPath))
+      const realFile = await realpath(dest)
+      if (realFile !== join(realDir, unique)) {
+        throw new Error("snapshot escaped uploads directory — possible symlink swap")
+      }
     }
     await handle.write(att.bytes)
     return `${UPLOADS_DIR}/${unique}`
@@ -348,27 +350,34 @@ export async function buildAgentInput(
   attachments: ValidatedAttachment[],
 ): Promise<AgentInput> {
   if (attachments.length === 0) return message
-  const imageBlocks: ContentBlockParam[] = []
-  const imagePaths: string[] = []
-  const filePaths: string[] = []
-  for (const att of attachments) {
-    // 使用校验时钉住的字节（fd + inode 比对），绝不按路径重读（防 TOCTOU）
-    const decoded = await tryDecodeImage(att.bytes)
-    // Agent 侧 Read 走快照路径（wx 独占创建 + 随机名）：
-    // 原路径在校验后换链也不影响本次 run 实际读到的内容
-    const snapshotPath = await materializeSnapshot(att)
-    if (decoded) {
-      imageBlocks.push({
-        type: "image",
-        source: { type: "base64", media_type: decoded.mediaType, data: decoded.data },
-      })
-      imagePaths.push(snapshotPath)
-    } else {
-      filePaths.push(snapshotPath)
+  // 快照创建统一经钉住目录：目录被换链时 pinDirectory fail-closed
+  // （拒绝本次 run），快照永不落在 cwd 外（review R4 P1）
+  const pinnedDir = await pinDirectory(dirname(attachments[0].absPath))
+  try {
+    const imageBlocks: ContentBlockParam[] = []
+    const imagePaths: string[] = []
+    const filePaths: string[] = []
+    for (const att of attachments) {
+      // 使用校验时钉住的字节（fd + inode 比对），绝不按路径重读（防 TOCTOU）
+      const decoded = await tryDecodeImage(att.bytes)
+      // Agent 侧 Read 走快照路径（wx 独占创建 + 随机名）：
+      // 原路径在校验后换链也不影响本次 run 实际读到的内容
+      const snapshotPath = await materializeSnapshot(att, pinnedDir)
+      if (decoded) {
+        imageBlocks.push({
+          type: "image",
+          source: { type: "base64", media_type: decoded.mediaType, data: decoded.data },
+        })
+        imagePaths.push(snapshotPath)
+      } else {
+        filePaths.push(snapshotPath)
+      }
     }
+    return [
+      { type: "text", text: composeAttachmentText(message, imagePaths, filePaths) },
+      ...imageBlocks,
+    ]
+  } finally {
+    await pinnedDir.handle?.close().catch(() => {})
   }
-  return [
-    { type: "text", text: composeAttachmentText(message, imagePaths, filePaths) },
-    ...imageBlocks,
-  ]
 }

@@ -104,6 +104,67 @@ export interface UploadedFileMeta {
   path: string
 }
 
+// —— 跨模块共享的目录钉住助手（review PR #48 R4） ——
+
+export interface PinnedDir {
+  /** Linux fd-relative 模式持有的目录句柄（请求/run 期间保持打开）；fallback 平台为 undefined */
+  handle?: FileHandle
+  /** 受信路径前缀：Linux 为 /proc/self/fd/<fd>（内核 fd 表解析，免疫词法换链）；fallback 为 resolved 词法路径 */
+  trustedDir: string
+  /** 钉住目录的 dev/ino（探针/bracket/终态检查基准） */
+  dev: number
+  ino: number
+}
+
+export function fdRelativeSupported(): boolean {
+  return existsSync("/proc/self/fd")
+}
+
+let warnedFdFallback = false
+
+/** 非 Linux 显式告警（review R4 P1：不得静默退回不安全路径）；测试环境静默以保持输出干净 */
+export function fdRelativeSupportedOrWarn(): boolean {
+  const ok = fdRelativeSupported()
+  if (!ok && !warnedFdFallback) {
+    warnedFdFallback = true
+    if (!process.env.VITEST) {
+      console.warn(
+        "[uploads] /proc/self/fd 不可用：本平台回退 resolved 词法路径，symlink 换链抗性减弱（生产 Linux 使用内核 fd 绑定）",
+      )
+    }
+  }
+  return ok
+}
+
+/**
+ * 钉住目录：先 lstat 确认词法路径末级为真实目录（realpath 会跟随换链，
+ * 预置换链必须在此之前拦截），再 realpath + open 目录 fd，以 fd 自身
+ * stat 为受信身份并复核路径此刻仍解析到同一 inode。
+ */
+export async function pinDirectory(dirAbs: string): Promise<PinnedDir> {
+  const lex = await lstat(dirAbs).catch(() => null)
+  if (lex === null || lex.isSymbolicLink() || !lex.isDirectory()) {
+    throw new Error("uploads directory changed — possible symlink swap")
+  }
+  const real = await realpath(dirAbs)
+  const handle = await open(real, "r")
+  try {
+    const st = await handle.stat()
+    const pathSt = await lstat(real).catch(() => null)
+    if (!pathSt || pathSt.isSymbolicLink() || pathSt.dev !== st.dev || pathSt.ino !== st.ino) {
+      throw new Error("uploads directory changed — possible symlink swap")
+    }
+    if (!fdRelativeSupportedOrWarn()) {
+      await handle.close().catch(() => {})
+      return { handle: undefined, trustedDir: real, dev: st.dev, ino: st.ino }
+    }
+    return { handle, trustedDir: `/proc/self/fd/${handle.fd}`, dev: st.dev, ino: st.ino }
+  } catch (err) {
+    await handle.close().catch(() => {})
+    throw err
+  }
+}
+
 /**
  * 流式处理 multipart 上传：边读边执行 个数/单文件/总量 三限额，任何
  * 失败都清理本请求已创建的全部文件（all-or-none）。成功返回元数据数组。
@@ -127,20 +188,13 @@ export async function processUpload(
     throw new Error(`${UPLOADS_DIR} must be a real directory inside the working directory`)
   }
 
-  // 固定目录句柄（review PR #48 R3 复盘）：Linux 下 create 与 cleanup 全部经
+  // 固定目录句柄（review PR #48 R3/R4）：Linux 下 create/verify/cleanup 全部经
   // /proc/self/fd/<dirFd>/ 解析——内核 fd 表不受词法路径换链影响（实证：
   // 换链后经 fd 路径仍可读到原目录内容、inode 比对一致、unlink 不触外部）。
-  // 非 Linux 回退到 resolved 词法路径 + bracket 复检（残余窗口见 PR 说明）。
-  const dirHandle = await open(realUploadsDir, "r")
-  const pinned = await dirHandle.stat() // fd 自身 stat：受信目录身份
-  const pathSt = await lstat(realUploadsDir).catch(() => null)
-  if (!pathSt || pathSt.isSymbolicLink() || pathSt.dev !== pinned.dev || pathSt.ino !== pinned.ino) {
-    await dirHandle.close().catch(() => {})
-    throw new Error("uploads directory changed — possible symlink swap")
-  }
-  const trustedDir = existsSync("/proc/self/fd")
-    ? `/proc/self/fd/${dirHandle.fd}`
-    : realUploadsDir
+  // 非 Linux 显式告警一次后回退 resolved 词法路径 + bracket 复检。
+  const pinnedDir = await pinDirectory(dir)
+  const trustedDir = pinnedDir.trustedDir
+  const pinned = { dev: pinnedDir.dev, ino: pinnedDir.ino }
 
   interface CreatedFile {
     canonicalPath: string
@@ -172,7 +226,7 @@ export async function processUpload(
       await unlinkIfNodeMatches(f.canonicalPath, f.dev, f.ino)
     }
     created.length = 0
-    await dirHandle.close().catch(() => {})
+    await pinnedDir.handle?.close().catch(() => {})
   }
 
   let bb: ReturnType<typeof busboy>
@@ -317,7 +371,7 @@ export async function processUpload(
           }
           // 成功路径：统一关闭本请求持有的全部句柄
           await Promise.all(created.map((f) => f.handle.close().catch(() => {})))
-          await dirHandle.close().catch(() => {})
+          await pinnedDir.handle?.close().catch(() => {})
           resolve(metas)
         })
         .catch(fail)

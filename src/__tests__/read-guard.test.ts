@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildReadGuardTool, readGuardApplies } from "../read-guard.js"
 import { validateAttachments, buildAgentInput } from "../attachments.js"
-import type { ToolContext } from "@zerone-agent/agent-sdk"
+import { FileReadTool, type ToolContext } from "@zerone-agent/agent-sdk"
+
+/** fd 钉住委托仅在 /proc/self/fd 可用（Linux）时可证；其他平台跳过 */
+const itProcfs = existsSync("/proc/self/fd") ? it : it.skip
 
 /** 最小 ToolContext：Read 路径只消费 cwd，其余字段按类型补齐 */
 const ctx = (cwd: string): ToolContext => ({
@@ -65,8 +68,34 @@ describe("buildReadGuardTool", () => {
     }
   })
 
-  it("leaves paths outside uploads untouched (base behavior, even symlinks)", async () => {
+  itProcfs("delegation is fd-pinned: a swap between validation and the SDK open cannot feed external content", async () => {
+    writeFileSync(join(cwd, ".zerone-uploads", "doc.txt"), "SAFE CONTENT")
     const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
+    try {
+      const decoy = join(outside, "secret.txt")
+      writeFileSync(decoy, "OUTSIDE SECRET")
+      const orig = FileReadTool.call.bind(FileReadTool)
+      const spy = vi.spyOn(FileReadTool, "call").mockImplementation(async (input: any, ctx: any) => {
+        // 模拟攻击者在校验通过后、SDK 真正打开前换链（review R4 P1 复现）
+        rmSync(join(cwd, ".zerone-uploads", "doc.txt"))
+        symlinkSync(decoy, join(cwd, ".zerone-uploads", "doc.txt"))
+        return orig(input, ctx)
+      })
+      try {
+        const tool = buildReadGuardTool(cwd)
+        const res = await tool.call({ file_path: ".zerone-uploads/doc.txt" }, ctx(cwd))
+        const text = typeof res === "string" ? res : JSON.stringify(res)
+        expect(text).toContain("SAFE CONTENT")
+        expect(text).not.toContain("OUTSIDE SECRET")
+      } finally {
+        spy.mockRestore()
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("leaves paths outside uploads untouched (base behavior, even symlinks)", async () => {    const outside = mkdtempSync(join(tmpdir(), "rg-outside-"))
     try {
       writeFileSync(join(outside, "ok.txt"), "FINE")
       symlinkSync(join(outside, "ok.txt"), join(cwd, "plain-link.txt"))

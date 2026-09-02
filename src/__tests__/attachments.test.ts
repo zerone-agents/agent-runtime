@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync, readdirSync } from "node:fs"
 import { readFile, open } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -367,6 +367,24 @@ describe("buildAgentInput", () => {
       expect(st.isFile()).toBe(true)
       expect(st.isSymbolicLink()).toBe(false)
       expect(readFileSync(snapAbs).equals(png)).toBe(true)
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects (fail-closed) when the uploads dir is swapped before snapshot materialization", async () => {
+    const png = await makePng(4, 4)
+    writeFileSync(join(cwd, ".zerone-uploads", "img.png"), png)
+    const validated = await validateAttachments(cwd, [
+      { id: randomUUID(), name: "img.png", mime: "application/octet-stream", size: png.length, path: ".zerone-uploads/img.png" },
+    ])
+    // 校验后、物化前把上传目录换成指向外部的 symlink（review R4 P1 复现）
+    const outside = mkdtempSync(join(tmpdir(), "att-outside-"))
+    try {
+      rmSync(join(cwd, ".zerone-uploads"), { recursive: true, force: true })
+      symlinkSync(outside, join(cwd, ".zerone-uploads"))
+      await expect(buildAgentInput("m", validated)).rejects.toThrow()
+      expect(readdirSync(outside)).toEqual([]) // 快照不得经换链写到 cwd 外
     } finally {
       rmSync(outside, { recursive: true, force: true })
     }
