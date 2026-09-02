@@ -9,7 +9,7 @@
  * rollback / shutdown. Tool visibility remains per-agent: each entry's
  * capabilities receive the shared connection's tools independently.
  *
- * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.0.2
+ * MCP failure logging is SDK-owned since @zerone-agent/agent-sdk 3.1.0
  * (issue #51): connectMCPServer() logs only sanitized structured fields
  * (server name + stable errorType) and never the raw Error.message, so the
  * runtime does NOT intercept the process-global console. The full raw error
@@ -62,7 +62,7 @@ export class McpConnectionError extends Error {
 
 /**
  * Enforce the runtime's strict output boundary on stdio MCP spawns
- * (#51, SDK 3.0.3): the SDK's McpStdioConfig default stderr policy is the
+ * (#51, SDK 3.1.0): the SDK's McpStdioConfig default stderr policy is the
  * upstream "inherit" — the child writes straight to the runtime's fd 2,
  * bypassing every JS-level sanitizer. The runtime therefore explicitly
  * injects `stderr: "ignore"` on every stdio connection, never relying on

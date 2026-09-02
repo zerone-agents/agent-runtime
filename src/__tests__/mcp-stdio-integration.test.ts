@@ -151,9 +151,10 @@ describe("McpConnectionManager stdio integration (real connectMCPServer)", () =>
     )
     expect(code).toBe(0)
     expect(out).toContain("acquire rejected as expected")
-    // The leaky child wrote its secret to ITS stderr; with fd-level
-    // redirection in place it must not surface in the runner's inherited
-    // stderr — i.e. this captured pipe.
-    expect(err).not.toContain(SECRET)
+    // The leaky child wrote its secret to ITS stderr; with the strict
+    // stderr policy in place it must not surface anywhere in the runner's
+    // observable output — captured stdout AND stderr join the assertion so
+    // neither channel can hide the secret.
+    expect(out + err).not.toContain(SECRET)
   }, 30_000)
 })

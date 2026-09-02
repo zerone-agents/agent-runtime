@@ -728,7 +728,7 @@ describe("AgentRegistry (factory)", () => {
         opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
       ).toEqual(["mcp__db__query"])
       // canonical config (transport→type) reached connectMCPServer, with
-      // the strict stdio stderr policy injected (#51, SDK 3.0.3)
+      // the strict stdio stderr policy injected (#51, SDK 3.1.0)
       expect(mockConnectMcp).toHaveBeenCalledWith("db", {
         type: "stdio",
         command: "node",

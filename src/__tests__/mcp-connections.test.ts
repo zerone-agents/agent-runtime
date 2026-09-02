@@ -180,7 +180,7 @@ describe("McpConnectionManager", () => {
       await expect(
         m.acquire("a", "db", { transport: "stdio", command: "node" }),
       ).rejects.toThrow('MCP server "db" failed to connect')
-      // SDK 3.0.3 logs sanitized fields only (server + stable errorType);
+      // SDK 3.1.0 logs sanitized fields only (server + stable errorType);
       // the runtime must not wrap, replace, or filter any process-global
       // output object at any point — before, during, or after the connect.
       expect(identityInsideConnect).toBe(errSpy)
@@ -192,7 +192,7 @@ describe("McpConnectionManager", () => {
     })
   })
 
-  describe("stdio stderr policy (SDK 3.0.3, #51 follow-up)", () => {
+  describe("stdio stderr policy (SDK 3.1.0, #51 follow-up)", () => {
     it("explicitly injects stderr: 'ignore' for stdio configs — never relies on the upstream 'inherit' default", async () => {
       mockConnect.mockResolvedValueOnce(okConn("db") as never)
       const m = new McpConnectionManager()

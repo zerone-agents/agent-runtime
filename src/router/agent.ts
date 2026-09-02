@@ -202,7 +202,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      // maxSessionQueries is the SDK 3.0.3 name; `maxSessionTurns` here is
+      // maxSessionQueries is the SDK 3.1.0 name; `maxSessionTurns` here is
       // the runtime's public contract name (HTTP body / agents.yaml).
       const agentStream = agent.query(agentInput, { maxSessionQueries: maxSessionTurns })
       return streamAgentResponse(c, agentStream, undefined, {
