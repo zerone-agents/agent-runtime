@@ -226,8 +226,8 @@ describe("buildAgentInput", () => {
 
   it("SVG and truncated (fake) images are treated as normal files", async () => {
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>')
-    const jpeg = await sharp({ create: { width: 40, height: 40, channels: 3, background: "#123456" } }).jpeg().toBuffer()
-    const truncated = jpeg.subarray(0, Math.floor(jpeg.length / 2))
+    const jpeg = await sharp({ create: { width: 400, height: 400, channels: 3, background: "#123456" } }).jpeg().toBuffer()
+    const truncated = jpeg.subarray(0, Math.floor(jpeg.length * 0.9))
     const atts = [
       await stageValidated(cwd, "d.svg", svg),
       await stageValidated(cwd, "fake.jpg", truncated),
