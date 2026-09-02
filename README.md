@@ -333,7 +333,7 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"Summarize this report","attachments":[{"id":"…","name":"report.pdf","mime":"application/pdf","size":123,"path":".zerone-uploads/report.pdf"}]}'
 ```
 
-Decodeable JPEG/PNG/GIF/WebP become model image blocks (long edge scaled to ≤1536px, JPEG q85 when transcoded; the original file is never modified). SVG, broken images, and all other formats are handed to the agent as safe workspace-relative paths to read with the `Read` tool. Attachment descriptors are re-validated on every run (path safety, regular file, real size, count/size limits) and never trusted from the caller.
+Decodeable JPEG/PNG/GIF/WebP become model image blocks (long edge scaled to ≤1536px, JPEG q85 when transcoded; the original file is never modified). SVG, broken images, and all other formats are handed to the agent as safe workspace-relative paths to read with the `Read` tool. Attachment descriptors are re-validated on every run (flat path, regular file, real size, count/size limits checked before any content is read) and never trusted from the caller; the paths given to the agent are per-run snapshot copies (`.zerone-uploads/snap-…`) materialized from the validated bytes, so post-validation filesystem swaps cannot change what a run reads.
 
 ## Library Usage
 

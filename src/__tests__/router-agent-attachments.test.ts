@@ -129,7 +129,7 @@ describe("POST /v1/agents/:agentId/runs with attachments", () => {
     const input = agent.query.mock.calls[0][0]
     expect(Array.isArray(input)).toBe(true)
     expect(input[0].type).toBe("text")
-    expect(input[0].text).toContain(".zerone-uploads/img.png")
+    expect(input[0].text).toMatch(/\.zerone-uploads\/snap-[0-9a-f]{8}-img\.png/)
     expect(input[1]).toEqual({
       type: "image",
       source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
@@ -146,7 +146,7 @@ describe("POST /v1/agents/:agentId/runs with attachments", () => {
     expect(Array.isArray(input)).toBe(true)
     expect(input).toHaveLength(1)
     expect(input[0].text).toContain("请使用 Read 工具读取后再回答")
-    expect(input[0].text).toContain(".zerone-uploads/doc.pdf")
+    expect(input[0].text).toMatch(/\.zerone-uploads\/snap-[0-9a-f]{8}-doc\.pdf/)
   })
 
   it("JSON blocking mode: prompt receives blocks and returns 200", async () => {

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
-import { readFile } from "node:fs/promises"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, readFileSync } from "node:fs"
+import { readFile, open } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -127,6 +127,49 @@ describe("validateAttachments", () => {
     expect(out[0].bytes.toString()).toBe("abc")
   })
 
+  it("rejects non-flat paths (subdirectories)", async () => {
+    mkdirSync(join(cwd, ".zerone-uploads", "sub"))
+    await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/sub/x.bin", size: 0 })]))
+      .rejects.toMatchObject({ code: "invalid_attachment" })
+  })
+
+  it("rejects non-canonical paths (dot-segments and double slashes)", async () => {
+    await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/./f.bin", size: 1 })]))
+      .rejects.toMatchObject({ code: "invalid_attachment" })
+    await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads//f.bin", size: 1 })]))
+      .rejects.toMatchObject({ code: "invalid_attachment" })
+  })
+
+  it("rejects a >20MB file before reading its bytes", async () => {
+    const d = await stage("big.bin", Buffer.alloc(20 * MB + 1))
+    // FileHandle 非运行时导出，经实例原型安装 spy
+    const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
+    const spy = vi.spyOn(Object.getPrototypeOf(probe), "readFile")
+    await probe.close()
+    try {
+      await expect(validateAttachments(cwd, [d])).rejects.toMatchObject({ code: "upload_limit_exceeded" })
+      expect(spy).toHaveBeenCalledTimes(0)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it("stops reading before the aggregate total would exceed 50MB", async () => {
+    const descriptors: AttachmentDescriptor[] = []
+    for (let i = 0; i < 3; i++) {
+      descriptors.push(await stage(`p${i}.bin`, Buffer.alloc(17 * MB)))
+    }
+    const probe = await open(join(cwd, ".zerone-uploads", ".spy-probe"), "w")
+    const spy = vi.spyOn(Object.getPrototypeOf(probe), "readFile")
+    await probe.close()
+    try {
+      await expect(validateAttachments(cwd, descriptors)).rejects.toMatchObject({ code: "upload_limit_exceeded" })
+      expect(spy).toHaveBeenCalledTimes(2) // 17+17=34MB 已读，第三个在读取前拒绝
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it("missing file → attachment_missing (400 contract)", async () => {
     await expect(validateAttachments(cwd, [desc({ path: ".zerone-uploads/ghost.bin", size: 1 })]))
       .rejects.toMatchObject({ code: "attachment_missing", path: ".zerone-uploads/ghost.bin" })
@@ -238,6 +281,44 @@ describe("buildAgentInput", () => {
     }
   })
 
+  it("hands the agent a freshly materialized snapshot path instead of the original", async () => {
+    const att = await stageValidated(cwd, "doc.pdf", Buffer.from("%PDF-fake"))
+    const input = await buildAgentInput("m", [att])
+    if (!Array.isArray(input)) throw new Error("expected blocks")
+    const text = (input[0] as { type: "text"; text: string }).text
+    expect(text).toMatch(/\.zerone-uploads\/snap-[0-9a-f]{8}-doc\.pdf/)
+    expect(text).not.toContain(".zerone-uploads/doc.pdf")
+  })
+
+  it("snapshot is a real regular file with pinned content, immune to post-validation swap of the original", async () => {
+    const png = await makePng(4, 4)
+    writeFileSync(join(cwd, ".zerone-uploads", "img.png"), png)
+    const validated = await validateAttachments(cwd, [
+      { id: randomUUID(), name: "img.png", mime: "application/octet-stream", size: png.length, path: ".zerone-uploads/img.png" },
+    ])
+    // 校验后把原路径换成指向外部文件的 symlink（review 复现场景：Read 二次打开）
+    const outside = mkdtempSync(join(tmpdir(), "att-outside-"))
+    try {
+      const decoy = join(outside, "decoy.bin")
+      writeFileSync(decoy, Buffer.from("OUTSIDE SECRET"))
+      rmSync(join(cwd, ".zerone-uploads", "img.png"))
+      symlinkSync(decoy, join(cwd, ".zerone-uploads", "img.png"))
+
+      const input = await buildAgentInput("m", validated)
+      if (!Array.isArray(input)) throw new Error("expected blocks")
+      const text = (input[0] as { type: "text"; text: string }).text
+      const m = text.match(/\.zerone-uploads\/(snap-[0-9a-f]{8}-img\.png)/)
+      expect(m).not.toBeNull()
+      const snapAbs = join(cwd, ".zerone-uploads", m![1])
+      const st = lstatSync(snapAbs)
+      expect(st.isFile()).toBe(true)
+      expect(st.isSymbolicLink()).toBe(false)
+      expect(readFileSync(snapAbs).equals(png)).toBe(true)
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
   it("returns the message string unchanged for empty attachments", async () => {
     const msg = "hello"
     await expect(buildAgentInput(msg, [])).resolves.toBe(msg)
@@ -250,7 +331,7 @@ describe("buildAgentInput", () => {
     if (!Array.isArray(input)) throw new Error("expected blocks")
     expect(input).toHaveLength(2)
     expect(input[0]).toMatchObject({ type: "text" })
-    expect((input[0] as { type: "text"; text: string }).text).toContain(".zerone-uploads/1.png")
+    expect((input[0] as { type: "text"; text: string }).text).toMatch(/\.zerone-uploads\/snap-[0-9a-f]{8}-1\.png/)
     expect(input[1]).toEqual({
       type: "image",
       source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
@@ -301,8 +382,8 @@ describe("buildAgentInput", () => {
     if (!Array.isArray(input)) throw new Error("expected blocks")
     expect(input).toHaveLength(1) // 只有 text block，无 image block
     const text = (input[0] as { type: "text"; text: string }).text
-    expect(text).toContain("- 文件 .zerone-uploads/d.svg：请使用 Read 工具读取后再回答")
-    expect(text).toContain("- 文件 .zerone-uploads/fake.jpg：请使用 Read 工具读取后再回答")
+    expect(text).toMatch(/- 文件 \.zerone-uploads\/snap-[0-9a-f]{8}-d\.svg：请使用 Read 工具读取后再回答/)
+    expect(text).toMatch(/- 文件 \.zerone-uploads\/snap-[0-9a-f]{8}-fake\.jpg：请使用 Read 工具读取后再回答/)
   })
 
   it("mixed: image + normal file → text lists both kinds", async () => {
@@ -315,7 +396,7 @@ describe("buildAgentInput", () => {
     if (!Array.isArray(input)) throw new Error("expected blocks")
     expect(input).toHaveLength(2)
     const text = (input[0] as { type: "text"; text: string }).text
-    expect(text).toContain("- 图片 .zerone-uploads/img.png 已直接提供")
-    expect(text).toContain("- 文件 .zerone-uploads/doc.pdf：请使用 Read 工具读取后再回答")
+    expect(text).toMatch(/- 图片 \.zerone-uploads\/snap-[0-9a-f]{8}-img\.png 已直接提供/)
+    expect(text).toMatch(/- 文件 \.zerone-uploads\/snap-[0-9a-f]{8}-doc\.pdf：请使用 Read 工具读取后再回答/)
   })
 })

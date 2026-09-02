@@ -3,8 +3,9 @@
  * （路径安全、真实文件、真实 size），聚合复核限额；图片管线与
  * AgentInput 构造见 Task 6 追加。
  */
-import { lstat, open, realpath, type FileHandle } from "node:fs/promises"
-import { isAbsolute, join, relative, sep } from "node:path"
+import { lstat, open, rm, realpath, type FileHandle } from "node:fs/promises"
+import { isAbsolute, join, dirname, relative, sep } from "node:path"
+import { randomBytes } from "node:crypto"
 import sharp from "sharp"
 import type { AgentInput, ContentBlockParam } from "@zerone-agent/agent-sdk"
 import { safeResolve } from "./files.js"
@@ -98,6 +99,7 @@ export async function validateAttachments(
     )
   }
   const validated: ValidatedAttachment[] = []
+  let totalSoFar = 0 // 限额前置于读取（review PR #48 R2 P1b）：累计字节在读取前检查
   // realpath containment（review PR #48 P1a）：词法检查挡不住中间组件 symlink，
   // 上传目录自身必须是 cwd 内的真实目录（非 symlink），每个附件解析后的真实
   // 路径必须落在其内。目录不存在时跳过（逐文件 lstat 会报 attachment_missing）。
@@ -114,6 +116,16 @@ export async function validateAttachments(
       throw new AttachmentError(
         "invalid_attachment",
         `Invalid attachment path: ${att.path}`,
+        att.path,
+      )
+    }
+    // 扁平路径（review PR #48 R2 P2）：上传 API 只产扁平文件，任何子目录
+    // 或非规范段（./、//）都拒绝，不留 realpath 兜底之外的歧义路径。
+    const rest = att.path.slice(UPLOADS_PREFIX.length)
+    if (rest === "" || rest === "." || rest === ".." || rest.includes("/")) {
+      throw new AttachmentError(
+        "invalid_attachment",
+        `Attachment path must be a flat file directly under ${UPLOADS_PREFIX}: ${att.path}`,
         att.path,
       )
     }
@@ -151,6 +163,22 @@ export async function validateAttachments(
         att.path,
       )
     }
+    // 限额前置于读取：单文件与累计检查都发生在 open/readFile 之前，
+    // 拒绝路径不再为超限附件付出读取内存（review PR #48 R2 P1b）。
+    if (st.size > MAX_FILE_BYTES) {
+      throw new AttachmentError(
+        "upload_limit_exceeded",
+        `Attachment exceeds the ${MAX_FILE_BYTES / (1024 * 1024)}MB single-file limit: ${att.path}`,
+        att.path,
+      )
+    }
+    if (totalSoFar + st.size > MAX_TOTAL_BYTES) {
+      throw new AttachmentError(
+        "upload_limit_exceeded",
+        `Total attachment size exceeds the ${MAX_TOTAL_BYTES / (1024 * 1024)}MB limit`,
+      )
+    }
+    totalSoFar += st.size
     if (realUploadsDir !== null) {
       const realAbs = await realpath(abs).catch(() => null)
       if (realAbs === null) {
@@ -190,22 +218,6 @@ export async function validateAttachments(
     }
   }
 
-  for (const v of validated) {
-    if (v.realSize > MAX_FILE_BYTES) {
-      throw new AttachmentError(
-        "upload_limit_exceeded",
-        `Attachment exceeds the ${MAX_FILE_BYTES / (1024 * 1024)}MB single-file limit: ${v.descriptor.path}`,
-        v.descriptor.path,
-      )
-    }
-  }
-  const total = validated.reduce((sum, v) => sum + v.realSize, 0)
-  if (total > MAX_TOTAL_BYTES) {
-    throw new AttachmentError(
-      "upload_limit_exceeded",
-      `Total attachment size exceeds the ${MAX_TOTAL_BYTES / (1024 * 1024)}MB limit`,
-    )
-  }
   return validated
 }
 
@@ -276,6 +288,34 @@ export function composeAttachmentText(
   return lines.join("\n")
 }
 
+/**
+ * 物化快照（review PR #48 R2 P1c）：把校验时钉住的字节写入 wx 独占创建的
+ * 新文件（随机名，不可预放置），Agent 的 Read 工具拿到的是这份快照路径——
+ * 原路径在校验后被换成外部 symlink 也无法影响本次 run 读到的内容。
+ * 快照与上传物同目录同生命周期（.zerone-uploads，随容器）。
+ */
+async function materializeSnapshot(att: ValidatedAttachment): Promise<string> {
+  const dir = dirname(att.absPath)
+  const base = att.descriptor.path.slice(UPLOADS_PREFIX.length)
+  const unique = `snap-${randomBytes(4).toString("hex")}-${base}`
+  const dest = join(dir, unique)
+  const realDir = await realpath(dir)
+  const handle = await open(dest, "wx")
+  try {
+    const realFile = await realpath(dest)
+    if (realFile !== join(realDir, unique)) {
+      throw new Error("snapshot escaped uploads directory — possible symlink swap")
+    }
+    await handle.write(att.bytes)
+    return `${UPLOADS_DIR}/${unique}`
+  } catch (err) {
+    await rm(dest, { force: true }).catch(() => {})
+    throw err
+  } finally {
+    await handle.close().catch(() => {})
+  }
+}
+
 /** 构造模型输入：无附件原样 string；有附件 → [text, ...images]。 */
 export async function buildAgentInput(
   message: string,
@@ -288,14 +328,17 @@ export async function buildAgentInput(
   for (const att of attachments) {
     // 使用校验时钉住的字节（fd + inode 比对），绝不按路径重读（防 TOCTOU）
     const decoded = await tryDecodeImage(att.bytes)
+    // Agent 侧 Read 走快照路径（wx 独占创建 + 随机名）：
+    // 原路径在校验后换链也不影响本次 run 实际读到的内容
+    const snapshotPath = await materializeSnapshot(att)
     if (decoded) {
       imageBlocks.push({
         type: "image",
         source: { type: "base64", media_type: decoded.mediaType, data: decoded.data },
       })
-      imagePaths.push(att.descriptor.path)
+      imagePaths.push(snapshotPath)
     } else {
-      filePaths.push(att.descriptor.path)
+      filePaths.push(snapshotPath)
     }
   }
   return [

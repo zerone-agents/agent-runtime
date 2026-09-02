@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto"
 import { open, mkdir, rm, realpath, type FileHandle } from "node:fs/promises"
-import { join } from "node:path"
+import { join, sep } from "node:path"
 import { Readable } from "node:stream"
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import busboy from "busboy"
@@ -31,7 +31,7 @@ export class UploadError extends Error {
   }
 }
 
-const UNSAFE_CHARS = /[/\\?%*:|"<>\x00-\x1f]/g
+const UNSAFE_CHARS = /[/\\?%*:|"<>\x00-\x1f\x7f]/g
 
 /** 拆 stem/ext；ext 含前导 `.`。无扩展名或 dotfile 时 ext 为空。 */
 export function splitExt(name: string): { stem: string; ext: string } {
@@ -121,8 +121,8 @@ export async function processUpload(
   // 防 symlink 逃逸（review PR #48 P1a）：mkdir(recursive) 对已存在的
   // symlink 静默成功，上传目录必须真实解析为 <cwd>/.zerone-uploads。
   const realCwd = await realpath(cwd)
-  const realDir = await realpath(dir)
-  if (realDir !== join(realCwd, UPLOADS_DIR)) {
+  const realUploadsDir = await realpath(dir)
+  if (realUploadsDir !== join(realCwd, UPLOADS_DIR)) {
     throw new Error(`${UPLOADS_DIR} must be a real directory inside the working directory`)
   }
 
@@ -177,6 +177,15 @@ export async function processUpload(
             )
           }
           const dest = await allocateDestination(dir, info.filename)
+          // 防“检查后换链”（review PR #48 R2 P1a）：初检只覆盖请求起点，
+          // 逐文件在 open 后复核真实落点——目录在检查后被换成 symlink 时，
+          // 本次 open 已落在 cwd 外，这里立即关闭、删除并中止。
+          const realFile = await realpath(dest.absPath)
+          if (!realFile.startsWith(realUploadsDir + sep)) {
+            await dest.handle.close().catch(() => {})
+            await rm(dest.absPath, { force: true }).catch(() => {})
+            throw new Error("upload destination escaped .zerone-uploads — possible symlink swap")
+          }
           created.push(dest.absPath)
           let fileBytes = 0
           let truncated = false

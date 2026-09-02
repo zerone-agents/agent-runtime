@@ -38,6 +38,9 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("q?x*.txt")).toBe("q_x_.txt")
   })
   it("replaces control chars", () => expect(sanitizeFilename("a\x00b.pdf")).toBe("a_b.pdf"))
+  it("replaces DEL (0x7f) like other control chars", () => {
+    expect(sanitizeFilename("a\x7fb.txt")).toBe("a_b.txt")
+  })
   it("trims surrounding whitespace", () => expect(sanitizeFilename("  x.pdf ")).toBe("x.pdf"))
   it("empty / . / .. → file", () => {
     expect(sanitizeFilename("")).toBe("file")
@@ -178,6 +181,41 @@ describe("processUpload", () => {
         { filename: "a.pdf", type: "application/pdf", chunks: [Buffer.from("hello")] },
       ])
       await expect(processUpload(cwd, body, contentType)).rejects.toThrow()
+      expect(readdirSync(outside)).toEqual([])
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects when the uploads dir is swapped to a symlink after the initial check", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "uploads-outside-"))
+    try {
+      const raw = Buffer.from(
+        [
+          "--testbound",
+          'Content-Disposition: form-data; name="files"; filename="a.pdf"',
+          "Content-Type: application/pdf",
+          "",
+          "",
+        ].join("\r\n") + "hello\r\n--testbound--\r\n",
+      )
+      let swapped = false
+      // 零水位 web 流：pull 仅在消费者（processUpload 内部的 pipe）真正拉取时触发，
+      // 保证换链发生在初检（mkdir+realpath）之后、body 解析之前（toWeb 会无消费者急拉，不可用）
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!swapped) {
+            swapped = true
+            rmSync(uploadsDir(), { recursive: true, force: true })
+            symlinkSync(outside, uploadsDir())
+          }
+          controller.enqueue(raw)
+          controller.close()
+        },
+      }, { highWaterMark: 0 })
+      await expect(
+        processUpload(cwd, body, "multipart/form-data; boundary=testbound"),
+      ).rejects.toThrow(/escape|symlink/i)
       expect(readdirSync(outside)).toEqual([])
     } finally {
       rmSync(outside, { recursive: true, force: true })

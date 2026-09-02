@@ -327,7 +327,7 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
   -d '{"message":"请总结这份报告","attachments":[{"id":"…","name":"report.pdf","mime":"application/pdf","size":123,"path":".zerone-uploads/report.pdf"}]}'
 ```
 
-可解码的 JPEG/PNG/GIF/WebP 直接进入模型 image block（长边超过 1536px 时等比缩放，需转码时 JPEG quality 85，原文件不被修改）；SVG、伪图片及其他格式以安全的工作区相对路径交给 Agent 用 `Read` 工具读取。每次 Run 都会重新校验附件描述（路径安全、普通文件、真实 size、数量/大小限额），绝不信任调用方。
+可解码的 JPEG/PNG/GIF/WebP 直接进入模型 image block（长边超过 1536px 时等比缩放，需转码时 JPEG quality 85，原文件不被修改）；SVG、伪图片及其他格式以安全的工作区相对路径交给 Agent 用 `Read` 工具读取。每次 Run 都会重新校验附件描述（扁平路径、普通文件、真实 size，数量/大小限额在读取任何内容之前复核），绝不信任调用方；交给 Agent 的路径是从校验字节物化的按次快照（`.zerone-uploads/snap-…`），校验后的文件系统改动（含对原始上传的 symlink 换链）无法影响本次 Run 实际读到的内容。
 
 ## 作为库使用
 
