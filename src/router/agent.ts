@@ -68,6 +68,15 @@ export function createAgentRouter(
 
     const { message, sessionId, stream, maxSessionQueries, runId: callerRunId } = body
 
+    // Only forward maxSessionQueries as a per-run override when the body
+    // actually provides it. Passing `{ maxSessionQueries: undefined }`
+    // unconditionally turns "absent" into an explicit undefined override
+    // that clobbers the maxSessionQueries configured in agents.yaml and
+    // silently disables session compaction (issue #65). agents.yaml remains
+    // the authoritative source for the session cap; the runtime never
+    // backfills defaults from other live sources.
+    const queryOverrides = maxSessionQueries === undefined ? {} : { maxSessionQueries }
+
     const status = registry.getStatus(agentId)
     if (status === "not_found") {
       return c.json({ error: "Agent not found" }, 404)
@@ -219,7 +228,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      const agentStream = agent.query(agentInput, { maxSessionQueries })
+      const agentStream = agent.query(agentInput, queryOverrides)
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
         explicitHint,
@@ -230,7 +239,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-raw") {
-      const agentStream = agent.query(agentInput, { includePartialMessages: true, maxSessionQueries })
+      const agentStream = agent.query(agentInput, { includePartialMessages: true, ...queryOverrides })
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
@@ -243,7 +252,7 @@ export function createAgentRouter(
 
     // JSON blocking response
     try {
-      const result = await agent.prompt(agentInput, { maxSessionQueries })
+      const result = await agent.prompt(agentInput, queryOverrides)
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)

@@ -107,10 +107,7 @@ describe("Agent Router (per-request)", () => {
         }),
       })
 
-      expect(mockQuery).toHaveBeenCalledWith(
-        "hello",
-        expect.objectContaining({ maxSessionQueries: 20 })
-      )
+      expect(mockQuery).toHaveBeenCalledWith("hello", { maxSessionQueries: 20 })
     })
 
     it("rejects the legacy maxSessionTurns body field with 400 (no silent ignore)", async () => {
@@ -124,6 +121,8 @@ describe("Agent Router (per-request)", () => {
       expect(res.status).toBe(400)
       const body = (await res.json()) as { error: string }
       expect(body.error).toContain("maxSessionQueries")
+      // Explicit rejection must not start a run (no SDK agent created).
+      expect(registry.create).not.toHaveBeenCalled()
     })
 
     it("passes maxSessionQueries to agent.query in SSE mode", async () => {
@@ -150,10 +149,7 @@ describe("Agent Router (per-request)", () => {
         }),
       })
 
-      expect(mockQuery).toHaveBeenCalledWith(
-        "hello",
-        expect.objectContaining({ includePartialMessages: true, maxSessionQueries: 15 })
-      )
+      expect(mockQuery).toHaveBeenCalledWith("hello", { includePartialMessages: true, maxSessionQueries: 15 })
     })
 
     it("passes maxSessionQueries to agent.prompt in sync mode", async () => {
@@ -183,13 +179,60 @@ describe("Agent Router (per-request)", () => {
         }),
       })
 
-      expect(mockPrompt).toHaveBeenCalledWith(
-        "hello",
-        expect.objectContaining({ maxSessionQueries: 25 })
-      )
+      expect(mockPrompt).toHaveBeenCalledWith("hello", { maxSessionQueries: 25 })
     })
 
-    it("passes undefined maxSessionQueries when not provided", async () => {
+    it("omits maxSessionQueries from agent.query when not provided (blocking mode)", async () => {
+      const mockQuery = vi.fn().mockReturnValue(async function* () {
+        yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
+      })
+      const mockAgent = {
+        query: mockQuery,
+        prompt: vi.fn(),
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: "block" }),
+      })
+
+      // Explicit key-absence check: objectContaining/toEqual would treat
+      // { maxSessionQueries: undefined } as equal to {} (issue #65 contract).
+      expect(mockQuery).toHaveBeenCalledWith("hello", {})
+      expect(Object.hasOwn(mockQuery.mock.calls[0][1], "maxSessionQueries")).toBe(false)
+    })
+
+    it("omits maxSessionQueries from agent.query when not provided (SSE mode)", async () => {
+      const mockQuery = vi.fn().mockReturnValue(async function* () {
+        yield { type: "result", result: { text: "ok", usage: {}, num_turns: 1, duration_ms: 1 } }
+      })
+      const mockAgent = {
+        query: mockQuery,
+        prompt: vi.fn(),
+        close: vi.fn(),
+        getSessionId: () => "test-session",
+      }
+      registry.create.mockReturnValue(mockAgent)
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: true }),
+      })
+
+      expect(mockQuery).toHaveBeenCalledWith("hello", { includePartialMessages: true })
+      expect(Object.hasOwn(mockQuery.mock.calls[0][1], "maxSessionQueries")).toBe(false)
+    })
+
+    it("omits maxSessionQueries from agent.prompt when not provided (sync mode)", async () => {
       const mockPrompt = vi.fn().mockResolvedValue({
         text: "response",
         usage: {},
@@ -212,10 +255,8 @@ describe("Agent Router (per-request)", () => {
         body: JSON.stringify({ message: "hello", stream: false }),
       })
 
-      expect(mockPrompt).toHaveBeenCalledWith(
-        "hello",
-        expect.objectContaining({ maxSessionQueries: undefined })
-      )
+      expect(mockPrompt).toHaveBeenCalledWith("hello", {})
+      expect(Object.hasOwn(mockPrompt.mock.calls[0][1], "maxSessionQueries")).toBe(false)
     })
 
     it("returns 429 when prompt() reports a rate_limit error (SDK is_error)", async () => {
