@@ -329,6 +329,10 @@ curl -N -X POST http://localhost:3000/v1/agents/assistant/runs \
 
 可解码的 JPEG/PNG/GIF/WebP 直接进入模型 image block（长边超过 1536px 时等比缩放，需转码时 JPEG quality 85，原文件不被修改）；SVG、伪图片及其他格式以安全的工作区相对路径交给 Agent 用 `Read` 工具读取。每次 Run 都会重新校验附件描述（扁平路径、普通文件、真实 size，数量/大小限额在读取任何内容之前复核），绝不信任调用方；交给 Agent 的路径是从校验字节物化的按次快照（`.zerone-uploads/snap-…`），校验后的文件系统改动（含对原始上传的 symlink 换链）无法影响本次 Run 实际读到的内容。Agent 的 `Read` 工具同样在 runtime 层被加固：`.zerone-uploads/` 下的读取在执行时重新校验（拒绝 symlink 与越界），并经内核 fd 引用（`/proc/self/fd`）委托，SDK 实际打开的就是校验过的字节。**平台要求**：上传、快照物化与 Read 委托都绑定内核 fd 引用（Linux `/proc/self/fd`）；其他平台一律 fail-closed 拒绝（500 / 工具错误），不降级为不安全的路径方案。
 
+### 附件代次校验（`X-Expected-Container-Id`）
+
+聊天附件锚定到上传时的 Runtime 容器代次。`POST /v1/files/uploads`、`GET /v1/files/content` 与带附件的 run 请求支持可选请求头 `X-Expected-Container-Id: <完整 64-hex containerId>`；Header 存在时，Runtime 在**任何附件 I/O 或 run 启动之前**原子校验自身容器身份——不匹配 → `412 generation_mismatch`（零 I/O、无 SSE flush、无 assistant message），身份无法确定 → `503 generation_unavailable`（禁止忽略 Header 继续）。Header 缺失保持旧行为。身份识别优先 `ZERONE_RUNTIME_CONTAINER_ID`（deployer 注入）> cgroup 完整 ID > Docker 默认 12-hex hostname 前缀（仅允许完整 64-hex expected 的前 12 位精确相等）；显式/非法/来源矛盾一律 fail-closed。`GET /health` 声明 `capabilities.attachmentExpectedGeneration: true` 供能力探测。**升级顺序**：发布本 Runtime → Hub 启用能力探测并携带 Header → 重新部署 Agent。
+
 ## 作为库使用
 
 运行时也可以作为库嵌入（`createRuntime`、`AgentRuntimeHost`）——见 [`docs/sdk-usage.md`](docs/sdk-usage.md)。

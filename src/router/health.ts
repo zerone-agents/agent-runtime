@@ -21,6 +21,11 @@ export function createHealthRouter(registry: AgentRegistry) {
       version,
       agents: agents.length,
       uptime: Date.now(),
+      // 能力声明（issue #61）：Hub 探测到该能力且 deployer 返回非空
+      // containerId 后才启用附件入口，并携带 X-Expected-Container-Id
+      capabilities: {
+        attachmentExpectedGeneration: true,
+      },
     })
   })
 

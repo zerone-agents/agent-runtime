@@ -14,6 +14,7 @@ import {
   parseAttachmentDescriptors,
   validateAttachments,
 } from "../attachments.js"
+import { EXPECTED_CONTAINER_ID_HEADER, GenerationError, assertExpectedGeneration, generationErrorPayload } from "../container-id.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
@@ -83,10 +84,18 @@ export function createAgentRouter(
       try {
         const descriptors = parseAttachmentDescriptors(body.attachments)
         if (descriptors.length > 0) {
+          // 代次原子校验（issue #61）：仅在真正存在附件时校验——
+          // attachments: [] 等同纯文本请求，零行为变化
+          const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
+          if (expectedGen !== undefined) await assertExpectedGeneration(expectedGen)
           const validated = await validateAttachments(cwd, descriptors)
           agentInput = await buildAgentInput(message, validated)
         }
       } catch (err) {
+        if (err instanceof GenerationError) {
+          const { status, body } = generationErrorPayload(err)
+          return c.json(body, status)
+        }
         if (err instanceof AttachmentError) {
           const status = err.code === "upload_limit_exceeded" ? 413 : 400
           return c.json(
