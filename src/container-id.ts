@@ -1,24 +1,28 @@
 /**
- * 容器身份识别与附件代次比较（issue #61）。
+ * 容器身份识别与附件代次比较（issue #61，PR #62 review 修复）。
  *
  * Hub 侧的前置 containerId 校验与实际请求处理之间存在容器 recreate 窗口，
  * 只有让"代次校验发生在实际处理附件的 Runtime 请求内"才能结构性封死该
  * TOCTOU。本模块提供：
  *
- * - detectContainerIdentity：确定自身容器身份。优先级：
+ * - detectContainerIdentity：确定自身容器身份。**任何可用来源矛盾一律
+ *   fail-closed（review P1）**——合法的 env 注入也不得压倒冲突的 cgroup/
+ *   hostname（陈旧注入可能重新造成跨代放行）。来源：
  *   ① env ZERONE_RUNTIME_CONTAINER_ID（deployer 显式注入/测试覆盖；
- *     非法值 = 配置错误 → unavailable，宁拒绝）
+ *     非法值 = 配置错误 → unavailable）
  *   ② cgroup 完整 ID（v2 `docker-<64hex>.scope` / v1 `/docker/<64hex>`）
  *   ③ /etc/hostname 的 Docker 默认 12-hex 前缀
- *   hostname 被显式配置（非 12-hex）、或与 cgroup 来源矛盾时一律
- *   unavailable——issue 契约第 5 条：无法可靠确定身份必须 fail-closed。
+ *   hostname 被显式配置（非 12-hex）、env/cgroup/hostname 两两矛盾时
+ *   一律 unavailable。文件读取走 async + promise 缓存（review P2：容器
+ *   身份进程内不变，热路径不重复做文件 I/O）。
  * - compareGeneration：契约固定的比较规则。expected 必须是完整 64-hex
  *   （不接受过短/任意前缀）；full 身份做完整常量时间相等，prefix12 身份
  *   仅允许"完整 64-hex expected 的前 12 位与 hostname 精确相等"。
  * - assertExpectedGeneration：入口断言——Header 存在时在任何附件 I/O 或
  *   run 启动之前调用，失败抛带稳定错误码的 GenerationError。
+ * - generationErrorPayload：三入口共用的错误映射（review P3）。
  */
-import { readFileSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { timingSafeEqual } from "node:crypto"
 
 /** 入口请求头（Hono 大小写不敏感；对外文档拼写为 X-Expected-Container-Id） */
@@ -42,20 +46,20 @@ export interface ContainerIdSources {
 const FULL_RE = /^[0-9a-f]{64}$/
 const HOST12_RE = /^[0-9a-f]{12}$/
 
-function safeRead(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8")
-  } catch {
-    return null
-  }
-}
+/**
+ * 文件来源的 async 读取 + 进程级 promise 缓存（review P2）：容器身份在
+ * 进程生命周期内不变，cgroup/hostname 只读一次，热路径零文件 I/O。
+ */
+let defaultFilesCache: Promise<{ cgroup: string | null; hostname: string | null }> | null = null
 
-function readDefaults(): Required<ContainerIdSources> {
-  return {
-    env: process.env[CONTAINER_ID_ENV] ?? null,
-    cgroup: safeRead("/proc/self/cgroup"),
-    hostname: safeRead("/etc/hostname"),
+function loadDefaultFiles(): Promise<{ cgroup: string | null; hostname: string | null }> {
+  if (defaultFilesCache === null) {
+    defaultFilesCache = (async () => ({
+      cgroup: await readFile("/proc/self/cgroup", "utf8").catch(() => null),
+      hostname: await readFile("/etc/hostname", "utf8").catch(() => null),
+    }))()
   }
+  return defaultFilesCache
 }
 
 /** cgroup 内容提取 Docker 容器完整 ID（v2 scope / v1 路径两种形态） */
@@ -67,30 +71,32 @@ function extractCgroupFullId(content: string): string | null {
   return null
 }
 
-export function detectContainerIdentity(sources?: ContainerIdSources): ContainerIdentity {
-  const d = readDefaults()
-  const env = sources?.env === undefined ? d.env : sources.env
-  const cgroup = sources?.cgroup === undefined ? d.cgroup : sources.cgroup
-  const hostnameRaw = sources?.hostname === undefined ? d.hostname : sources.hostname
+export async function detectContainerIdentity(sources?: ContainerIdSources): Promise<ContainerIdentity> {
+  const files = await loadDefaultFiles()
+  const env = sources?.env === undefined ? (process.env[CONTAINER_ID_ENV] ?? null) : sources.env
+  const cgroup = sources?.cgroup === undefined ? files.cgroup : sources.cgroup
+  const hostnameRaw = sources?.hostname === undefined ? files.hostname : sources.hostname
 
-  // ① env 显式注入：非法值 = 配置错误，宁拒绝不猜测
-  if (env !== null && env !== "") {
-    return FULL_RE.test(env) ? { kind: "full", id: env } : { kind: "unavailable" }
+  // 提取可用来源
+  const full = cgroup !== null && cgroup !== "" ? extractCgroupFullId(cgroup) : null
+  const host = hostnameRaw !== null && hostnameRaw !== "" ? hostnameRaw.trim() : null
+
+  // hostname 被显式配置（非 Docker 默认 12-hex）→ unavailable（无论 env 是否注入）
+  if (host !== null && !HOST12_RE.test(host)) {
+    return { kind: "unavailable" }
+  }
+  // cgroup 与 hostname 矛盾 → unavailable
+  if (host !== null && full !== null && full.slice(0, 12) !== host) {
+    return { kind: "unavailable" }
   }
 
-  // ② cgroup 完整 ID
-  const full = cgroup !== null && cgroup !== "" ? extractCgroupFullId(cgroup) : null
-
-  // ③ hostname：Docker 默认为 containerId 前 12 位；显式配置/格式不合法、
-  //    或与 cgroup 来源矛盾 → unavailable（fail-closed）
-  const host = hostnameRaw !== null && hostnameRaw !== "" ? hostnameRaw.trim() : null
-  if (host !== null) {
-    if (!HOST12_RE.test(host)) {
-      return { kind: "unavailable" }
-    }
-    if (full !== null && full.slice(0, 12) !== host) {
-      return { kind: "unavailable" }
-    }
+  // env 显式注入（review P1）：非法 = 配置错误；与任何可用来源矛盾 =
+  // 陈旧注入不得压倒真实身份 → 一律 unavailable
+  if (env !== null && env !== "") {
+    if (!FULL_RE.test(env)) return { kind: "unavailable" }
+    if (full !== null && full !== env) return { kind: "unavailable" }
+    if (host !== null && env.slice(0, 12) !== host) return { kind: "unavailable" }
+    return { kind: "full", id: env }
   }
 
   if (full !== null) return { kind: "full", id: full }
@@ -130,11 +136,24 @@ export class GenerationError extends Error {
 }
 
 /**
+ * 三入口共用的错误映射（review P3）：mismatch → 412，unavailable → 503。
+ */
+export function generationErrorPayload(err: GenerationError): {
+  status: 412 | 503
+  body: { error: string; code: GenerationErrorCode }
+} {
+  return {
+    status: err.code === "generation_mismatch" ? 412 : 503,
+    body: { error: err.message, code: err.code },
+  }
+}
+
+/**
  * 入口原子断言（issue #61 契约第 2-4 条）：在读取任何附件、写入上传或
  * 启动 run 之前调用；身份无法确定同样 fail-closed，禁止忽略 Header 继续。
  */
-export function assertExpectedGeneration(expectedHeader: string): void {
-  const identity = detectContainerIdentity()
+export async function assertExpectedGeneration(expectedHeader: string): Promise<void> {
+  const identity = await detectContainerIdentity()
   const result = compareGeneration(expectedHeader, identity)
   if (result === "unavailable") {
     throw new GenerationError(
