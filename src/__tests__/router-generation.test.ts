@@ -10,6 +10,15 @@ import { createHealthRouter } from "../router/health.js"
 import { RunRegistry } from "../runs.js"
 import { CONTAINER_ID_ENV } from "../container-id.js"
 
+// 端点验收测试与宿主环境隔离（review R2 P1）：CI 宿主（Linux VM）存在真实
+// /etc/hostname（非 12-hex）与 /proc/self/cgroup，会与注入的 env 身份构成
+// 矛盾 → 预期 412/200 被 503 覆盖。mock 三类身份来源为"不存在"，身份仅由
+// env 注入决定；来源矩阵的细粒度单元覆盖保留在 container-id.test.ts。
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>()
+  return { ...actual, readFileSync: () => null }
+})
+
 // 走快照物化的正向用例依赖内核 fd 绑定（/proc/self/fd）
 const describeProcfs = existsSync("/proc/self/fd") ? describe : describe.skip
 
