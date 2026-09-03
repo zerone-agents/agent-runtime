@@ -9,6 +9,9 @@ import { createAgentRouter } from "../router/agent.js"
 import { createHealthRouter } from "../router/health.js"
 import { RunRegistry } from "../runs.js"
 import { CONTAINER_ID_ENV } from "../container-id.js"
+import { createReadStream } from "node:fs"
+
+const mockCreateReadStream = vi.mocked(createReadStream)
 
 // 端点验收测试与宿主环境隔离（review R2 P1）：CI 宿主（Linux VM）存在真实
 // /etc/hostname（非 12-hex）与 /proc/self/cgroup，会与注入的 env 身份构成
@@ -24,6 +27,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       p === "/proc/self/cgroup" || p === "/etc/hostname"
         ? Promise.resolve(null as unknown as Buffer)
         : (actual.readFile as (...a: unknown[]) => Promise<unknown>)(p, ...args),
+  }
+})
+
+// createReadStream 是下载入口的唯一读取 API：包装 mock 使其可计数
+// （原实现透传，匹配用例仍真实读取），供拒绝用例证明"文件读取未发生"
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>()
+  return {
+    ...actual,
+    createReadStream: vi.fn((...args: unknown[]) =>
+      (actual.createReadStream as (...a: unknown[]) => unknown)(...args)),
   }
 })
 
@@ -138,6 +152,19 @@ describe("X-Expected-Container-Id: POST /v1/files/uploads", () => {
     expect(res.status).toBe(412)
     expect(await res.json()).toMatchObject({ code: "generation_mismatch" })
   })
+
+  describeProcfs("匹配 Header 的正向路径（依赖 /proc/self/fd）", () => {
+    it("匹配 Header → 201，文件正常落盘（校验通过不改变行为）", async () => {
+      const res = await app.request(formRequest("/v1/files/uploads", HDR))
+      expect(res.status).toBe(201)
+      const body = await res.json()
+      expect(body.files).toHaveLength(1)
+      expect(body.files[0]).toMatchObject({
+        name: "a.pdf", mime: "application/pdf", size: 3, path: ".zerone-uploads/a.pdf",
+      })
+      expect(existsSync(join(tmpRoot, ".zerone-uploads", "a.pdf"))).toBe(true)
+    })
+  })
 })
 
 describe("X-Expected-Container-Id: GET /v1/files/content", () => {
@@ -153,11 +180,31 @@ describe("X-Expected-Container-Id: GET /v1/files/content", () => {
 
   const get = (headers?: Record<string, string>) =>
     app.request(`/v1/files/content?path=${encodeURIComponent(".zerone-uploads/a.txt")}`, { headers })
+  const head = (headers?: Record<string, string>) =>
+    app.request(`/v1/files/content?path=${encodeURIComponent(".zerone-uploads/a.txt")}`, { method: "HEAD", headers })
 
-  it("mismatch → 412 generation_mismatch（读取前拒绝）", async () => {
+  it("匹配 Header → 200，内容正常返回（校验通过不改变行为）", async () => {
+    const res = await get(HDR)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("GEN-CONTENT")
+  })
+
+  it("匹配 Header + HEAD → 200（HEAD 入口同样支持）", async () => {
+    const res = await head(HDR)
+    expect(res.status).toBe(200)
+  })
+
+  it("mismatch → 412 generation_mismatch（读取前拒绝），文件读取 API（createReadStream）未被调用", async () => {
+    mockCreateReadStream.mockClear()
     const res = await get(HDR_MISMATCH)
     expect(res.status).toBe(412)
     expect(await res.json()).toMatchObject({ code: "generation_mismatch" })
+    expect(mockCreateReadStream).not.toHaveBeenCalled()
+  })
+
+  it("mismatch + HEAD → 412（HEAD 入口同样拒绝）", async () => {
+    const res = await head(HDR_MISMATCH)
+    expect(res.status).toBe(412)
   })
 
   it("身份不可确定 → 503 generation_unavailable", async () => {
