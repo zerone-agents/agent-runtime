@@ -82,12 +82,12 @@ export function createAgentRouter(
     let agentInput: AgentInput = message
     if (body.attachments !== undefined && body.attachments !== null) {
       try {
-        // 代次原子校验（issue #61）：读取任何附件/启动 run 之前；
-        // 仅带附件的请求校验，无附件路径零行为变化
-        const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
-        if (expectedGen !== undefined) await assertExpectedGeneration(expectedGen)
         const descriptors = parseAttachmentDescriptors(body.attachments)
         if (descriptors.length > 0) {
+          // 代次原子校验（issue #61）：仅在真正存在附件时校验——
+          // attachments: [] 等同纯文本请求，零行为变化
+          const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
+          if (expectedGen !== undefined) await assertExpectedGeneration(expectedGen)
           const validated = await validateAttachments(cwd, descriptors)
           agentInput = await buildAgentInput(message, validated)
         }

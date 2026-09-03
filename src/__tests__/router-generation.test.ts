@@ -287,6 +287,13 @@ describe("X-Expected-Container-Id: POST /v1/agents/:agentId/runs（带附件）"
     expect(agent.query).toHaveBeenCalled()
   })
 
+  it("attachments: [] + mismatch Header → 不校验（空数组等同纯文本请求，run 正常）", async () => {
+    const { app, agent } = makeAgentApp(tmpRoot)
+    const res = await post(app, { message: "hi", attachments: [] }, HDR_MISMATCH)
+    expect(res.status).toBe(200)
+    expect(agent.query).toHaveBeenCalled()
+  })
+
   describeProcfs("Header 缺失/匹配的正向路径（依赖 /proc/self/fd）", () => {
     it("Header 缺失 + attachments → 旧行为（run 正常启动）", async () => {
       const att = await stageUpload(tmpRoot, "doc.txt", Buffer.from("SAFE"))
