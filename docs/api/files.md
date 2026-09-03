@@ -223,6 +223,35 @@ Upload chat attachments (multipart/form-data, field `files`; same `x-api-key` au
 
 ---
 
+## 附件代次校验（`X-Expected-Container-Id`）
+
+`POST /v1/files/uploads`、`GET/HEAD /v1/files/content` 以及带 `attachments` 的 run 请求支持可选请求头：
+
+```http
+X-Expected-Container-Id: <完整 64-hex Docker containerId>
+```
+
+它把"附件代次校验"从 Hub 的前置查询移入实际处理请求的 Runtime 内，结构性封死容器 recreate 窗口内的 TOCTOU（上传错标、下载跨会话泄露、run 流式输出不可回收）。
+
+**行为**：
+
+- Header **缺失** → 完全保持旧行为（向后兼容，供旧调用方使用）。
+- Header **存在** → 在任何上传写入、文件读取或 run 启动**之前**原子校验：
+  - 不匹配（含 expected 非完整 64-hex、过短前缀）→ `412 { "error", "code": "generation_mismatch" }`，零附件 I/O；
+  - Runtime 无法可靠确定自身容器身份 → `503 { "error", "code": "generation_unavailable" }`——**禁止忽略 Header 继续处理**。
+- 错误体不回显 expected 值或自身身份。
+
+**身份识别与比较规则**（契约固定）：
+
+1. 优先 `ZERONE_RUNTIME_CONTAINER_ID` 环境变量（deployer 显式注入；非法值视为配置错误 → `generation_unavailable`）；
+2. cgroup 完整 ID（v2 `docker-<64hex>.scope` / v1 `/docker/<64hex>`）→ 与 expected 做完整常量时间相等；
+3. `/etc/hostname` 的 Docker 默认 12-hex 前缀 → 仅允许"完整 64-hex expected 的前 12 位与 hostname 精确相等"；
+4. hostname 被显式配置（非 12-hex）、格式不合法或与 cgroup 来源矛盾 → `generation_unavailable`。
+
+**能力发现**：`GET /health` 返回 `capabilities.attachmentExpectedGeneration: true`；调用方（Hub）应仅在探测到该能力且 deployer 提供非空 containerId 后启用附件入口，`generation_mismatch` / `generation_unavailable` 统一映射为附件已失效或部署状态异常，不得回退到无 Header 的旧路径。
+
+---
+
 ## 路径安全
 
 所有 `path` 参数都会经过统一的 `safeResolve` 检查：

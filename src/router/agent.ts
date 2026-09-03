@@ -14,6 +14,7 @@ import {
   parseAttachmentDescriptors,
   validateAttachments,
 } from "../attachments.js"
+import { EXPECTED_CONTAINER_ID_HEADER, GenerationError, assertExpectedGeneration } from "../container-id.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
@@ -81,12 +82,20 @@ export function createAgentRouter(
     let agentInput: AgentInput = message
     if (body.attachments !== undefined && body.attachments !== null) {
       try {
+        // 代次原子校验（issue #61）：读取任何附件/启动 run 之前；
+        // 仅带附件的请求校验，无附件路径零行为变化
+        const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
+        if (expectedGen !== undefined) assertExpectedGeneration(expectedGen)
         const descriptors = parseAttachmentDescriptors(body.attachments)
         if (descriptors.length > 0) {
           const validated = await validateAttachments(cwd, descriptors)
           agentInput = await buildAgentInput(message, validated)
         }
       } catch (err) {
+        if (err instanceof GenerationError) {
+          const status = err.code === "generation_mismatch" ? 412 : 503
+          return c.json({ error: err.message, code: err.code }, status)
+        }
         if (err instanceof AttachmentError) {
           const status = err.code === "upload_limit_exceeded" ? 413 : 400
           return c.json(

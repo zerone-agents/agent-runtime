@@ -6,6 +6,7 @@ import { Readable } from "node:stream"
 import { basename, relative } from "node:path"
 import { listDir, ListError, safeResolve, lookupMimeType } from "../files.js"
 import { processUpload, UploadError } from "../uploads.js"
+import { EXPECTED_CONTAINER_ID_HEADER, GenerationError, assertExpectedGeneration } from "../container-id.js"
 
 /**
  * 创建 files 路由。cwd 默认为 process.cwd()，测试时可显式传入临时目录。
@@ -23,10 +24,17 @@ export function createFilesRouter(cwd: string = process.cwd()): Hono {
     const body = c.req.raw.body
     const contentType = c.req.header("Content-Type") ?? ""
     try {
+      // 代次原子校验（issue #61）：任何上传写入之前
+      const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
+      if (expectedGen !== undefined) assertExpectedGeneration(expectedGen)
       if (!body) throw new UploadError("invalid_multipart", "Request has no body")
       const files = await processUpload(cwd, body, contentType)
       return c.json({ files }, 201)
     } catch (err) {
+      if (err instanceof GenerationError) {
+        const status = err.code === "generation_mismatch" ? 412 : 503
+        return c.json({ error: err.message, code: err.code }, status)
+      }
       if (err instanceof UploadError) {
         const status = err.code === "upload_limit_exceeded" ? 413 : 400
         return c.json({ error: err.message, code: err.code }, status)
@@ -76,6 +84,19 @@ export function createFilesRouter(cwd: string = process.cwd()): Hono {
  * 因此比较前需对 cwd 也做 realpath，保证两侧均为解析后形式。
  */
 async function handleContent(c: Context, cwd: string, headOnly: boolean) {
+  // 代次原子校验（issue #61）：任何文件读取之前
+  const expectedGen = c.req.header(EXPECTED_CONTAINER_ID_HEADER)
+  if (expectedGen !== undefined) {
+    try {
+      assertExpectedGeneration(expectedGen)
+    } catch (err) {
+      if (err instanceof GenerationError) {
+        const status = err.code === "generation_mismatch" ? 412 : 503
+        return c.json({ error: err.message, code: err.code }, status)
+      }
+      throw err
+    }
+  }
   const rel = c.req.query("path") ?? ""
   const abs = safeResolve(cwd, rel)
   if (abs === null) {
