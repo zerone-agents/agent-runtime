@@ -332,19 +332,22 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       vi.spyOn(console, "warn").mockImplementation(() => {}),
       vi.spyOn(console, "error").mockImplementation(() => {}),
     ]
-    const agent = buildAgent(baseUrl, opts.agentLogger)
     const eventTypes: string[] = []
     let consoleText = ""
+    // Constructed INSIDE try (review R3, P2): a synchronous buildAgent
+    // failure must still release the server and restore the spies.
+    let agent: ReturnType<typeof buildAgent> | undefined
     try {
       // No `as never` (review R2, Standards): the overrides must typecheck
       // against the SDK's public QueryOverrides — a DiagnosticsSink is a
       // Logger superset and is accepted as the engine-scoped logger.
+      agent = buildAgent(baseUrl, opts.agentLogger)
       const overrides = opts.queryLogger ? { logger: opts.queryLogger } : undefined
       for await (const ev of agent.query("run it", overrides)) {
         eventTypes.push(ev.type)
       }
     } finally {
-      await agent.close().catch(() => {})
+      await agent?.close().catch(() => {})
       // Snapshot console calls BEFORE restoring (restore clears them).
       consoleText = JSON.stringify(spies.flatMap((s) => s.mock.calls))
       await new Promise<void>((resolve) => server.close(() => resolve()))
