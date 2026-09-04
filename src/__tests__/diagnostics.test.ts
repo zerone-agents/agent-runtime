@@ -47,7 +47,7 @@ vi.mock("../skills.js", () => ({
   toSummaries: vi.fn(() => []),
 }))
 
-import { createAgent } from "@zerone-agent/agent-sdk"
+import { createAgent, createDiagnosticsSink } from "@zerone-agent/agent-sdk"
 import { createDefaultCronService } from "@zerone-agent/agent-sdk/cron/node"
 import { AgentRegistry } from "../registry.js"
 import { McpConnectionManager, McpConnectionError } from "../mcp-connections.js"
@@ -129,6 +129,31 @@ describe("createRuntimeDiagnosticsSink", () => {
     expect(toSdkLogLevel("debug")).toBe("debug")
     expect(toSdkLogLevel(undefined)).toBe("debug")
   })
+
+  it("level mapping controls ACTUAL output: 'error' silences debug but warn always emits", async () => {
+    // P2 review follow-up: assert real console behavior, not just the
+    // mapping string. SDK contract: warn/error ALWAYS emit; the level only
+    // gates debug/trace. So runtime logging.level: error → SDK debug output
+    // is silenced, but SDK warnings still print.
+    const { createDiagnosticsSink: realSink } = await import("@zerone-agent/agent-sdk")
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ]
+    try {
+      const sink = realSink({ level: "error" })
+      sink.debug("silent-at-error-level")
+      expect(spies.flatMap((s) => s.mock.calls)).toHaveLength(0)
+
+      sink.warn("always-emits")
+      const allWarnCalls = spies.flatMap((s) => s.mock.calls)
+      expect(allWarnCalls.length).toBeGreaterThanOrEqual(1)
+      expect(JSON.stringify(allWarnCalls)).toContain("always-emits")
+    } finally {
+      for (const s of spies) s.mockRestore()
+    }
+  })
 })
 
 describe("acceptance 1 & 4: registry threads the sink into every root Agent", () => {
@@ -183,6 +208,37 @@ describe("acceptance 2: MCP failure diagnostics enter the injected sink (real co
       // Cause boundary: raw error object travels separately, controlled.
       expect(call.cause).toBeInstanceOf(Error)
     }
+  })
+
+  it("retry diagnostics (review follow-up): each retry warn reaches the sink before the final error", async () => {
+    const sink = captureSink()
+    const manager = new McpConnectionManager(sink)
+
+    await expect(
+      manager.acquire("a1", "flaky-server", {
+        transport: "stdio",
+        command: "definitely-does-not-exist-xyz",
+        retryPolicy: { maxRetries: 1, timeoutMs: 1000 },
+      } as Record<string, unknown>),
+    ).rejects.toThrow(McpConnectionError)
+
+    // Retry pass: one warn per intermediate failure, sanitized fields only.
+    const retries = sink.calls.filter(
+      (c) => c.level === "warn" && c.msg.includes("Retrying connection"),
+    )
+    expect(retries.length).toBe(1)
+    expect(String(retries[0].fields?.server)).toContain("flaky-server")
+    expect(retries[0].fields?.attempt).toBe(2) // attempt 2 of maxRetries+1
+    const retryText = JSON.stringify({ m: retries[0].msg, f: retries[0].fields })
+    expect(retryText).not.toContain("ENOENT")
+    expect(retryText).not.toContain("definitely-does-not-exist-xyz")
+
+    // Terminal failure still lands as the sanitized error with raw cause.
+    const failures = sink.calls.filter(
+      (c) => c.level === "error" && c.msg.includes("Failed to connect"),
+    )
+    expect(failures.length).toBe(1)
+    expect(failures[0].cause).toBeInstanceOf(Error)
   })
 })
 

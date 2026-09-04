@@ -44,11 +44,14 @@ type SdkLogLevel = "error" | "debug" | "trace"
 /**
  * Map the runtime's `logging.level` onto the SDK sink level.
  *
- * The SDK levels are 'error' (errors only), 'debug' (default: errors plus
- * regular diagnostics), 'trace' (verbose engine/tool detail). The runtime's
- * fine-grained info/warn levels have no SDK counterpart and map to 'debug';
- * 'trace' is intentionally not reachable from agents.yaml — it stays an
- * SDK-internal verbosity tier.
+ * SDK sink contract (utils/diagnostics.d.ts): `warn`/`error` ALWAYS emit;
+ * the level only gates `debug`/`trace` ('error' silences them, 'debug' is
+ * the default, 'trace' is verbose). So mapping the runtime's `error` level
+ * to SDK 'error' silences SDK debug/trace output but does NOT silence SDK
+ * warnings — that is the SDK's contract, documented here verbatim rather
+ * than papered over. The runtime's fine-grained info/warn levels have no
+ * SDK counterpart and map to 'debug'; 'trace' is intentionally not
+ * reachable from agents.yaml — it stays an SDK-internal verbosity tier.
  */
 export function toSdkLogLevel(level: RuntimeLogLevel | undefined): SdkLogLevel {
   return level === "error" ? "error" : "debug"
