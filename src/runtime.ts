@@ -12,6 +12,7 @@ import {
 } from "./cron-identity.js"
 import { ShutdownGate } from "./shutdown-gate.js"
 import type { AigcRunRecord } from "./audit-log.js"
+import { createRuntimeDiagnosticsSink, type DiagnosticsSink } from "./diagnostics.js"
 
 export interface AgentRuntimeHost {
   app: Hono
@@ -27,6 +28,15 @@ export interface CreateRuntimeOptions {
   /** Directory of agents.yaml / agent.config.ts — anchors relative dataRoot. */
   configDir: string
   onAigcRecord?: (record: AigcRunRecord) => void | Promise<void>
+  /**
+   * Issue #63: inject a DiagnosticsSink owned by this Runtime instance.
+   * Passes through by identity; otherwise a console-backed SDK default is
+   * created with the level mapped from config.logging.level. The same
+   * instance threads through every SDK boundary the runtime owns: root
+   * Agents (AgentOptions.logger, inherited by subagents), registry
+   * MCP materialization (connectMCPServer), and the cron service.
+   */
+  diagnostics?: DiagnosticsSink
 }
 
 /** dataRoot resolves against configDir (never CWD); SDK appends the single /cron segment. */
@@ -40,10 +50,16 @@ export async function createRuntime(
 ): Promise<AgentRuntimeHost> {
   const { configDir } = options
 
+  // Issue #63: runtime-owned diagnostics sink — resolved FIRST so the
+  // registry's MCP materialization (loadFromConfig below) inherits it.
+  // One instance, threaded by identity into every SDK boundary (Agent
+  // construction, MCP connect, cron); no process-global mutable state.
+  const diagnostics = createRuntimeDiagnosticsSink(config, options.diagnostics)
+
   // 1-2. Load + validate config (caller), then AgentRegistry. loadFromConfig
   // materializes per-agent MCP connections (issue #47) — everything below
   // that can fail must roll them back.
-  const agents = new AgentRegistry()
+  const agents = new AgentRegistry(diagnostics)
   await agents.loadFromConfig(config, configDir)
 
   try {
@@ -66,6 +82,10 @@ export async function createRuntime(
       const sdkService = createDefaultCronService({
         dataDir: dataRoot,
         executionTimeoutMs: config.cron.executionTimeoutMs,
+        // Issue #63: same runtime-owned sink as Agents/MCP. Takes precedence
+        // over the legacy onDiagnostic per the SDK contract; the runtime
+        // never sets a competing handler.
+        diagnostics,
         resolveAgent: async (agentId) => {
           // Called on EVERY fire: latest config, same shared service, no reuse
           // of HTTP-run agents or sessions.

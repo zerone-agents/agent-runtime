@@ -37,6 +37,7 @@ export {
   createRuntime, resolveCronDataRoot,
   type AgentRuntimeHost, type CreateRuntimeOptions,
 } from "./runtime.js"
+export { createRuntimeDiagnosticsSink, toSdkLogLevel, type DiagnosticsSink } from "./diagnostics.js"
 export { ShutdownGate, createShutdownGateMiddleware } from "./shutdown-gate.js"
 export { runCli, CLI_EXIT, buildShutdown, closeHttpServer } from "./cli.js"
 export { CronConfigSchema, type CronConfig } from "./config.js"

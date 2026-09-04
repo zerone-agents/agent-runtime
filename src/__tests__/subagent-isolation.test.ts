@@ -185,13 +185,14 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
     )
     expect(childASrvCalls).toHaveLength(1)
     // canonical (transport→type) config reached the SDK, with the strict
-    // stdio stderr policy injected (#51, SDK 3.1.0)
+    // stdio stderr policy injected (#51, SDK 3.1.0); trailing undefineds =
+    // (signal, diagnostics) — no sink wired in this direct-registry test (#63)
     expect(mockConnectMcp).toHaveBeenCalledWith("childASrv", {
       type: "stdio",
       command: "node",
       args: ["child-a.js"],
       stderr: "ignore",
-    })
+    }, undefined, undefined)
   })
 
   it("2. CustomTools isolation: file tools are agent-local, no parent fallback", () => {

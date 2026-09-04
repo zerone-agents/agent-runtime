@@ -18,7 +18,7 @@
  * withStrictStdioStderr.)
  */
 
-import { connectMCPServer, type MCPConnection } from "@zerone-agent/agent-sdk"
+import { connectMCPServer, type DiagnosticsSink, type MCPConnection } from "@zerone-agent/agent-sdk"
 
 /**
  * Canonicalize the transport selector spelling: the SDK accepts both `type`
@@ -83,6 +83,18 @@ interface ManagedConnection {
 
 export class McpConnectionManager {
   private byKey = new Map<string, ManagedConnection>()
+  private readonly diagnostics: DiagnosticsSink | undefined
+
+  /**
+   * Issue #63: the runtime-owned diagnostics sink injected at the
+   * composition root. Passed to every connectMCPServer call so SDK-side
+   * connection/retry diagnostics flow into the runtime's channel instead of
+   * the SDK's default console sink. No parameter properties here (erasable
+   * syntax only — see the McpConnectionError note above).
+   */
+  constructor(diagnostics?: DiagnosticsSink) {
+    this.diagnostics = diagnostics
+  }
 
   /**
    * Acquire (or share) a connection for one agent entry's server config.
@@ -105,7 +117,12 @@ export class McpConnectionManager {
     }
     // Inject AFTER the key is computed: sharing keys derive from the
     // canonical (user-authored) config, never from runtime-injected policy.
-    const conn = await connectMCPServer(name, withStrictStdioStderr(config) as never)
+    const conn = await connectMCPServer(
+      name,
+      withStrictStdioStderr(config) as never,
+      undefined,
+      this.diagnostics,
+    )
     this.byKey.set(key, { conn, refs: new Set([entryId]) })
     if (conn.status !== "connected") throw new McpConnectionError(name)
     return conn
