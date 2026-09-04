@@ -139,11 +139,10 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
   })
 
   /**
-   * Deterministic OpenAI-compatible stub, ONE PER TEST (independent request
-   * counters): request #1 → Task tool_call spawning subagent "child-r";
-   * requests ≥2 → plain text (child answer + root final answer). Handles
-   * BOTH stream (engine createMessageStream) and non-stream (createMessage)
-   * request shapes — the root engine picks per its own heuristics.
+   * Deterministic OpenAI-compatible stub, ONE PER SCENARIO (independent
+   * request counter): request #1 → Task tool_call spawning subagent
+   * "child-r"; requests ≥2 → plain text. Handles BOTH stream
+   * (createMessageStream) and non-stream (createMessage) request shapes.
    */
   function startStub(): Promise<{ server: Server; baseUrl: string }> {
     let requestCount = 0
@@ -191,7 +190,7 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
             tool_calls: [{ id: "call_1", type: "function", function: { name: "Task", arguments: taskArgs } }],
           }
           if (!stream) {
-            return json({
+            json({
               id: "stub",
               object: "chat.completion",
               created: 0,
@@ -199,8 +198,9 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
               choices: [{ index: 0, message: toolCallMessage, finish_reason: "tool_calls" }],
               usage,
             })
+            return
           }
-          return sse([
+          sse([
             {
               id: "stub",
               object: "chat.completion.chunk",
@@ -241,10 +241,11 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
               usage,
             },
           ])
+          return
         }
         // requests >= 2: plain text answers.
         if (!stream) {
-          return json({
+          json({
             id: "stub",
             object: "chat.completion",
             created: 0,
@@ -258,6 +259,7 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
             ],
             usage,
           })
+          return
         }
         sse([
           {
@@ -288,9 +290,9 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
     })
   }
 
-  /** Shared agent shape: root + a restrictive child whose allowedTools
-   *  wildcard matches NOTHING — spawning it deterministically emits the
-   *  '[tools] agent resolved to zero tools' diagnostics we assert on. */
+  /** Root agent + a restrictive child whose allowedTools wildcard matches
+   *  NOTHING — spawning it deterministically emits the '[tools] agent
+   *  resolved to zero tools' diagnostics the scenarios assert on. */
   function buildAgent(baseURL: string, logger: DiagnosticsSink) {
     return createAgent({
       model: "stub-model",
@@ -309,33 +311,58 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
     })
   }
 
+  /**
+   * Shared scenario runner (review R2, Standards): owns the stub server,
+   * the console spies and the agent lifecycle in ONE place. Every resource
+   * is released in `finally` — an assertion failure can no longer leak an
+   * open server handle and hang the suite. The console snapshot is
+   * captured BEFORE `mockRestore()` (restore resets mock state, so reading
+   * `mock.calls` afterwards would be vacuously empty — a false pass).
+   * `console.debug` is spied too: it is the SDK default sink's gated
+   * channel for debug/trace output.
+   */
+  async function runSubagentScenario(opts: {
+    agentLogger: DiagnosticsSink
+    queryLogger?: DiagnosticsSink
+  }): Promise<{ eventTypes: string[]; consoleText: string }> {
+    const { server, baseUrl } = await startStub()
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "debug").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ]
+    const agent = buildAgent(baseUrl, opts.agentLogger)
+    const eventTypes: string[] = []
+    let consoleText = ""
+    try {
+      // No `as never` (review R2, Standards): the overrides must typecheck
+      // against the SDK's public QueryOverrides — a DiagnosticsSink is a
+      // Logger superset and is accepted as the engine-scoped logger.
+      const overrides = opts.queryLogger ? { logger: opts.queryLogger } : undefined
+      for await (const ev of agent.query("run it", overrides)) {
+        eventTypes.push(ev.type)
+      }
+    } finally {
+      await agent.close().catch(() => {})
+      // Snapshot console calls BEFORE restoring (restore clears them).
+      consoleText = JSON.stringify(spies.flatMap((s) => s.mock.calls))
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      for (const s of spies) s.mockRestore()
+    }
+    return { eventTypes, consoleText }
+  }
+
   it(
     "acceptance 4, behavioral: spawned child inherits the construction sink (no separate console sink)",
     async () => {
-      const { server, baseUrl } = await startStub()
       const sink = captureSink()
-      const spies = [
-        vi.spyOn(console, "log").mockImplementation(() => {}),
-        vi.spyOn(console, "warn").mockImplementation(() => {}),
-        vi.spyOn(console, "error").mockImplementation(() => {}),
-      ]
-      const agent = buildAgent(baseUrl, sink)
-      let sawResult = false
-      let sawSubagent = false
-      try {
-        for await (const ev of agent.query("run it")) {
-          if (ev.type === "result") sawResult = true
-          if (ev.type === "subagent") sawSubagent = true
-        }
-      } finally {
-        await agent.close().catch(() => {})
-        for (const s of spies) s.mockRestore()
-      }
+      const { eventTypes, consoleText } = await runSubagentScenario({ agentLogger: sink })
 
       // Task tool_use → child spawn → child answer → root final answer all
       // completed against the deterministic stub.
-      expect(sawResult).toBe(true)
-      expect(sawSubagent).toBe(true)
+      expect(eventTypes).toContain("subagent")
+      expect(eventTypes).toContain("result")
 
       // The SPAWNED child's resolution diagnostics reached the parent's
       // construction sink — the inherited channel.
@@ -343,11 +370,9 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       expect(zeroTools.length).toBeGreaterThanOrEqual(1)
 
       // No independent console sink: had the child NOT inherited the sink,
-      // the zero-tools warning would have gone to a default console sink.
-      const consoleText = JSON.stringify(spies.flatMap((s) => s.mock.calls))
+      // the zero-tools warning would have gone to the default console sink.
+      // (Snapshot taken pre-restore, so this is a real assertion.)
       expect(consoleText).not.toContain("zero tools")
-
-      await new Promise<void>((resolve) => server.close(() => resolve()))
     },
     30_000,
   )
@@ -360,27 +385,14 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       // channel for that query — including the tool-executor context the
       // Task tool forwards to spawned children — while the construction
       // sink keeps the Agent-lifetime channels (provider/MCP/skills) and is
-      // never re-bound. Both facets are asserted here with a sink-shaped
-      // query logger (warn not degraded by the plain-Logger adapter).
-      const { server, baseUrl } = await startStub()
+      // never re-bound.
       const constructionSink = captureSink()
       const querySink = captureSink()
-      const spies = [
-        vi.spyOn(console, "log").mockImplementation(() => {}),
-        vi.spyOn(console, "warn").mockImplementation(() => {}),
-        vi.spyOn(console, "error").mockImplementation(() => {}),
-      ]
-      const agent = buildAgent(baseUrl, constructionSink)
-      let sawResult = false
-      try {
-        for await (const ev of agent.query("run it", { logger: querySink } as never)) {
-          if (ev.type === "result") sawResult = true
-        }
-      } finally {
-        await agent.close().catch(() => {})
-        for (const s of spies) s.mockRestore()
-      }
-      expect(sawResult).toBe(true)
+      const { eventTypes } = await runSubagentScenario({
+        agentLogger: constructionSink,
+        queryLogger: querySink,
+      })
+      expect(eventTypes).toContain("result")
 
       // Engine channel takeover: the child's zero-tools diagnostics followed
       // the query logger for that query, NOT the construction sink.
@@ -390,8 +402,6 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       expect(
         constructionSink.calls.some((c) => c.msg.includes("agent resolved to zero tools")),
       ).toBe(false)
-
-      await new Promise<void>((resolve) => server.close(() => resolve()))
     },
     30_000,
   )

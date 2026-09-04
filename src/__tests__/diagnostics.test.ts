@@ -136,8 +136,12 @@ describe("createRuntimeDiagnosticsSink", () => {
     // gates debug/trace. So runtime logging.level: error → SDK debug output
     // is silenced, but SDK warnings still print.
     const { createDiagnosticsSink: realSink } = await import("@zerone-agent/agent-sdk")
+    // console.debug MUST be spied (review R2, Spec): the SDK default sink
+    // routes gated debug/trace output there — without it, "debug is
+    // silenced" could pass vacuously while real output leaks.
     const spies = [
       vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "debug").mockImplementation(() => {}),
       vi.spyOn(console, "warn").mockImplementation(() => {}),
       vi.spyOn(console, "error").mockImplementation(() => {}),
     ]
