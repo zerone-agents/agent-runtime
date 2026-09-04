@@ -13,6 +13,7 @@ import { materializeSkills, toSummaries, type SkillSummary } from "./skills.js"
 import { loadToolFiles } from "./tools/loader.js"
 import { buildReadGuardTool, readGuardApplies } from "./read-guard.js"
 import { McpConnectionError, McpConnectionManager } from "./mcp-connections.js"
+import type { DiagnosticsSink } from "./diagnostics.js"
 
 /**
  * Phase-1 materialization product for one agents.yaml entry (issue #47): the
@@ -85,7 +86,22 @@ export class AgentRegistry {
   private cronService?: CronService
   private materialized = new Map<string, MaterializedEntry>()
   private unavailableReasons = new Map<string, string>()
-  private mcp = new McpConnectionManager()
+  private mcp: McpConnectionManager
+  private readonly diagnostics: DiagnosticsSink | undefined
+
+  /**
+   * Issue #63: the runtime-owned diagnostics sink from the composition
+   * root. Threaded by identity into (a) every root Agent via
+   * AgentOptions.logger — the SDK carries it through provider/hooks/tools/
+   * MCP/skills and Task/MultiTask inherit it into subagents — and (b) every
+   * McpConnectionManager this registry creates (load + reload). Undefined
+   * keeps the SDK defaults (embedders/tests that construct the registry
+   * directly are unchanged).
+   */
+  constructor(diagnostics?: DiagnosticsSink) {
+    this.diagnostics = diagnostics
+    this.mcp = new McpConnectionManager(diagnostics)
+  }
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
     this.defs.set(id, def)
@@ -102,7 +118,7 @@ export class AgentRegistry {
     // failure the partial new state is discarded and the previous registry
     // stays intact.
     // ------------------------------------------------------------------
-    const mcp = new McpConnectionManager()
+    const mcp = new McpConnectionManager(this.diagnostics)
     const defs = new Map<string, AgentDefinition>()
     const statuses = new Map<string, "ready" | "unavailable">()
     const unavailableReasons = new Map<string, string>()
@@ -274,6 +290,10 @@ export class AgentRegistry {
       maxSessionQueries: def.maxSessionQueries,
       permissionMode: def.permissionMode,
       thinking: def.thinking as any,
+      // Issue #63: construction-time sink — SDK-owned channel for
+      // provider/hooks/snapshot/tools/MCP/skills diagnostics and subagent
+      // inheritance. Omitted (not undefined-keyed) when no sink is wired.
+      ...(this.diagnostics ? { logger: this.diagnostics } : {}),
       ...(subAgents ? { subAgents } : {}),
     }
   }

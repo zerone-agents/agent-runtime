@@ -158,18 +158,20 @@ describe("AgentRegistry (factory)", () => {
       // pre-materialized by the runtime manager and flow into capabilities.
       expect(opts.mcpServers).toBeUndefined()
       // canonical config (transport→type) reached connectMCPServer —
-      // http unchanged; stdio carries the strict stderr policy (#51)
+      // http unchanged; stdio carries the strict stderr policy (#51).
+      // Trailing undefined, undefined = (signal, diagnostics): no sink
+      // wired in these registry-direct tests (issue #63 call shape).
       expect(mockConnectMcp).toHaveBeenCalledWith("web", {
         type: "http",
         url: "https://example.com/mcp",
         headers: { Authorization: "Bearer token" },
-      })
+      }, undefined, undefined)
       expect(mockConnectMcp).toHaveBeenCalledWith("local", {
         type: "stdio",
         command: "node",
         args: ["server.js"],
         stderr: "ignore",
-      })
+      }, undefined, undefined)
     })
 
     it("passes resume: sessionId when sessionId provided", async () => {
@@ -728,12 +730,13 @@ describe("AgentRegistry (factory)", () => {
         opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
       ).toEqual(["mcp__db__query"])
       // canonical config (transport→type) reached connectMCPServer, with
-      // the strict stdio stderr policy injected (#51, SDK 3.1.0)
+      // the strict stdio stderr policy injected (#51, SDK 3.1.0);
+      // trailing undefineds = (signal, diagnostics) — no sink here (#63)
       expect(mockConnectMcp).toHaveBeenCalledWith("db", {
         type: "stdio",
         command: "node",
         stderr: "ignore",
-      })
+      }, undefined, undefined)
     })
 
     it("mounts child capabilities from the child entry's own assets", async () => {
