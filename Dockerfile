@@ -60,10 +60,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ca-certificates 已就位，apt 切阿里云镜像（可用 https）。
-# Debian bookworm 使用传统 /etc/apt/sources.list（deb.debian.org）。
-# 顺序：先替换 /debian-security 长串，再替换通用串，避免 URL 被二次改写。
-RUN sed -i 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g; s|http://deb.debian.org|https://mirrors.aliyun.com/debian|g' \
-        /etc/apt/sources.list 2>/dev/null || true
+# Debian bookworm 官方镜像（debuerreotype）的源是 deb822 格式的
+# /etc/apt/sources.list.d/debian.sources（URIs: http://deb.debian.org/debian），
+# 传统 /etc/apt/sources.list 仅在老式镜像存在，作兜底一并替换。
+# 替换规则必须匹配完整 "http://deb.debian.org/debian"（含尾 /debian）：
+# 否则 deb822 的 URIs 行会被追加成 .../debian/debian；/debian-security 长串先替换。
+# 切源后用 apt-get update 真实验证新源可用——失败即构建失败，杜绝静默失效。
+RUN sed -i 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g; s|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
+        /etc/apt/sources.list.d/debian.sources \
+        /etc/apt/sources.list 2>/dev/null || true \
+    && grep -q 'mirrors.aliyun.com' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && rm -rf /var/lib/apt/lists/*
 
 # bun 的下载（含 bun 平台二进制 optionalDependencies）先走官方 registry——
 # GitHub runner 侧快；npmmirror 配置放最后，只影响运行时安装。
