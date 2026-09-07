@@ -3,10 +3,14 @@ name: Verify Image Size (temporary)
 # TEMPORARY verification workflow for issue #4 (Docker image size).
 # Builds the image from main's Dockerfile (Before) and from this branch's
 # Dockerfile (After), compares sizes, and smoke-tests the After image.
+# Triggered by pushes to the temp branch (workflow_dispatch requires the
+# file on the default branch, which we must not pollute).
 # REMOVED from the branch before the PR is opened.
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - issue-4-image-size
 
 jobs:
   verify:
