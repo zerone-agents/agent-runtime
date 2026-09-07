@@ -36,6 +36,8 @@ jobs:
         run: |
           BEFORE=$(docker images runtime-before:test --format '{{.Size}}')
           AFTER=$(docker images runtime-after:test --format '{{.Size}}')
+          echo "BEFORE_SIZE=$BEFORE"
+          echo "AFTER_SIZE=$AFTER"
           echo "before=$BEFORE" >> $GITHUB_OUTPUT
           echo "after=$AFTER" >> $GITHUB_OUTPUT
           echo "### 📦 Image size comparison" >> $GITHUB_STEP_SUMMARY
@@ -65,8 +67,8 @@ jobs:
         run: |
           mkdir -p /tmp/smoke-cfg
           cp -r examples/simple/. /tmp/smoke-cfg/
-          docker run -d --name rt-smoke -v /tmp/smoke-cfg:/app/config runtime-after:test
-          sleep 5
+          docker run -d --name rt-smoke -p 3000:3000 -v /tmp/smoke-cfg:/app/config runtime-after:test
+          sleep 8
           RESP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health || true)
           echo "health status: $RESP"
           docker logs rt-smoke 2>&1 | tail -5 || true
