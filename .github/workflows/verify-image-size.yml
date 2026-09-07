@@ -24,7 +24,7 @@ jobs:
 
       - name: Build Before (main Dockerfile)
         run: |
-          git show main:Dockerfile > /tmp/Dockerfile.before
+          git show origin/main:Dockerfile > /tmp/Dockerfile.before
           docker build --provenance=false -f /tmp/Dockerfile.before -t runtime-before:test .
 
       - name: Build After (branch Dockerfile)
