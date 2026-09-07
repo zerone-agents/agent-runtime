@@ -4,17 +4,17 @@
 
 ## 镜像运行时环境
 
-镜像基于 **ubuntu:26.04**，内置 Node.js 与 Python 双运行时，方便 Agent 在容器内直接执行脚本、处理文档或进行数据分析。
+镜像基于 **node:22-bookworm-slim**（Debian 12 bookworm，glibc），内置 Node.js 与 Python 双运行时，方便 Agent 在容器内直接执行脚本、处理文档或进行数据分析。
 
-| 组件 | 版本（来自 ubuntu:26.04 仓库） | 说明 |
+| 组件 | 版本 | 说明 |
 |---|---|---|
-| Ubuntu | 26.04 LTS (Resolute Raccoon) | 基础镜像，glibc |
-| Node.js | 22.22.1 | 与原 `node:22-alpine` 大版本一致 |
-| npm | 10.x | apt 自带 9.2.0，Dockerfile 中已升级到 10 |
-| Python | 3.14.x | 系统自带，无需额外安装 |
-| pip | 25.x | 支持 Agent 运行时 `pip install` 临时库 |
+| Debian | 12 (bookworm) | 基础镜像，glibc |
+| Node.js | 22.x | 官方 `node:22-bookworm-slim` 预装，与原 `node:22-alpine` 大版本一致 |
+| npm | 10.x | 官方镜像自带，无需额外升级 |
+| Python | 3.11.x | Debian bookworm 系统自带 |
+| pip | 23.x | 支持 Agent 运行时 `pip install` 临时库 |
 
-构建阶段与运行阶段共用 ubuntu:26.04（同为 glibc），避免 musl/glibc 二进制不兼容问题；Agent 可在运行时自由使用 `npm install` 与 `pip install`。
+构建阶段与运行阶段共用 node:22-bookworm-slim（同为 glibc），避免 musl/glibc 二进制不兼容问题；Agent 可在运行时自由使用 `npm install` 与 `pip install`。
 
 ## 构建镜像
 
