@@ -1,0 +1,77 @@
+name: Verify Image Size (temporary)
+
+# TEMPORARY verification workflow for issue #4 (Docker image size).
+# Builds the image from main's Dockerfile (Before) and from this branch's
+# Dockerfile (After), compares sizes, and smoke-tests the After image.
+# REMOVED from the branch before the PR is opened.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Before (main Dockerfile)
+        run: |
+          git show main:Dockerfile > /tmp/Dockerfile.before
+          docker build --provenance=false -f /tmp/Dockerfile.before -t runtime-before:test .
+
+      - name: Build After (branch Dockerfile)
+        run: |
+          docker build --provenance=false -f Dockerfile -t runtime-after:test .
+
+      - name: Compare image sizes
+        id: sizes
+        run: |
+          BEFORE=$(docker images runtime-before:test --format '{{.Size}}')
+          AFTER=$(docker images runtime-after:test --format '{{.Size}}')
+          echo "before=$BEFORE" >> $GITHUB_OUTPUT
+          echo "after=$AFTER" >> $GITHUB_OUTPUT
+          echo "### 📦 Image size comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Before (ubuntu:26.04, main) | $BEFORE |" >> $GITHUB_STEP_SUMMARY
+          echo "| After (node:22-bookworm-slim, branch) | $AFTER |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke — runtimes present in After image
+        run: |
+          docker run --rm --entrypoint bash runtime-after:test -c '
+            set -e
+            node --version
+            npm --version
+            python3 --version
+            pip3 --version
+            bun --version
+            test -x /bin/bash && echo "bash-ok"
+          '
+
+      - name: Smoke — native addon loads (sharp)
+        run: |
+          docker run --rm --entrypoint node -w /app runtime-after:test -e "require('sharp'); console.log('sharp-ok')"
+
+      - name: Smoke — /health endpoint
+        run: |
+          mkdir -p /tmp/smoke-cfg
+          cp -r examples/simple/. /tmp/smoke-cfg/
+          docker run -d --name rt-smoke -v /tmp/smoke-cfg:/app/config runtime-after:test
+          sleep 5
+          RESP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health || true)
+          echo "health status: $RESP"
+          docker logs rt-smoke 2>&1 | tail -5 || true
+          if [ "$RESP" != "200" ]; then
+            echo "::error::/health did not return 200 (got $RESP)"
+            docker logs rt-smoke 2>&1 | tail -30
+            docker rm -f rt-smoke >/dev/null 2>&1 || true
+            exit 1
+          fi
+          docker rm -f rt-smoke >/dev/null 2>&1 || true
+          echo "### 🚦 Smoke tests" >> $GITHUB_STEP_SUMMARY
+          echo "runtimes, sharp, bash, /health=200: all OK" >> $GITHUB_STEP_SUMMARY
