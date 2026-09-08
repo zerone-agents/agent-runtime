@@ -277,12 +277,11 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
     expect(sub["child-a"]).toBeDefined()
   })
 
-  it("8. Lifecycle & error isolation: failure is scoped; closeAll releases each unique connection once", async () => {
-    expect(registry.getStatus("bad-child")).toBe("unavailable")
-    expect(registry.getStatus("bad-parent")).toBe("unavailable")
-    expect(registry.getDetail("bad-parent")!.unavailableReason).toBe(
-      'subagent "bad-child" unavailable',
-    )
+  it("8. Lifecycle & error isolation: MCP failure degrades, not unavailable; closeAll releases each unique connection once", async () => {
+    // Issue #73: a failed remote MCP degrades the entry (ready, tools
+    // excluded) instead of failing it — and the parent mounts it as-is.
+    expect(registry.getStatus("bad-child")).toBe("ready")
+    expect(registry.getStatus("bad-parent")).toBe("ready")
     expect(registry.getStatus("bystander")).toBe("ready")
     mockCreateAgent.mockReturnValueOnce({ close: vi.fn() } as never)
     expect(registry.create("bystander")).toBeDefined()
@@ -300,7 +299,9 @@ describe("subagent capability isolation — issue #47 acceptance", () => {
   it("9. Sanitization: headers/env redacted in detail; failure reason is runtime-constructed; no credentials", () => {
     const detail = registry.getDetail("bad-child")!
     expect(detail.mcpServers!.badSrv.headers).toEqual({ Authorization: "***" })
-    expect(detail.unavailableReason).toBe('MCP server "badSrv" failed to connect')
+    expect(detail.mcpServers!.badSrv.connectionStatus).toBe("error")
+    expect(detail.mcpServers!.badSrv.error).toBe('MCP server "badSrv" failed to connect')
+    expect(detail.status).toBe("ready") // degraded — not unavailable (issue #73)
     // Raw SDK error text (secret=hunter2) never reaches the detail payload.
     expect(JSON.stringify(detail)).not.toContain("hunter2")
 

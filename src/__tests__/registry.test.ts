@@ -791,16 +791,23 @@ describe("AgentRegistry (factory)", () => {
     })
 
     it("marks parent unavailable when a referenced child failed phase-1 materialization", async () => {
-      mockConnectMcp.mockImplementation(
-        async (n: string) =>
-          n === "bad"
-            ? { name: n, status: "error", tools: [], error: new Error("raw secret"), close: async () => {} }
-            : { name: n, status: "connected", tools: [], close: async () => {} },
-      )
+      // A TRULY broken child (custom tool file missing → entry reject) still
+      // cascades to the parent. MCP connect failures no longer do (see below).
+      mockConnectMcp.mockResolvedValue({
+        name: "db",
+        status: "connected",
+        tools: [],
+        close: async () => {},
+      } as never)
       const registry = new AgentRegistry()
       await registry.loadFromConfig(
         makeConfig([
-          { id: "broken-child", model: "gpt-4", mcpServers: { bad: { transport: "stdio", command: "x" } } },
+          {
+            id: "broken-child",
+            model: "gpt-4",
+            mcpServers: { db: { transport: "stdio", command: "x" } },
+            customTools: ["missing-tool.ts"],
+          },
           { id: "parent", model: "gpt-4", subagents: ["broken-child"] },
           { id: "bystander", model: "gpt-4" },
         ]),
@@ -814,9 +821,92 @@ describe("AgentRegistry (factory)", () => {
       expect(registry.getStatus("bystander")).toBe("ready") // 无引用关系不受污染
     })
 
-    it("grandparent stays ready when child's own root assembly failed (order-independent)", async () => {
-      // child 物化成功但其引用的 grandchild 失败 → child-as-root unavailable,
-      // 但 grandparent 挂载的 child caps 完整 → grandparent ready
+    it("mounts a degraded child (MCP connect failure) — parent stays ready (issue #73)", async () => {
+      // A child whose only problem is a failed remote MCP degrades to ready
+      // with the server's tools excluded; the parent must NOT cascade.
+      mockConnectMcp.mockImplementation(
+        async (n: string) =>
+          n === "bad"
+            ? {
+                name: n,
+                status: "error",
+                tools: [],
+                error: new Error("raw secret"),
+                close: async () => {},
+              }
+            : { name: n, status: "connected", tools: [], close: async () => {} },
+      )
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          {
+            id: "broken-child",
+            model: "gpt-4",
+            mcpServers: { bad: { transport: "stdio", command: "x" } },
+          },
+          { id: "parent", model: "gpt-4", subagents: ["broken-child"] },
+        ]),
+        "/tmp",
+      )
+      expect(registry.getStatus("broken-child")).toBe("ready")
+      expect(registry.getStatus("parent")).toBe("ready")
+      const child = registry.getDetail("broken-child")!
+      expect(child.mcpServers!.bad.connectionStatus).toBe("error")
+      expect(child.mcpServers!.bad.error).toBe('MCP server "bad" failed to connect')
+    })
+
+    it("degrades per-server: one bad MCP keeps the agent ready, good MCP tools intact (issue #73)", async () => {
+      mockConnectMcp.mockImplementation(async (n: string) => {
+        if (n === "badSrv") {
+          return {
+            name: n,
+            status: "error",
+            tools: [],
+            error: new Error("conn refused"),
+            close: async () => {},
+          }
+        }
+        return {
+          name: n,
+          status: "connected",
+          tools: [
+            { name: "mcp__goodSrv__tool", schema: { type: "object" }, description: "t" } as never,
+          ],
+          close: async () => {},
+        }
+      })
+      const registry = new AgentRegistry()
+      await registry.loadFromConfig(
+        makeConfig([
+          {
+            id: "mixed",
+            model: "gpt-4",
+            mcpServers: {
+              goodSrv: { transport: "stdio", command: "ok" },
+              badSrv: { transport: "http", url: "http://down.example/mcp" },
+            },
+          },
+        ]),
+        "/tmp",
+      )
+      // Chat gate relies on status: ready means no 503 (router/agent.ts).
+      expect(registry.getStatus("mixed")).toBe("ready")
+      const detail = registry.getDetail("mixed")!
+      expect(detail.mcpServers!.goodSrv.connectionStatus).toBe("connected")
+      expect(detail.mcpServers!.badSrv.connectionStatus).toBe("error")
+      expect(detail.mcpServers!.badSrv.error).toBe('MCP server "badSrv" failed to connect')
+      expect(detail.mcpServers!.goodSrv.error).toBeUndefined()
+      // Good server's tools materialize; bad server's are excluded.
+      registry.create("mixed")
+      const opts = mockCreateAgent.mock.calls[0]![0]!
+      expect(
+        opts.agent!.capabilities!.connectionTools!.map((t: { name: string }) => t.name),
+      ).toEqual(["mcp__goodSrv__tool"])
+    })
+
+    it("grandparent stays ready when a leaf child degrades on MCP failure (issue #73)", async () => {
+      // 叶子 MCP 连不上 = 降级（ready、工具缺席），不是坏配置：
+      // mid 与 grandparent 照常挂载降级叶子，全部 ready。
       mockConnectMcp.mockImplementation(
         async (n: string) =>
           n === "dead"
@@ -833,35 +923,31 @@ describe("AgentRegistry (factory)", () => {
         ]),
         "/tmp",
       )
-      expect(registry.getStatus("dead-leaf")).toBe("unavailable")
-      expect(registry.getStatus("mid")).toBe("unavailable")
+      expect(registry.getStatus("dead-leaf")).toBe("ready") // degraded, not unavailable
+      expect(registry.getDetail("dead-leaf")!.mcpServers!.dead.connectionStatus).toBe("error")
+      expect(registry.getStatus("mid")).toBe("ready")
       expect(registry.getStatus("gp")).toBe("ready")
     })
 
     it("releases the entry's already-acquired connections when materialization fails mid-way (#47 review)", async () => {
+      // MCP connect failures no longer fail the entry (issue #73 degrades
+      // them), so this regression now uses a genuinely broken config — a
+      // missing custom tool file — to trigger the mid-way rollback.
       const goodClose = vi.fn(async () => {})
-      mockConnectMcp.mockImplementation(async (n: string) => {
-        if (n === "bad") {
-          return {
-            name: n,
-            status: "error",
-            tools: [],
-            error: new Error("down"),
-            close: async () => {},
-          }
-        }
-        return { name: n, status: "connected", tools: [], close: goodClose }
-      })
+      mockConnectMcp.mockImplementation(async (n: string) => ({
+        name: n,
+        status: "connected",
+        tools: [],
+        close: goodClose,
+      }))
       const registry = new AgentRegistry()
       await registry.loadFromConfig(
         makeConfig([
           {
             id: "two-servers",
             model: "gpt-4",
-            mcpServers: {
-              good: { transport: "stdio", command: "ok" },
-              bad: { transport: "stdio", command: "nope" },
-            },
+            mcpServers: { good: { transport: "stdio", command: "ok" } },
+            customTools: ["missing-tool.ts"],
           },
           { id: "sharer", model: "gpt-4", mcpServers: { good: { transport: "stdio", command: "ok" } } },
         ]),
@@ -874,22 +960,20 @@ describe("AgentRegistry (factory)", () => {
 
       // Now a failing entry whose "good" connection is exclusive.
       const soloClose = vi.fn(async () => {})
-      mockConnectMcp.mockImplementation(async (n: string) => {
-        if (n === "bad2") {
-          return { name: n, status: "error", tools: [], error: new Error("down"), close: async () => {} }
-        }
-        return { name: n, status: "connected", tools: [], close: soloClose }
-      })
+      mockConnectMcp.mockImplementation(async (n: string) => ({
+        name: n,
+        status: "connected",
+        tools: [],
+        close: soloClose,
+      }))
       const registry2 = new AgentRegistry()
       await registry2.loadFromConfig(
         makeConfig([
           {
             id: "exclusive",
             model: "gpt-4",
-            mcpServers: {
-              good2: { transport: "stdio", command: "solo" },
-              bad2: { transport: "stdio", command: "nope" },
-            },
+            mcpServers: { good2: { transport: "stdio", command: "solo" } },
+            customTools: ["missing-tool.ts"],
           },
         ]),
         "/tmp",
