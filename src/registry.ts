@@ -26,6 +26,8 @@ interface MaterializedEntry {
   prompt: string
   maxTurns: number
   connectionTools: ToolDefinition[]
+  /** Per-server connect failures: server name → sanitized reason (issue #73). */
+  mcpErrors: Map<string, string>
   customTools: ToolDefinition[]
   skills: SkillDefinition[]
   allowedTools?: string[]
@@ -49,6 +51,8 @@ export interface McpServerSummary {
   headers?: Record<string, string>
   /** Live connection state from the runtime-owned manager (issue #47 §4). */
   connectionStatus?: "connected" | "error"
+  /** Sanitized failure reason when connectionStatus is "error" (issue #73). */
+  error?: string
   /** True when other entries share this connection (identical config). */
   shared?: boolean
 }
@@ -242,11 +246,32 @@ export class AgentRegistry {
 
     // Connect this entry's OWN MCP servers via the runtime-owned manager
     // (config-key dedup; failure throws a sanitized error).
+    // Issue #73: a single server's connect failure must NOT fail the whole
+    // entry — a remote MCP being down (network, credentials, outage) is not
+    // the same as a broken agent config. Per-server try/catch: the failed
+    // server's reason is recorded for the detail endpoint, its tools are
+    // excluded, and materialization continues. Only truly broken agent
+    // config (prompt/skills/custom tools below) rejects the entry.
     const connectionTools: ToolDefinition[] = []
+    const mcpErrors = new Map<string, string>()
     if (def.mcpServers) {
       for (const [name, cfg] of Object.entries(def.mcpServers)) {
-        const conn = await mcp.acquire(def.id, name, cfg as Record<string, unknown>)
-        connectionTools.push(...conn.tools)
+        try {
+          const conn = await mcp.acquire(def.id, name, cfg as Record<string, unknown>)
+          connectionTools.push(...conn.tools)
+        } catch (err) {
+          const reason =
+            err instanceof McpConnectionError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "MCP connection failed"
+          mcpErrors.set(name, reason)
+          console.error(
+            `MCP server "${name}" failed to connect for agent "${def.id}"; ` +
+              `degrading — its tools are excluded from this agent`,
+          )
+        }
       }
     }
 
@@ -268,6 +293,7 @@ export class AgentRegistry {
       prompt,
       maxTurns: def.maxTurns,
       connectionTools,
+      mcpErrors,
       customTools,
       skills,
       allowedTools: def.allowedTools,
@@ -395,16 +421,20 @@ export class AgentRegistry {
     if (def.extraUserSkillDirs !== undefined) detail.extraUserSkillDirs = def.extraUserSkillDirs
     const mcp = sanitizeMcpServers(def.mcpServers)
     if (mcp !== undefined) {
-      // Merge live per-server connection state from the manager (#47 §4).
+      // Merge live per-server connection state from the manager (#47 §4);
+      // failed servers additionally surface their sanitized reason (#73).
       const described = new Map(
         this.mcp.describe(agentId).map((d) => [d.name, d] as const),
       )
+      const mcpErrors = this.materialized.get(agentId)?.mcpErrors
       for (const [name, summary] of Object.entries(mcp)) {
         const d = described.get(name)
         if (d) {
           summary.connectionStatus = d.status === "connected" ? "connected" : "error"
           summary.shared = d.shared
         }
+        const reason = mcpErrors?.get(name)
+        if (reason !== undefined) summary.error = reason
       }
       detail.mcpServers = mcp
     }
