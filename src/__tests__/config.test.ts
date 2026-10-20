@@ -289,6 +289,37 @@ describe("RuntimeConfigSchema", () => {
       }
     })
   })
+
+  describe("effort", () => {
+    it("parses effort when provided", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [{ id: "assistant", description: "assistant", effort: "high" }],
+      })
+      expect(result.agents[0].effort).toBe("high")
+    })
+
+    it("leaves effort undefined when not provided", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [{ id: "assistant", description: "assistant" }],
+      })
+      expect(result.agents[0].effort).toBeUndefined()
+    })
+
+    it("passes custom effort values through as-is (SDK contract)", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [{ id: "assistant", description: "assistant", effort: "ultra-custom" }],
+      })
+      expect(result.agents[0].effort).toBe("ultra-custom")
+    })
+
+    it("rejects an empty effort string", () => {
+      expect(() =>
+        RuntimeConfigSchema.parse({
+          agents: [{ id: "assistant", description: "assistant", effort: "" }],
+        }),
+      ).toThrow()
+    })
+  })
 })
 
 describe("AuthConfigSchema", () => {

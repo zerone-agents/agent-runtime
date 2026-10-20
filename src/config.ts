@@ -81,6 +81,14 @@ const AgentDefinitionSchemaCore = z.object({
   mcpServers: z.record(McpServerConfigSchema).optional(),
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]).optional(),
   thinking: ThinkingConfigSchema.optional(),
+  /**
+   * Reasoning effort level (SDK AgentOptions.effort): preset values
+   * 'low' | 'medium' | 'high' | 'xhigh' | 'max'; custom values are passed
+   * through to the provider as-is (Anthropic output_config.effort /
+   * OpenAI reasoning_effort). Root-level only, like `thinking` — mounted
+   * subagents reuse the root process configuration.
+   */
+  effort: z.string().min(1).optional(),
   datasets: z.record(z.string()).optional(),
   /** File-based custom tool scripts; relative paths resolve against configDir. Tool names derive from file names. */
   customTools: z.array(z.string().min(1)).optional(),
