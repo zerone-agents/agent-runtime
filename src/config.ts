@@ -85,8 +85,10 @@ const AgentDefinitionSchemaCore = z.object({
    * Reasoning effort level (SDK AgentOptions.effort): preset values
    * 'low' | 'medium' | 'high' | 'xhigh' | 'max'; custom values are passed
    * through to the provider as-is (Anthropic output_config.effort /
-   * OpenAI reasoning_effort). Root-level only, like `thinking` — mounted
-   * subagents reuse the root process configuration.
+   * OpenAI reasoning_effort). Applied at the root level only — child
+   * (mounted subagent) values are parsed but ignored, because the SDK's
+   * subagent AgentDefinition has no effort/thinking field and mounted
+   * children reuse the root process configuration (same as `thinking`).
    */
   effort: z.string().min(1).optional(),
   datasets: z.record(z.string()).optional(),

@@ -194,6 +194,8 @@ agents:
 | `extraUserSkillDirs` | No | — | Additional user-level skill dirs (scanned after default) |
 | `mcpServers` | No | — | MCP server configurations |
 | `permissionMode` | No | `default` | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk`, `auto` |
+| `thinking` | No | — | Extended thinking: `{ type: "adaptive"/"enabled"/"disabled", budgetTokens? }`. Root-level only — mounted subagents reuse the root configuration (child values are parsed but ignored) |
+| `effort` | No | — | Reasoning effort: `low` / `medium` / `high` / `xhigh` / `max`; custom values pass through to the provider as-is (Anthropic `output_config.effort`, OpenAI `reasoning_effort`). Root-level only, same as `thinking` |
 | `subagents` | No | — | Agent ids to mount as subagents for the `Task` tool |
 | `datasets` | No | — | Map of dataset-id to description, injected into the system prompt as a `<datasets>` block |
 
