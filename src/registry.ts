@@ -316,6 +316,7 @@ export class AgentRegistry {
       maxSessionQueries: def.maxSessionQueries,
       permissionMode: def.permissionMode,
       thinking: def.thinking as any,
+      effort: def.effort,
       // Issue #63: construction-time sink — SDK-owned channel for
       // provider/hooks/snapshot/tools/MCP/skills diagnostics and subagent
       // inheritance. Omitted (not undefined-keyed) when no sink is wired.

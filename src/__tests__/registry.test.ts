@@ -619,6 +619,45 @@ describe("AgentRegistry (factory)", () => {
     })
   })
 
+  describe("reasoning config (effort / thinking)", () => {
+    it("passes effort and thinking to createAgent when configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+        effort: "high",
+        thinking: { type: "enabled", budgetTokens: 4000 },
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("test")
+
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          effort: "high",
+          thinking: { type: "enabled", budgetTokens: 4000 },
+        }),
+      )
+    })
+
+    it("passes undefined effort when not configured", async () => {
+      const registry = new AgentRegistry()
+      const config = makeConfig([{
+        id: "test",
+        model: "claude-sonnet-4-6",
+        maxTurns: 10,
+      }])
+
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("test")
+
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ effort: undefined }),
+      )
+    })
+  })
+
   describe("subagent mounting", () => {
     const mockAgent = { close: vi.fn().mockResolvedValue(undefined) }
 

@@ -190,6 +190,8 @@ agents:
 | `extraUserSkillDirs` | 否 | — | 额外的 user 级 skill 目录（在默认目录之后扫描） |
 | `mcpServers` | 否 | — | MCP server 配置 |
 | `permissionMode` | 否 | `default` | `default`、`acceptEdits`、`bypassPermissions`、`plan`、`dontAsk`、`auto` |
+| `thinking` | 否 | — | 扩展思考配置：`{ type: "adaptive"/"enabled"/"disabled", budgetTokens? }`。仅 root 级生效——挂载的子代理复用 root 配置（child 级值可解析但被忽略） |
+| `effort` | 否 | — | 推理强度：`low` / `medium` / `high` / `xhigh` / `max`；自定义值原样透传给 provider（Anthropic `output_config.effort`、OpenAI `reasoning_effort`）。仅 root 级生效，同 `thinking` |
 | `subagents` | 否 | — | 供 `Task` 工具挂载的 agent id 列表 |
 | `datasets` | 否 | — | dataset-id 到描述的映射，以 `<datasets>` 块注入 system prompt |
 
