@@ -72,6 +72,14 @@ const AgentDefinitionSchemaCore = z.object({
   apiType: z.string().min(1).optional(),
   systemPrompt: z.string().optional(),
   systemPromptFile: z.string().optional(),
+  /**
+   * Appended to the very END of the system prompt (after the SDK env block:
+   * env/skills/subagents/AGENTS.md — SDK AgentDefinition.appendPrompt).
+   * Applies to root agents AND mounted children (the SDK child definition
+   * carries appendPrompt; unlike effort/thinking which are root-only).
+   * Not mutually exclusive with systemPrompt/systemPromptFile — it appends.
+   */
+  appendSystemPrompt: z.string().min(1).optional(),
   maxTurns: z.number().default(10),
   maxSessionQueries: z.number().optional(),
   allowedTools: z.array(z.string()).optional(),
