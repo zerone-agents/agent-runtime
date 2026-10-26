@@ -93,6 +93,38 @@ describe("AgentRegistry (factory)", () => {
       expect(registry.getStatus("bad-agent")).toBe("unavailable")
       expect(registry.getStatus("good-agent")).toBe("ready")
     })
+
+    it("projects config appendSystemPrompt into the SDK definition (root)", async () => {
+      const config = makeConfig([
+        { id: "agent-a", model: "gpt-4", appendSystemPrompt: "cfg-append" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("agent-a")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.agent.appendPrompt).toBe("cfg-append")
+    })
+
+    it("omits appendPrompt entirely when appendSystemPrompt is absent", async () => {
+      const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("agent-a")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect("appendPrompt" in opts.agent).toBe(false)
+    })
+
+    it("projects appendPrompt for mounted children too (same toSdkDefinition)", async () => {
+      const config = makeConfig([
+        { id: "main", model: "gpt-4", subagents: ["coder"] },
+        { id: "coder", model: "gpt-4", appendSystemPrompt: "child-append" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("main")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.subAgents.coder.appendPrompt).toBe("child-append")
+    })
   })
 
   describe("create", () => {

@@ -24,6 +24,8 @@ import type { DiagnosticsSink } from "./diagnostics.js"
 interface MaterializedEntry {
   description: string
   prompt: string
+  /** Config-level append (agents.yaml appendSystemPrompt); flows to SDK appendPrompt. */
+  appendPrompt?: string
   maxTurns: number
   connectionTools: ToolDefinition[]
   /** Per-server connect failures: server name → sanitized reason (issue #73). */
@@ -291,6 +293,7 @@ export class AgentRegistry {
     return {
       description: def.description,
       prompt,
+      appendPrompt: def.appendSystemPrompt,
       maxTurns: def.maxTurns,
       connectionTools,
       mcpErrors,
@@ -344,6 +347,7 @@ export class AgentRegistry {
       description: m.description,
       prompt: m.prompt,
       maxTurns: m.maxTurns,
+      ...(m.appendPrompt !== undefined ? { appendPrompt: m.appendPrompt } : {}),
       capabilities: {
         connectionTools: m.connectionTools,
         customTools: [...m.customTools, ...guardTools],
