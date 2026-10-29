@@ -145,6 +145,56 @@ describe("AgentRegistry (factory)", () => {
       )
     })
 
+    describe("per-run appendSystemPrompt merge", () => {
+      const seedOpts = (appendPrompt?: string) =>
+        ({ agent: { description: "d", prompt: "p", ...(appendPrompt ? { appendPrompt } : {}) } }) as any
+
+      it("request-level only: stored agent has no appendPrompt", () => {
+        registry.register("a", {} as any, seedOpts())
+        registry.create("a", undefined, "run-ctx")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("run-ctx")
+      })
+
+      it("config-level only when runAppend is undefined (stored opts reused as-is)", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg")
+      })
+
+      it("joins config-level and request-level with a blank line", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a", undefined, "run-ctx")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg\n\nrun-ctx")
+      })
+
+      it("empty-string runAppend falls back to config-level only (filter(Boolean))", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a", undefined, "")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg")
+      })
+
+      it("never mutates the stored createOpts nor its inner agent object", () => {
+        const storedAgent = { description: "d", prompt: "p" }
+        const storedOpts = { agent: storedAgent }
+        registry.register("a", {} as any, storedOpts as any)
+
+        registry.create("a", undefined, "run-ctx")
+
+        // 存量两层都必须原封不动（评审修订②：顶层浅拷贝不复制内层，
+        // 断言对象自身未加键、引用未变，而非只看顶层）
+        expect("appendPrompt" in storedAgent).toBe(false)
+        expect(storedOpts.agent).toBe(storedAgent)
+
+        const passed = mockCreateAgent.mock.calls[0][0] as any
+        expect(passed.agent.appendPrompt).toBe("run-ctx")
+        expect(passed.agent).not.toBe(storedAgent)
+      })
+    })
+
     it("materializes skills runtime-side; no allowedSkills/settingSources passed to SDK (#47)", async () => {
       mockCreateAgent.mockReturnValue({ close: vi.fn().mockResolvedValue(undefined) } as any)
       const config = makeConfig([{

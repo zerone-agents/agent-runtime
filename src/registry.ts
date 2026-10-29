@@ -358,12 +358,22 @@ export class AgentRegistry {
     }
   }
 
-  create(agentId: string, sessionId?: string): Agent | undefined {
+  create(agentId: string, sessionId?: string, runAppend?: string): Agent | undefined {
     const opts = this.createOpts.get(agentId)
     if (!opts) return undefined
     if (this.statuses.get(agentId) !== "ready") return undefined
 
-    const base = this.cronService ? { ...opts, cronService: this.cronService } : opts
+    // Per-run append: double shallow-copy — BOTH the CreateOpts and the
+    // inner agent definition must be new objects. Stored createOpts (and
+    // its agent reference) are shared with concurrent runs and cron's
+    // resolveOptions(); a top-level spread alone would still mutate the
+    // shared agent object.
+    let effective = opts
+    if (runAppend !== undefined) {
+      const combined = [opts.agent?.appendPrompt, runAppend].filter(Boolean).join("\n\n")
+      effective = { ...opts, agent: { ...opts.agent, appendPrompt: combined || undefined } }
+    }
+    const base = this.cronService ? { ...effective, cronService: this.cronService } : effective
     const merged = sessionId ? { ...base, resume: sessionId } : base
     return createAgent(merged)
   }
