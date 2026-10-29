@@ -379,6 +379,18 @@ describe("Agent Router (per-request)", () => {
       expect(res.status).toBe(400)
       expect(registry.create).not.toHaveBeenCalled()
     })
+
+    it("rejects object appendSystemPrompt with 400 too (non-string type, review nit)", async () => {
+      const app = createApp(registry, metrics)
+      const res = await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false, appendSystemPrompt: { nested: true } }),
+      })
+
+      expect(res.status).toBe(400)
+      expect(registry.create).not.toHaveBeenCalled()
+    })
   })
 
   describe("GET /v1/agents/:agentId", () => {

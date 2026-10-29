@@ -177,6 +177,17 @@ describe("AgentRegistry (factory)", () => {
         expect(opts.agent.appendPrompt).toBe("cfg")
       })
 
+      it("empty combined value leaves NO appendPrompt key (direct runAppend=\"\" call, review LOW)", () => {
+        // Programmatic callers may pass runAppend="" directly (the HTTP entry
+        // normalizes it away). Combined with no config-level append the
+        // per-run clone must omit the key entirely — matching the
+        // toSdkDefinition key-omission contract, not `appendPrompt: undefined`.
+        registry.register("a", {} as any, seedOpts())
+        registry.create("a", undefined, "")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect("appendPrompt" in opts.agent).toBe(false)
+      })
+
       it("never mutates the stored createOpts nor its inner agent object", () => {
         const storedAgent = { description: "d", prompt: "p" }
         const storedOpts = { agent: storedAgent }

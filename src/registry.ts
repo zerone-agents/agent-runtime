@@ -374,8 +374,14 @@ export class AgentRegistry {
     // without it TS widens the spread of `AgentDefinition | undefined` and
     // rejects the assignment back to AgentDefinition.
     if (runAppend !== undefined && opts.agent) {
+      // Conditional spread (review LOW): an empty combined value (direct
+      // runAppend="" call with no config-level append — the HTTP entry
+      // normalizes "" away) must NOT leave an `appendPrompt: undefined`
+      // key on the per-run clone — match the toSdkDefinition
+      // key-omission contract.
       const combined = [opts.agent.appendPrompt, runAppend].filter(Boolean).join("\n\n")
-      effective = { ...opts, agent: { ...opts.agent, appendPrompt: combined || undefined } }
+      const agent = combined ? { ...opts.agent, appendPrompt: combined } : { ...opts.agent }
+      effective = { ...opts, agent }
     }
     const base = this.cronService ? { ...effective, cronService: this.cronService } : effective
     const merged = sessionId ? { ...base, resume: sessionId } : base
