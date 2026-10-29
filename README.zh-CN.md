@@ -182,6 +182,7 @@ agents:
 | `model` | 否 | `claude-sonnet-4-6` | LLM 模型名 |
 | `systemPrompt` | 否 | — | 内联 system prompt |
 | `systemPromptFile` | 否 | — | `.md` 文件路径（相对配置目录） |
+| `appendSystemPrompt` | 否 | — | 追加到系统提示词最末尾的上下文（SDK 环境块之后）；root 与挂载子代理均生效 |
 | `maxTurns` | 否 | `10` | agent 循环最大轮数 |
 | `maxSessionQueries` | 否 | 不限 | 发送给 LLM 的最大对话轮数（上下文窗口） |
 | `allowedTools` | 否 | 全部工具 | 工具名白名单 |
