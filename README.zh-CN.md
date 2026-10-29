@@ -292,6 +292,9 @@ zerone-agent --port 8080              # 覆盖端口
 | `examples/complex/` | 多个专职 agent（researcher、coder、writer） |
 | `examples/code-driven/` | TypeScript 配置 + 自定义工具（`agent.config.ts`） |
 | `examples/programmatic/` | 完整 SDK+Runtime 编程式用法：自定义工具、hooks、多 agent、自定义路由 |
+| `examples/multi-turn/` | 多轮对话（session resume） |
+| `examples/cron-runtime/` | 定时任务（cron） |
+| `examples/append-system-prompt/` | appendSystemPrompt 演示：配置级追加 + 请求级注入 |
 
 ## 架构
 

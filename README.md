@@ -296,6 +296,9 @@ zerone-agent --port 8080              # override port
 | `examples/complex/` | Multiple specialized agents (researcher, coder, writer) |
 | `examples/code-driven/` | TypeScript config with custom tools (`agent.config.ts`) |
 | `examples/programmatic/` | Full SDK+Runtime programmatic: custom tools, hooks, multi-agent, custom routes |
+| `examples/multi-turn/` | Multi-turn conversation with session resume (`sessionId`) |
+| `examples/cron-runtime/` | Scheduled agent runs (cron) |
+| `examples/append-system-prompt/` | appendSystemPrompt demo: config-level append + per-run injection |
 
 ## Architecture
 
