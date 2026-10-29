@@ -369,8 +369,12 @@ export class AgentRegistry {
     // resolveOptions(); a top-level spread alone would still mutate the
     // shared agent object.
     let effective = opts
-    if (runAppend !== undefined) {
-      const combined = [opts.agent?.appendPrompt, runAppend].filter(Boolean).join("\n\n")
+    // `&& opts.agent` is type-narrowing only — every stored CreateOpts in
+    // this registry carries an agent definition (buildCreateOpts/register);
+    // without it TS widens the spread of `AgentDefinition | undefined` and
+    // rejects the assignment back to AgentDefinition.
+    if (runAppend !== undefined && opts.agent) {
+      const combined = [opts.agent.appendPrompt, runAppend].filter(Boolean).join("\n\n")
       effective = { ...opts, agent: { ...opts.agent, appendPrompt: combined || undefined } }
     }
     const base = this.cronService ? { ...effective, cronService: this.cronService } : effective
