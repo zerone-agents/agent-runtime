@@ -186,6 +186,7 @@ agents:
 | `model` | No | `claude-sonnet-4-6` | LLM model name |
 | `systemPrompt` | No | — | Inline system prompt |
 | `systemPromptFile` | No | — | Path to `.md` file (relative to config dir) |
+| `appendSystemPrompt` | No | — | Extra context appended at the very end of the system prompt (after the SDK env block); applies to root agents and mounted children |
 | `maxTurns` | No | `10` | Max agentic loop turns |
 | `maxSessionQueries` | No | unlimited | Max conversation rounds sent to LLM (context window) |
 | `allowedTools` | No | all tools | Whitelist of tool names |

@@ -212,6 +212,31 @@ describe("RuntimeConfigSchema", () => {
     ).toThrow(/mutually exclusive/)
   })
 
+  it("accepts appendSystemPrompt on an agent definition", () => {
+    const config = RuntimeConfigSchema.parse({
+      agents: [{ id: "a", description: "agent", appendSystemPrompt: "ctx" }],
+    })
+    expect(config.agents[0].appendSystemPrompt).toBe("ctx")
+  })
+
+  it("rejects empty-string appendSystemPrompt (meaningless append)", () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        agents: [{ id: "a", description: "agent", appendSystemPrompt: "" }],
+      }),
+    ).toThrow()
+  })
+
+  it("accepts appendSystemPrompt on a mounted child definition", () => {
+    const config = RuntimeConfigSchema.parse({
+      agents: [
+        { id: "main", description: "main", subagents: ["coder"] },
+        { id: "coder", description: "writes code", appendSystemPrompt: "child ctx" },
+      ],
+    })
+    expect(config.agents[1].appendSystemPrompt).toBe("child ctx")
+  })
+
   it("accepts subagents as an id reference list", () => {
     const config = RuntimeConfigSchema.parse({
       server: { host: "0.0.0.0", port: 3000 },

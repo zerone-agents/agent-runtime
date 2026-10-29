@@ -93,6 +93,38 @@ describe("AgentRegistry (factory)", () => {
       expect(registry.getStatus("bad-agent")).toBe("unavailable")
       expect(registry.getStatus("good-agent")).toBe("ready")
     })
+
+    it("projects config appendSystemPrompt into the SDK definition (root)", async () => {
+      const config = makeConfig([
+        { id: "agent-a", model: "gpt-4", appendSystemPrompt: "cfg-append" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("agent-a")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.agent.appendPrompt).toBe("cfg-append")
+    })
+
+    it("omits appendPrompt entirely when appendSystemPrompt is absent", async () => {
+      const config = makeConfig([{ id: "agent-a", model: "gpt-4" }])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("agent-a")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect("appendPrompt" in opts.agent).toBe(false)
+    })
+
+    it("projects appendPrompt for mounted children too (same toSdkDefinition)", async () => {
+      const config = makeConfig([
+        { id: "main", model: "gpt-4", subagents: ["coder"] },
+        { id: "coder", model: "gpt-4", appendSystemPrompt: "child-append" },
+      ])
+      await registry.loadFromConfig(config, "/tmp")
+      registry.create("main")
+
+      const opts = mockCreateAgent.mock.calls[0][0] as any
+      expect(opts.subAgents.coder.appendPrompt).toBe("child-append")
+    })
   })
 
   describe("create", () => {
@@ -111,6 +143,67 @@ describe("AgentRegistry (factory)", () => {
           agent: expect.objectContaining({ prompt: "test-prompt" }),
         }),
       )
+    })
+
+    describe("per-run appendSystemPrompt merge", () => {
+      const seedOpts = (appendPrompt?: string) =>
+        ({ agent: { description: "d", prompt: "p", ...(appendPrompt ? { appendPrompt } : {}) } }) as any
+
+      it("request-level only: stored agent has no appendPrompt", () => {
+        registry.register("a", {} as any, seedOpts())
+        registry.create("a", undefined, "run-ctx")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("run-ctx")
+      })
+
+      it("config-level only when runAppend is undefined (stored opts reused as-is)", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg")
+      })
+
+      it("joins config-level and request-level with a blank line", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a", undefined, "run-ctx")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg\n\nrun-ctx")
+      })
+
+      it("empty-string runAppend falls back to config-level only (filter(Boolean))", () => {
+        registry.register("a", {} as any, seedOpts("cfg"))
+        registry.create("a", undefined, "")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect(opts.agent.appendPrompt).toBe("cfg")
+      })
+
+      it("empty combined value leaves NO appendPrompt key (direct runAppend=\"\" call, review LOW)", () => {
+        // Programmatic callers may pass runAppend="" directly (the HTTP entry
+        // normalizes it away). Combined with no config-level append the
+        // per-run clone must omit the key entirely — matching the
+        // toSdkDefinition key-omission contract, not `appendPrompt: undefined`.
+        registry.register("a", {} as any, seedOpts())
+        registry.create("a", undefined, "")
+        const opts = mockCreateAgent.mock.calls[0][0] as any
+        expect("appendPrompt" in opts.agent).toBe(false)
+      })
+
+      it("never mutates the stored createOpts nor its inner agent object", () => {
+        const storedAgent = { description: "d", prompt: "p" }
+        const storedOpts = { agent: storedAgent }
+        registry.register("a", {} as any, storedOpts as any)
+
+        registry.create("a", undefined, "run-ctx")
+
+        // 存量两层都必须原封不动（评审修订②：顶层浅拷贝不复制内层，
+        // 断言对象自身未加键、引用未变，而非只看顶层）
+        expect("appendPrompt" in storedAgent).toBe(false)
+        expect(storedOpts.agent).toBe(storedAgent)
+
+        const passed = mockCreateAgent.mock.calls[0][0] as any
+        expect(passed.agent.appendPrompt).toBe("run-ctx")
+        expect(passed.agent).not.toBe(storedAgent)
+      })
     })
 
     it("materializes skills runtime-side; no allowedSkills/settingSources passed to SDK (#47)", async () => {

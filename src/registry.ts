@@ -24,6 +24,8 @@ import type { DiagnosticsSink } from "./diagnostics.js"
 interface MaterializedEntry {
   description: string
   prompt: string
+  /** Config-level append (agents.yaml appendSystemPrompt); flows to SDK appendPrompt. */
+  appendPrompt?: string
   maxTurns: number
   connectionTools: ToolDefinition[]
   /** Per-server connect failures: server name → sanitized reason (issue #73). */
@@ -291,6 +293,7 @@ export class AgentRegistry {
     return {
       description: def.description,
       prompt,
+      appendPrompt: def.appendSystemPrompt,
       maxTurns: def.maxTurns,
       connectionTools,
       mcpErrors,
@@ -344,6 +347,7 @@ export class AgentRegistry {
       description: m.description,
       prompt: m.prompt,
       maxTurns: m.maxTurns,
+      ...(m.appendPrompt !== undefined ? { appendPrompt: m.appendPrompt } : {}),
       capabilities: {
         connectionTools: m.connectionTools,
         customTools: [...m.customTools, ...guardTools],
@@ -354,12 +358,32 @@ export class AgentRegistry {
     }
   }
 
-  create(agentId: string, sessionId?: string): Agent | undefined {
+  create(agentId: string, sessionId?: string, runAppend?: string): Agent | undefined {
     const opts = this.createOpts.get(agentId)
     if (!opts) return undefined
     if (this.statuses.get(agentId) !== "ready") return undefined
 
-    const base = this.cronService ? { ...opts, cronService: this.cronService } : opts
+    // Per-run append: double shallow-copy — BOTH the CreateOpts and the
+    // inner agent definition must be new objects. Stored createOpts (and
+    // its agent reference) are shared with concurrent runs and cron's
+    // resolveOptions(); a top-level spread alone would still mutate the
+    // shared agent object.
+    let effective = opts
+    // `&& opts.agent` is type-narrowing only — every stored CreateOpts in
+    // this registry carries an agent definition (buildCreateOpts/register);
+    // without it TS widens the spread of `AgentDefinition | undefined` and
+    // rejects the assignment back to AgentDefinition.
+    if (runAppend !== undefined && opts.agent) {
+      // Conditional spread (review LOW): an empty combined value (direct
+      // runAppend="" call with no config-level append — the HTTP entry
+      // normalizes "" away) must NOT leave an `appendPrompt: undefined`
+      // key on the per-run clone — match the toSdkDefinition
+      // key-omission contract.
+      const combined = [opts.agent.appendPrompt, runAppend].filter(Boolean).join("\n\n")
+      const agent = combined ? { ...opts.agent, appendPrompt: combined } : { ...opts.agent }
+      effective = { ...opts, agent }
+    }
+    const base = this.cronService ? { ...effective, cronService: this.cronService } : effective
     const merged = sessionId ? { ...base, resume: sessionId } : base
     return createAgent(merged)
   }
