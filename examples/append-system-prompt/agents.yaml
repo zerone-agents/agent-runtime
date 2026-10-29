@@ -1,0 +1,18 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+
+cors:
+  origins: ["*"]
+
+agents:
+  - id: "assistant"
+    name: "追加提示词助手"
+    description: "演示 appendSystemPrompt 双入口的助手"
+    model: "claude-sonnet-4-6"
+    systemPrompt: "你是一个乐于助人的助手。"
+    appendSystemPrompt: |
+      你服务于示例项目 DemoApp。
+      无论用户使用什么语言提问，始终用中文回答。
+      自称「小助」。
+    maxTurns: 10
