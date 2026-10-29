@@ -325,6 +325,62 @@ describe("Agent Router (per-request)", () => {
     })
   })
 
+  describe("appendSystemPrompt parameter", () => {
+    it("forwards a non-empty appendSystemPrompt to registry.create", async () => {
+      registry.create.mockReturnValue(makeReadyAgent())
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false, appendSystemPrompt: "vip ctx" }),
+      })
+
+      expect(registry.create).toHaveBeenCalledWith("test", undefined, "vip ctx")
+    })
+
+    it("treats empty string as absent (no third argument value)", async () => {
+      registry.create.mockReturnValue(makeReadyAgent())
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false, appendSystemPrompt: "" }),
+      })
+
+      expect(registry.create).toHaveBeenCalledWith("test", undefined, undefined)
+    })
+
+    it("treats null as absent (filter(Boolean) pin)", async () => {
+      registry.create.mockReturnValue(makeReadyAgent())
+      registry.getStatus.mockReturnValue("ready")
+
+      const app = createApp(registry, metrics)
+      await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false, appendSystemPrompt: null }),
+      })
+
+      expect(registry.create).toHaveBeenCalledWith("test", undefined, undefined)
+    })
+
+    it("rejects non-string appendSystemPrompt with 400 (new explicit typeof check)", async () => {
+      const app = createApp(registry, metrics)
+      const res = await app.request("/v1/agents/test/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", stream: false, appendSystemPrompt: 123 }),
+      })
+
+      expect(res.status).toBe(400)
+      expect(registry.create).not.toHaveBeenCalled()
+    })
+  })
+
   describe("GET /v1/agents/:agentId", () => {
     it("returns agent detail when found", async () => {
       const detail = {
@@ -421,7 +477,7 @@ describe("Agent Router (per-request)", () => {
       const body = await res.json()
       expect(body.text).toBe("Hello world")
       expect(body.sessionId).toBe("sess-new")
-      expect(registry.create).toHaveBeenCalledWith("a1", "sess-old")
+      expect(registry.create).toHaveBeenCalledWith("a1", "sess-old", undefined)
       expect(agent.prompt).toHaveBeenCalledWith("hello", { maxSessionQueries: undefined })
       expect(agent.close).toHaveBeenCalledOnce()
       expect(metrics.recordRun).toHaveBeenCalledWith("a1", { input_tokens: 10, output_tokens: 20 }, undefined)
@@ -449,7 +505,7 @@ describe("Agent Router (per-request)", () => {
         body: JSON.stringify({ message: "hi", stream: false }),
       })
       expect(res.status).toBe(200)
-      expect(registry.create).toHaveBeenCalledWith("a1", undefined)
+      expect(registry.create).toHaveBeenCalledWith("a1", undefined, undefined)
     })
 
     it("streams via streamAgentResponse and closes agent when stream=true", async () => {
@@ -544,7 +600,7 @@ describe("Agent Router (per-request)", () => {
       const body1 = await res1.json()
       expect(body1.text).toBe("Hello new user")
       expect(body1.sessionId).toBe(firstSessionId)
-      expect(registry.create).toHaveBeenCalledWith("a1", undefined)
+      expect(registry.create).toHaveBeenCalledWith("a1", undefined, undefined)
       expect(agent1.close).toHaveBeenCalledOnce()
 
       vi.mocked(registry.create).mockClear()
@@ -558,7 +614,7 @@ describe("Agent Router (per-request)", () => {
       const body2 = await res2.json()
       expect(body2.text).toBe("Welcome back")
       expect(body2.sessionId).toBe(firstSessionId)
-      expect(registry.create).toHaveBeenCalledWith("a1", firstSessionId)
+      expect(registry.create).toHaveBeenCalledWith("a1", firstSessionId, undefined)
       expect(agent2.close).toHaveBeenCalledOnce()
     })
   })

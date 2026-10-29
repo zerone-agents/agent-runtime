@@ -66,7 +66,27 @@ export function createAgentRouter(
       )
     }
 
-    const { message, sessionId, stream, maxSessionQueries, runId: callerRunId } = body
+    const { message, sessionId, stream, maxSessionQueries, runId: callerRunId, appendSystemPrompt } = body
+
+    // appendSystemPrompt: NEW explicit typeof check. The existing message
+    // validation is truthiness-only (above) — non-string truthy values
+    // (e.g. 123) pass through today, so there is no style to align with;
+    // this field is deliberately stricter.
+    if (
+      appendSystemPrompt !== undefined &&
+      appendSystemPrompt !== null &&
+      typeof appendSystemPrompt !== "string"
+    ) {
+      return c.json({ error: "Invalid request: appendSystemPrompt must be a string" }, 400)
+    }
+    // Empty string / null are treated as absent (same precedent as
+    // attachments: []); only a non-empty string is forwarded. The registry
+    // merges it with the agent's config-level appendSystemPrompt — never
+    // persisted with the session, effective for this run only.
+    const runAppend =
+      typeof appendSystemPrompt === "string" && appendSystemPrompt.length > 0
+        ? appendSystemPrompt
+        : undefined
 
     // Only forward maxSessionQueries as a per-run override when the body
     // actually provides it. Passing `{ maxSessionQueries: undefined }`
@@ -120,7 +140,7 @@ export function createAgentRouter(
       }
     }
 
-    const agent = registry.create(agentId, sessionId)
+    const agent = registry.create(agentId, sessionId, runAppend)
     if (!agent) {
       return c.json({ error: "Agent not found" }, 404)
     }
