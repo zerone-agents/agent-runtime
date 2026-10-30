@@ -61,14 +61,20 @@ export function createApp(
 
   // enabled 但缺字段时 resolveHubConfig 会 throw，启动 fail-fast（有意为之）
   const hubConfig = resolveHubConfig(config.hub)
-  const hubPusher = hubConfig ? new HubChatPusher(hubConfig) : undefined
+  // SDK v4 (issue #131)：pusher 经 registry 的 SessionManagerV2 读 transcript
+  // （register()-only 宿主无 manager → buildSessionPayload 返回 null → 跳过推送）
+  const hubPusher = hubConfig
+    ? new HubChatPusher(hubConfig, fetch, registry.getSessionManager())
+    : undefined
 
   // Use injected RunRegistry if provided (orchestrator-managed lifecycle);
   // otherwise instantiate internally. Single instance serves all agent runs.
   const runsRegistry = options.runsRegistry ?? new RunRegistry()
   app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog, hubPusher }))
   app.route("/v1/runs", createRunsRouter(runsRegistry))
-  app.route("/v1/sessions", createSessionRouter())
+  // SDK v4 (issue #131): the session router reads through the registry's
+  // file-backed SessionManagerV2 (undefined for register()-only hosts).
+  app.route("/v1/sessions", createSessionRouter(registry.getSessionManager()))
   app.route("/v1/files", createFilesRouter())
   app.route(
     "/v1/cron",

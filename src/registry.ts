@@ -6,6 +6,11 @@ import {
   type SkillDefinition,
   type ToolDefinition,
 } from "@zerone-agent/agent-sdk"
+import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
+import {
+  createSessionInfrastructure,
+  type RuntimeSessionInfrastructure,
+} from "./session-store.js"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -94,6 +99,16 @@ export class AgentRegistry {
   private unavailableReasons = new Map<string, string>()
   private mcp: McpConnectionManager
   private readonly diagnostics: DiagnosticsSink | undefined
+  /**
+   * SDK v4 session infrastructure (issue #131): AgentOptions.store is what
+   * makes `resume` legal (v4 throws a construction-time TypeError without
+   * it) AND what persists NEW sessions — the session router and hub-push
+   * read transcripts through the same store. Anchored to the runtime data
+   * root (<configDir>/.zerone, the same root cron uses). Undefined until
+   * loadFromConfig runs; register()-only embedders stay ephemeral.
+   */
+  private sessions?: RuntimeSessionInfrastructure
+  private sessionsDir?: string
 
   /**
    * Issue #63: the runtime-owned diagnostics sink from the composition
@@ -116,6 +131,13 @@ export class AgentRegistry {
   }
 
   async loadFromConfig(config: RuntimeConfig, configDir: string): Promise<void> {
+    // SDK v4 session infrastructure (issue #131): created up-front, OUTSIDE
+    // the transactional swap below — it is process-lifetime persistence, not
+    // per-load state, and must survive reloads (agents in flight across a
+    // reload keep writing through the same instance). Stable when the
+    // resolved dir is unchanged; a changed dataRoot re-anchors it.
+    this.ensureSessionInfrastructure(config, configDir)
+
     // ------------------------------------------------------------------
     // Transactional load (review finding): a reload must atomically replace
     // the previous state — agents deleted from the config and their
@@ -230,6 +252,29 @@ export class AgentRegistry {
       await mcp.closeAll()
       throw err
     }
+  }
+
+  /**
+   * SDK v4 session infrastructure anchored to the runtime data root
+   * (`<configDir>/.zerone/sessions`, same root as cron's `<dataRoot>/cron`).
+   * Idempotent across reloads: same dir → same instance (FileSessionStore is
+   * read-through with transactional writes, so concurrent instances on one
+   * dir are safe — but one instance per process keeps it simple).
+   */
+  private ensureSessionInfrastructure(config: RuntimeConfig, configDir: string): void {
+    const dir = resolve(configDir, config.cron?.dataRoot ?? ".zerone", "sessions")
+    if (this.sessions && this.sessionsDir === dir) return
+    this.sessions = createSessionInfrastructure(dir)
+    this.sessionsDir = dir
+  }
+
+  /**
+   * SessionManagerV2 over the registry's file store (SDK v4, issue #131).
+   * Undefined until loadFromConfig has run — the session router and
+   * hub-push treat undefined as "no session persistence configured".
+   */
+  getSessionManager(): SessionManagerV2 | undefined {
+    return this.sessions?.manager
   }
 
   /**
@@ -384,8 +429,17 @@ export class AgentRegistry {
       effective = { ...opts, agent }
     }
     const base = this.cronService ? { ...effective, cronService: this.cronService } : effective
-    const merged = sessionId ? { ...base, resume: sessionId } : base
-    return createAgent(merged)
+    const withSession = sessionId ? { ...base, resume: sessionId } : base
+    // SDK v4 (issue #131): the store is passed on EVERY create, not just
+    // resume — new sessions must persist too (session router + hub-push
+    // read them back through the same store). The coordinator rides along:
+    // it carries the ownership-root pre-registration that mid-query
+    // subagent spawns require (agent-sdk#158). Omitted entirely when no
+    // infrastructure is configured (register()-only embedders/tests stay
+    // ephemeral).
+    return this.sessions
+      ? createAgent({ ...withSession, store: this.sessions.store, coordinator: this.sessions.coordinator })
+      : createAgent(withSession)
   }
 
   /** Single RuntimeCronService shared by HTTP runs, CLI and Agent Tools. Set by the runtime host after wrapping. */
@@ -406,7 +460,14 @@ export class AgentRegistry {
     const opts = this.createOpts.get(agentId)
     if (!opts || this.statuses.get(agentId) !== "ready") return undefined
     const cronService = options?.cronService ?? this.cronService
-    return cronService ? { ...opts, cronService } : { ...opts }
+    const base = cronService ? { ...opts, cronService } : { ...opts }
+    // Same store contract as create(): cron-fired Agents persist their
+    // sessions through the registry's file store (v4 semantics; v3's SDK
+    // default also persisted them), with the ownership-root
+    // pre-registration coordinator (agent-sdk#158).
+    return this.sessions
+      ? { ...base, store: this.sessions.store, coordinator: this.sessions.coordinator }
+      : base
   }
 
   getStatus(agentId: string): "ready" | "unavailable" | "not_found" {
