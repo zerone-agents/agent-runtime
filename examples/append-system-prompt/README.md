@@ -81,6 +81,7 @@ append-system-prompt/
 ## 关键点
 
 - 请求级仅当次 run 生效、不写入 session；下次不带即失效，调用方需每次重发
+- `Task`/`MultiTask` 派生子代理不继承请求级注入（child 只带各自配置级）
 - 空串 `""` / `null` 视为未传；非 string 返回 `400`
 - `apiKey` 永不写进 `agents.yaml`；环境变量优先级高于配置文件
 - 换 LLM 只改环境变量，不改 `agents.yaml`
