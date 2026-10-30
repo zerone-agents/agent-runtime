@@ -99,7 +99,12 @@ jobs:
 
       - name: Publish to npm
         run: |
-          if [ "${{ steps.stable.outputs.stable }}" = "true" ]; then
+          VERSION=$(node -p "require('./package.json').version")
+          # 幂等守卫：版本已在 registry（如 dispatch 先发、tag 重推/重触发）则跳过，
+          # 避免 409 使 publish job 变红、连带 needs 失败跳过 docker-push
+          if npm view "@zerone-agent/agent-runtime@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::version $VERSION already on npm — skipping publish (idempotent re-release)"
+          elif [ "${{ steps.stable.outputs.stable }}" = "true" ]; then
             npm publish --access public
           else
             # prerelease 不占用 latest dist-tag，需 npm install pkg@prerelease 或显式版本号
