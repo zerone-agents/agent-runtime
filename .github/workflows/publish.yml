@@ -160,6 +160,10 @@ jobs:
             TAG="${{ inputs.version }}"
             if [ -z "$TAG" ]; then
               TAG="v$(node -p "require('./package.json').version")"
+            elif [[ "$TAG" != v* ]]; then
+              # 与 tag 路径对齐：镜像 tag 统一带 v 前缀（输入不带 v 时补上；
+              # 已带 v 的输入不重复加）
+              TAG="v$TAG"
             fi
           fi
 
