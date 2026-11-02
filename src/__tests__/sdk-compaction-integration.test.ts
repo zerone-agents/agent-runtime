@@ -9,9 +9,10 @@ import { AgentRegistry } from "../registry.js"
 import { RunRegistry } from "../runs.js"
 import { MetricsCollector } from "../metrics.js"
 import { createAgentRouter } from "../router/agent.js"
+import { rmRetryAsync } from "./helpers/fs.js"
 
 /**
- * Issue #65 behavior-level integration test against the REAL SDK (3.3.1+),
+ * Issue #65 behavior-level integration test against the REAL SDK (4.1.0+),
  * end-to-end through the HTTP run router:
  *
  *   agents.yaml (registry config) sets maxSessionQueries: 3 → run bodies do
@@ -27,8 +28,10 @@ import { createAgentRouter } from "../router/agent.js"
  * configured cap and these compact events would never fire.
  *
  * No vi.mock in this file: the SDK, AgentRegistry, RunRegistry and the agent
- * router under test are all real. HOME is pointed at a temp dir so session
- * transcripts (~/.agents/sessions/<sid>/transcript.json) stay hermetic.
+ * router under test are all real. SDK v4 (issue #131) persists transcripts
+ * through the registry's FileSessionStore at <configDir>/.zerone/sessions
+ * (a temp dir here); HOME is pointed at a second temp dir so the SDK's
+ * SnapshotEngine writes (~/.agents/snapshot/) stay hermetic.
  */
 
 const STUB_ANSWER = "The deterministic answer."
@@ -122,7 +125,9 @@ describe("SDK session compaction through the run router (issue #65, real SDK int
   afterAll(async () => {
     if (homeBackup === undefined) delete process.env.HOME
     else process.env.HOME = homeBackup
-    rmSync(homeDir, { recursive: true, force: true })
+    // SDK 的 SnapshotEngine 会把工作区快照异步写进 ~/.agents/snapshot/，
+    // run 结束后仍可能落盘——与 rmSync 的 readdir→unlink 竞态，重试清理。
+    await rmRetryAsync(homeDir)
     await new Promise<void>((resolve) => stubServer.close(() => resolve()))
   })
 
@@ -199,7 +204,7 @@ describe("SDK session compaction through the run router (issue #65, real SDK int
         expect(text4).toContain("event: result")
         expect(text4).toContain("event: done")
       } finally {
-        rmSync(configDir, { recursive: true, force: true })
+        await rmRetryAsync(configDir)
       }
     },
     30_000,

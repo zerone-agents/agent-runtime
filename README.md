@@ -313,7 +313,7 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 - **AgentRegistry** creates Agent instances from config at startup, caches them in-process
 - **Streamable HTTP Bridge** routes SDK streaming events to SSE or aggregates into JSON, negotiated via `Accept` header
-- **Session** management delegates to SDK's filesystem storage
+- **Session** persistence is runtime-owned: the registry holds an SDK v4 `FileSessionStore` under `<configDir>/.zerone/sessions`; `register()`-only embedders stay ephemeral (see [Session storage](docs/configuration.md#session-storage))
 
 ## File Browsing
 

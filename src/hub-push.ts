@@ -1,6 +1,6 @@
 import type { HubConfig } from "./config.js"
-import { getSessionInfo, getSessionMessages } from "@zerone-agent/agent-sdk"
 import type { NormalizedContentBlock, NormalizedMessageParam } from "@zerone-agent/agent-sdk"
+import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
 
 export interface ResolvedHubConfig {
   baseUrl: string
@@ -88,15 +88,16 @@ function firstUserText(messages: NormalizedMessageParam[]): string | undefined {
  * 组装 hub 回传快照。租户只经 `org` 参数（部署级 hub.org）进入 payload，
  * identity 不携带租户——类型边界上不存在第二个注入 seam。
  */
-export async function buildSessionPayload(input: PushSessionInput, org?: string): Promise<Record<string, unknown> | null> {
-  const info = await getSessionInfo(input.sessionId)
-  if (!info) return null
-  const messages = await getSessionMessages(input.sessionId)
+export async function buildSessionPayload(input: PushSessionInput, sessions: SessionManagerV2 | undefined, org?: string): Promise<Record<string, unknown> | null> {
+  if (!sessions) return null
+  const state = await sessions.get(input.sessionId)
+  if (!state) return null
+  const messages = await sessions.getMessages(input.sessionId)
 
   const out: Record<string, unknown> = {
     id: input.sessionId,
-    created_at: info.createdAt,
-    updated_at: info.updatedAt,
+    created_at: state.metadata.createdAt,
+    updated_at: state.metadata.updatedAt,
     model: input.model,
     agent_id: input.agentId,
     ...(input.identity.userName ? { user_name: input.identity.userName } : {}),
@@ -109,12 +110,12 @@ export async function buildSessionPayload(input: PushSessionInput, org?: string)
     const segs = toSegments(m)
     const usage = formatTokenUsage(m.rawUsage)
     return {
-      // SDK 1.3.1 的 saveSession/loadSession 都会为无 id 消息补 UUID，此 fallback 目前不可达，
-      // 仅作为对未来 SDK 行为变化的防御。
+      // v4 store 透传消息 id 不做补写，此 fallback 目前不可达，
+      // 仅作为对未来行为变化的防御。
       id: m.id ?? `${input.sessionId}:${index}`,
       role: m.role,
       // SDK ≥2.2.0 持久化消息级 timestamp（ISO-8601 UTC）；旧 transcript 无此字段，session createdAt 兜底
-      created_at: m.timestamp ?? info.createdAt,
+      created_at: m.timestamp ?? state.metadata.createdAt,
       ...(segs.length > 0 ? { content: JSON.stringify(segs) } : {}),
       ...(usage ? { token_usage: usage } : {}),
     }
@@ -136,6 +137,9 @@ export class HubChatPusher {
   constructor(
     private readonly config: ResolvedHubConfig,
     private readonly fetchImpl: typeof fetch = fetch,
+    /** Lazy accessor (registry.getSessionManager) — resolved per push so a
+     * config reload that re-anchored the store is picked up by later runs. */
+    private readonly getSessions?: () => SessionManagerV2 | undefined,
   ) {}
 
   /**
@@ -146,13 +150,20 @@ export class HubChatPusher {
    */
   async pushSession(input: PushSessionInput): Promise<void> {
     try {
+      const sessions = this.getSessions?.()
+      if (!sessions) {
+        // 无 session manager（register()-only 宿主或未 loadFromConfig）是
+        // 永久性误配，不是 #30 的瞬时竞态——直接跳过，不空转重试。
+        console.warn("[hub-push] no session manager configured, skipping push", { sessionId: input.sessionId })
+        return
+      }
       // #30：SSE 模式下 transcript 落盘与 onTerminal 存在毫秒级竞态，
       // buildSessionPayload 可能暂读不到刚结束的会话——短重试等待文件就位。
       // #28：租户来自部署级配置（hub.org），不来自请求头。缺省时省略 org 字段，
       // hub 按部署模式解析默认租户（builtin 恒落 default；casdoor 解析 default 租户）。
       let session: Record<string, unknown> | null = null
       for (let attempt = 1; attempt <= PAYLOAD_RETRY_ATTEMPTS; attempt++) {
-        session = await buildSessionPayload(input, this.config.org)
+        session = await buildSessionPayload(input, sessions, this.config.org)
         if (session) break
         if (attempt < PAYLOAD_RETRY_ATTEMPTS) await sleep(PAYLOAD_RETRY_DELAY_MS)
       }

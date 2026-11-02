@@ -130,6 +130,46 @@ cron:
 - Startup fails fast on an unwritable directory or a held lock — the runtime never serves in a "healthy but not scheduling" state.
 - One runtime process per cron data directory (single-writer lock; multi-process ownership is a non-goal).
 
+## Session storage
+
+Session transcripts persist through the SDK v4 `FileSessionStore`
+(`@zerone-agent/agent-sdk` ≥ 4.0, issue #131). The registry owns one store
+per process, created on `loadFromConfig`; agents receive it on every
+`create()` (resume requires a store — without one the SDK throws at
+construction).
+
+- **Location**: `<dataRoot>/sessions/sessions.json` — the same data root as
+  cron (`cron.dataRoot`, default `<configDir>/.zerone`). One volume mount
+  covers both.
+- **Docker**: mount the data root as a volume. Without it, session
+  transcripts (and cron tasks) are lost on container recreation — the
+  hub-push transcript source lives here too.
+- **Single writer**: the cron `runtime.lock` guards `<dataRoot>/cron/`;
+  `sessions.json` has no cross-process lock — run one runtime process per
+  data root.
+- **register()-only hosts** (library embedders that never call
+  `loadFromConfig`): no store, no persistence — agents are ephemeral and the
+  session endpoints report an empty list / 404.
+- **v3 → v4 migration**: sessions previously written to
+  `~/.agents/sessions/<id>/transcript.json` are **not** migrated. Resuming an
+  old session id now fails with `SessionNotFoundError` (v3 silently started a
+  new session) — clients must treat an unknown `sessionId` as a fresh run.
+- **`GET /v1/sessions`** lists user (self-root) sessions only. The store also
+  persists a row per subagent spawn (Task/MultiTask transcripts) and an
+  engine pseudo-session; both are hidden from the list **and** from
+  `GET /v1/sessions/:id` / `DELETE` by id (internal machinery, not
+  conversations). `DELETE /v1/sessions/:id` removes the session and cascades
+  to its subagent rows. Behavior change vs v3: an unknown id now returns
+  **404** (v3's `deleteSession` was force-rm based and returned `ok: true`
+  for any id).
+- **Response field notes** (v4 store semantics):
+  - `metadata.cwd` / `metadata.model` are empty strings — the v4 store does
+    not backfill them (v3's `saveSession` did).
+  - `GET /v1/sessions/:id` `messages` returns the **folded model context**
+    (current branch, post-compaction), not the full transcript — after
+    auto-compaction, pre-compaction messages are not listed. The hub chat
+    push (`hub.chatPush`) uses the same view.
+
 ## Config Discovery
 
 Search order:

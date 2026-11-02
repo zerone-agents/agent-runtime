@@ -15,6 +15,9 @@ const mockRegistry = {
   list: vi.fn().mockReturnValue([{ id: "assistant", status: "ready" }]),
   create: vi.fn(),
   getStatus: vi.fn().mockReturnValue("ready"),
+  // SDK v4 (issue #131): session router/pusher read through the registry's
+  // SessionManagerV2; this mock never ran loadFromConfig → no manager.
+  getSessionManager: vi.fn(() => undefined),
 }
 
 const mockMetrics = {
