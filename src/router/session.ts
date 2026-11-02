@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import type { SessionMetadata } from "@zerone-agent/agent-sdk"
 import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
 
 /**
@@ -11,6 +12,12 @@ import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
  * result (register()-only hosts that never ran loadFromConfig) means no
  * persistence exists — empty list, 404 lookups.
  *
+ * The surface shows USER conversations only: subagent spawn rows and the
+ * engine agentId pseudo-session ('main') persist in the store but are hidden
+ * from both the list and by-id detail (self-root test, see list below) —
+ * clients can learn a spawn row's id from SSE subagent events, but it is
+ * internal machinery, not a conversation (v3 never persisted them).
+ *
  * Response shapes:
  *   GET    /v1/sessions            → SessionMetadata[] (self-root sessions only)
  *   GET    /v1/sessions/:sessionId → { metadata, messages } | 404
@@ -19,24 +26,28 @@ import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
 export function createSessionRouter(getSessions: () => SessionManagerV2 | undefined) {
   const router = new Hono()
 
+  /** 自根判定：v4 store 为每次 subagent spawn 落持久行（spawn 预登记 +
+   * transcript 终态），prepareChildOwnership 还会注册 engine agentId
+   * （'main'）伪行——均非用户可见会话。 */
+  async function isUserSession(
+    sessions: SessionManagerV2,
+    sessionId: string,
+  ): Promise<boolean> {
+    const state = await sessions.get(sessionId)
+    return (
+      state !== null &&
+      state.ownership.rootSessionId === state.sessionId &&
+      !state.ownership.parentSessionId
+    )
+  }
+
   router.get("/", async (c) => {
     const sessions = getSessions()
     if (!sessions) return c.json([])
     const list = await sessions.list()
-    // v4 store persists a row for EVERY subagent spawn (spawn pre-registration
-    // + child transcript) and for the engine's agentId pseudo-session
-    // ('main', registered by prepareChildOwnership) — none are user-visible
-    // conversations (v3 never persisted them). Self-root test: the session is
-    // its own ownership root and has no parent. Filtering keeps
-    // GET /v1/sessions to real conversations.
-    const visible: unknown[] = []
+    const visible: SessionMetadata[] = []
     for (const meta of list) {
-      const state = await sessions.get(meta.id)
-      if (
-        state &&
-        state.ownership.rootSessionId === state.sessionId &&
-        !state.ownership.parentSessionId
-      ) {
+      if (await isUserSession(sessions, meta.id)) {
         visible.push(meta)
       }
     }
@@ -47,7 +58,7 @@ export function createSessionRouter(getSessions: () => SessionManagerV2 | undefi
     const { sessionId } = c.req.param()
     const sessions = getSessions()
     const state = await sessions?.get(sessionId)
-    if (!state || !sessions) {
+    if (!state || !sessions || !(await isUserSession(sessions, sessionId))) {
       return c.json({ error: "Session not found" }, 404)
     }
     const messages = await sessions.getMessages(sessionId)
@@ -58,9 +69,10 @@ export function createSessionRouter(getSessions: () => SessionManagerV2 | undefi
     const { sessionId } = c.req.param()
     const sessions = getSessions()
     // Existence pre-check: manager.delete on a missing session throws a
-    // store error; the router contract is a 404, not a 500.
-    const state = await sessions?.get(sessionId)
-    if (!state || !sessions) {
+    // store error; the router contract is a 404, not a 500. Ghost rows are
+    // not deletable through this surface (internal machinery — they die
+    // with their owning conversation's cascade).
+    if (!sessions || !(await isUserSession(sessions, sessionId))) {
       return c.json({ error: "Session not found" }, 404)
     }
     // cascadeOwned: the session's subagent rows (Task/MultiTask spawns) are

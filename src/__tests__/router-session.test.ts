@@ -125,6 +125,21 @@ describe("Session Router", () => {
       expect(body.error).toBe("Session not found")
     })
 
+    it("returns 404 for subagent spawn rows (list hides them, by-id too)", async () => {
+      // 子会话行在 store 中存在但非用户会话——显式 id 读取同样 404，
+      // 与列表过滤一致（客户端可从 SSE subagent 事件得知其 id）。
+      const manager = stubManager({
+        get: vi.fn(async (sessionId: string) =>
+          stateFor(sessionId, { rootSessionId: "root-1", parentSessionId: "main" }) as never,
+        ),
+      })
+      const app = createApp(() => manager)
+
+      const res = await app.request("http://localhost/v1/sessions/child-x")
+      expect(res.status).toBe(404)
+      expect(manager.getMessages).not.toHaveBeenCalled()
+    })
+
     it("returns 404 when no session manager is configured", async () => {
       const app = createApp(() => undefined)
       const res = await app.request("http://localhost/v1/sessions/s1")
@@ -155,6 +170,20 @@ describe("Session Router", () => {
       expect(res.status).toBe(404)
       const body = await res.json()
       expect(body.error).toBe("Session not found")
+      expect(manager.delete).not.toHaveBeenCalled()
+    })
+
+    it("returns 404 for subagent spawn rows (internal, not deletable by id)", async () => {
+      const manager = stubManager({
+        get: vi.fn(async (sessionId: string) =>
+          stateFor(sessionId, { rootSessionId: "root-1", parentSessionId: "main" }) as never,
+        ),
+      })
+      const app = createApp(() => manager)
+
+      const res = await app.request("http://localhost/v1/sessions/child-x", { method: "DELETE" })
+      expect(res.status).toBe(404)
+      // 幽灵行不经此面删除——随所属主会话的级联删除消亡
       expect(manager.delete).not.toHaveBeenCalled()
     })
 

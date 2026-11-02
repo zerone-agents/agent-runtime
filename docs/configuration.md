@@ -156,10 +156,12 @@ construction).
   new session) — clients must treat an unknown `sessionId` as a fresh run.
 - **`GET /v1/sessions`** lists user (self-root) sessions only. The store also
   persists a row per subagent spawn (Task/MultiTask transcripts) and an
-  engine pseudo-session; both are hidden from the list.
-  `DELETE /v1/sessions/:id` removes the session and cascades to its subagent
-  rows. Behavior change vs v3: an unknown id now returns **404** (v3's
-  `deleteSession` was force-rm based and returned `ok: true` for any id).
+  engine pseudo-session; both are hidden from the list **and** from
+  `GET /v1/sessions/:id` / `DELETE` by id (internal machinery, not
+  conversations). `DELETE /v1/sessions/:id` removes the session and cascades
+  to its subagent rows. Behavior change vs v3: an unknown id now returns
+  **404** (v3's `deleteSession` was force-rm based and returned `ok: true`
+  for any id).
 - **Response field notes** (v4 store semantics):
   - `metadata.cwd` / `metadata.model` are empty strings — the v4 store does
     not backfill them (v3's `saveSession` did).

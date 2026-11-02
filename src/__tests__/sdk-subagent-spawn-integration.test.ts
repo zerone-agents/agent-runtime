@@ -234,6 +234,10 @@ describe("subagent spawn through the production registry path (issue #80 accepta
       const listed = (await listRes.json()) as Array<{ id: string }>
       expect(listed.map((s) => s.id)).toEqual([rootSid])
 
+      // 幽灵行经显式 id 同样不可读（与列表过滤一致）
+      const ghostRes = await app.request(`http://localhost/v1/sessions/${childSid}`)
+      expect(ghostRes.status).toBe(404)
+
       // Detail + messages readable for the root session.
       const detailRes = await app.request(`http://localhost/v1/sessions/${rootSid}`)
       expect(detailRes.status).toBe(200)
