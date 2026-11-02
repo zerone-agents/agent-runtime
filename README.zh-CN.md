@@ -309,7 +309,7 @@ Client → Hono HTTP Server → AgentRegistry → agent-sdk Agent
 
 - **AgentRegistry** 启动时从配置创建 Agent 实例，进程内缓存
 - **Streamable HTTP Bridge** 将 SDK 流式事件路由到 SSE，或聚合为 JSON，通过 `Accept` 头协商
-- **会话**管理委托给 SDK 的文件系统存储
+- **会话**持久化由 runtime 自持：registry 持有 SDK v4 `FileSessionStore`，落点 `<configDir>/.zerone/sessions`；仅用 `register()` 的嵌入方不落盘（ephemeral）（见[会话存储](docs/configuration.md#session-storage)）
 
 ## 文件浏览
 
