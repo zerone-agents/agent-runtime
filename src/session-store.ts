@@ -26,9 +26,22 @@ import {
  * same-ownership register is a no-op, and the Agent's own later
  * self-register folds into the existing row.
  */
+/**
+ * intent 的 ownership.rootSessionId 提取（类型守卫）。SDK 的
+ * OperationIntent 联合类型只在 register / save-todos 上带 ownership；
+ * 守卫让 SDK 字段名/形状变化显式化为 undefined（workaround 静默失效
+ * 会被 session-store.test.ts 的行为钉用例拦截），而非靠 as 断言兜底。
+ */
+function ownershipRootOf(intent: OperationIntent): string | undefined {
+  const ownership = (intent as { ownership?: unknown }).ownership
+  if (typeof ownership !== "object" || ownership === null) return undefined
+  const root = (ownership as { rootSessionId?: unknown }).rootSessionId
+  return typeof root === "string" && root.length > 0 ? root : undefined
+}
+
 export class OwnershipRootPreRegisteringCoordinator extends WriteCoordinator {
   async execute(sessionId: string, intent: OperationIntent): Promise<OperationReceipt> {
-    const root = (intent as { ownership?: { rootSessionId?: string } }).ownership?.rootSessionId
+    const root = ownershipRootOf(intent)
     if (root !== undefined && root !== sessionId) {
       await super.execute(root, { kind: "register", ownership: { rootSessionId: root } })
     }

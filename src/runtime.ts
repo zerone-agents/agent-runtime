@@ -13,6 +13,7 @@ import {
 import { ShutdownGate } from "./shutdown-gate.js"
 import type { AigcRunRecord } from "./audit-log.js"
 import { createRuntimeDiagnosticsSink, type DiagnosticsSink } from "./diagnostics.js"
+import { resolveDataRoot } from "./data-root.js"
 
 export interface AgentRuntimeHost {
   app: Hono
@@ -39,9 +40,13 @@ export interface CreateRuntimeOptions {
   diagnostics?: DiagnosticsSink
 }
 
-/** dataRoot resolves against configDir (never CWD); SDK appends the single /cron segment. */
+/**
+ * Runtime 数据根（cron 与 sessions 共同锚定）。保留的公共 API 名——
+ * 语义已是「runtime 数据根」：cron 落 `<root>/cron`，session transcript
+ * 落 `<root>/sessions`（SDK v4 FileSessionStore）。
+ */
 export function resolveCronDataRoot(config: RuntimeConfig, configDir: string): string {
-  return resolve(configDir, config.cron?.dataRoot ?? ".zerone")
+  return resolveDataRoot(config, configDir)
 }
 
 export async function createRuntime(

@@ -11,6 +11,7 @@ import {
   createSessionInfrastructure,
   type RuntimeSessionInfrastructure,
 } from "./session-store.js"
+import { resolveSessionsDir } from "./data-root.js"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -262,7 +263,7 @@ export class AgentRegistry {
    * dir are safe — but one instance per process keeps it simple).
    */
   private ensureSessionInfrastructure(config: RuntimeConfig, configDir: string): void {
-    const dir = resolve(configDir, config.cron?.dataRoot ?? ".zerone", "sessions")
+    const dir = resolveSessionsDir(config, configDir)
     if (this.sessions && this.sessionsDir === dir) return
     this.sessions = createSessionInfrastructure(dir)
     this.sessionsDir = dir

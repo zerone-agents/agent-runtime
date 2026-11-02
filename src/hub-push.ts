@@ -137,7 +137,9 @@ export class HubChatPusher {
   constructor(
     private readonly config: ResolvedHubConfig,
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly sessions?: SessionManagerV2,
+    /** Lazy accessor (registry.getSessionManager) — resolved per push so a
+     * config reload that re-anchored the store is picked up by later runs. */
+    private readonly getSessions?: () => SessionManagerV2 | undefined,
   ) {}
 
   /**
@@ -148,13 +150,20 @@ export class HubChatPusher {
    */
   async pushSession(input: PushSessionInput): Promise<void> {
     try {
+      const sessions = this.getSessions?.()
+      if (!sessions) {
+        // 无 session manager（register()-only 宿主或未 loadFromConfig）是
+        // 永久性误配，不是 #30 的瞬时竞态——直接跳过，不空转重试。
+        console.warn("[hub-push] no session manager configured, skipping push", { sessionId: input.sessionId })
+        return
+      }
       // #30：SSE 模式下 transcript 落盘与 onTerminal 存在毫秒级竞态，
       // buildSessionPayload 可能暂读不到刚结束的会话——短重试等待文件就位。
       // #28：租户来自部署级配置（hub.org），不来自请求头。缺省时省略 org 字段，
       // hub 按部署模式解析默认租户（builtin 恒落 default；casdoor 解析 default 租户）。
       let session: Record<string, unknown> | null = null
       for (let attempt = 1; attempt <= PAYLOAD_RETRY_ATTEMPTS; attempt++) {
-        session = await buildSessionPayload(input, this.sessions, this.config.org)
+        session = await buildSessionPayload(input, sessions, this.config.org)
         if (session) break
         if (attempt < PAYLOAD_RETRY_ATTEMPTS) await sleep(PAYLOAD_RETRY_DELAY_MS)
       }

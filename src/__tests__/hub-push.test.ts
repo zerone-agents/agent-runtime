@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { buildSessionPayload, HubChatPusher, resolveHubConfig } from "../hub-push.js"
 import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
+import { makeSessionState } from "./helpers/session.js"
 
 /**
  * SDK v4（issue #131）：buildSessionPayload / HubChatPusher 经注入的
@@ -20,23 +21,12 @@ interface SeedMessage {
 const SESSION_CREATED_AT = "2026-08-28T09:00:00.000Z"
 
 function stateFor(sessionId: string, messages: SeedMessage[]) {
-  return {
-    sessionId,
-    metadata: {
-      id: sessionId,
-      cwd: "/tmp",
-      model: "test-model",
-      createdAt: SESSION_CREATED_AT,
-      updatedAt: SESSION_CREATED_AT,
-      messageCount: messages.length,
-    },
-    branches: [],
-    currentBranchId: "b1",
-    revision: 1,
+  return makeSessionState(sessionId, {
     createdAt: SESSION_CREATED_AT,
     updatedAt: SESSION_CREATED_AT,
-    ownership: { rootSessionId: sessionId },
-  }
+    model: "test-model",
+    messageCount: messages.length,
+  })
 }
 
 /** 内存 stub：get/getMessages 从播种 map 读；未播种的 session → null（不存在）。 */
@@ -221,11 +211,11 @@ describe("buildSessionPayload", () => {
 
 const PUSHER_SESSION = "hub-push-pusher-test-0001"
 
-function makePusher(fetchImpl: ReturnType<typeof vi.fn>, sessions?: SessionManagerV2) {
+function makePusher(fetchImpl: ReturnType<typeof vi.fn>, getSessions?: () => SessionManagerV2 | undefined) {
   return new HubChatPusher(
     { baseUrl: "https://hub.example.com", chatPushKey: "secret-key" },
     fetchImpl as unknown as typeof fetch,
-    sessions,
+    getSessions,
   )
 }
 
@@ -239,7 +229,7 @@ describe("HubChatPusher", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, synced_sessions: 1, skipped_sessions: 0, synced_messages: 1, conflicts: [] }), { status: 200 }),
     )
-    await makePusher(fetchMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: { userName: "alice" } })
+    await makePusher(fetchMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: { userName: "alice" } })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
@@ -259,7 +249,7 @@ describe("HubChatPusher", () => {
     const pusher = new HubChatPusher(
       { baseUrl: "https://hub.example.com", chatPushKey: "secret-key", org: "tenant-a" },
       fetchMock as unknown as typeof fetch,
-      seededPusherManager(),
+      () => seededPusherManager(),
     )
     await pusher.pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: { userName: "alice" } })
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -272,7 +262,7 @@ describe("HubChatPusher", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {
       const fetchMock = vi.fn()
-      await makePusher(fetchMock, stubManager()).pushSession({ sessionId: "not-exists-9999", agentId: "a", model: "m", identity: {} })
+      await makePusher(fetchMock, () => stubManager()).pushSession({ sessionId: "not-exists-9999", agentId: "a", model: "m", identity: {} })
       expect(fetchMock).not.toHaveBeenCalled()
       expect(warnSpy).toHaveBeenCalledWith(
         "[hub-push] session transcript not found, giving up",
@@ -289,9 +279,15 @@ describe("HubChatPusher", () => {
       const fetchMock = vi.fn()
       await makePusher(fetchMock).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       expect(fetchMock).not.toHaveBeenCalled()
+      // 永久性误配早退：区别于 #30 瞬时竞态的 "transcript not found" 日志，
+      // 且不空转 4×250ms 重试
       expect(warnSpy).toHaveBeenCalledWith(
-        "[hub-push] session transcript not found, giving up",
+        "[hub-push] no session manager configured, skipping push",
         expect.objectContaining({ sessionId: PUSHER_SESSION }),
+      )
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        "[hub-push] session transcript not found, giving up",
+        expect.anything(),
       )
     } finally {
       warnSpy.mockRestore()
@@ -315,7 +311,7 @@ describe("HubChatPusher", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, synced_sessions: 1 }), { status: 200 }),
     )
-    await makePusher(fetchMock, lateManager).pushSession({ sessionId: lateSession, agentId: "a", model: "m", identity: { userName: "u" } })
+    await makePusher(fetchMock, () => lateManager).pushSession({ sessionId: lateSession, agentId: "a", model: "m", identity: { userName: "u" } })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
     expect(body.sessions[0].id).toBe(lateSession)
@@ -327,7 +323,7 @@ describe("HubChatPusher", () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response("<html><body>index</body></html>", { status: 200, headers: { "Content-Type": "text/html" } }),
       )
-      await makePusher(fetchMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      await makePusher(fetchMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       expect(fetchMock).toHaveBeenCalledTimes(1) // 配置错误不重试
       expect(warnSpy).toHaveBeenCalledTimes(1)
       const [msg, detail] = warnSpy.mock.calls[0] as unknown as [string, { status: number; contentType: string; body: string }]
@@ -346,7 +342,7 @@ describe("HubChatPusher", () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ foo: 1 }), { status: 200, headers: { "Content-Type": "application/json" } }),
       )
-      await makePusher(fetchMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      await makePusher(fetchMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(warnSpy).toHaveBeenCalledTimes(1)
       expect(warnSpy.mock.calls[0][0]).toContain("unexpected 2xx response shape")
@@ -361,7 +357,7 @@ describe("HubChatPusher", () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ success: true, synced_sessions: 1, skipped_sessions: 0, conflicts: [] }), { status: 200 }),
       )
-      await makePusher(fetchMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      await makePusher(fetchMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(warnSpy).not.toHaveBeenCalled()
     } finally {
@@ -376,7 +372,7 @@ describe("HubChatPusher", () => {
         .mockRejectedValueOnce(new Error("ECONNRESET"))
         .mockRejectedValueOnce(new Error("ECONNRESET"))
         .mockResolvedValueOnce(new Response("{}", { status: 200 }))
-      const p = makePusher(fetchMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      const p = makePusher(fetchMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       // stub manager 无磁盘 I/O，payload 即时就绪；等首次 fetch 发出后再推进定时器
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
       await vi.runAllTimersAsync() // 推进 1s + 2s 退避
@@ -385,7 +381,7 @@ describe("HubChatPusher", () => {
 
       // 全部失败：promise 正常 resolve，不 reject
       const failMock = vi.fn().mockRejectedValue(new Error("down"))
-      const p2 = makePusher(failMock, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      const p2 = makePusher(failMock, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       await vi.waitFor(() => expect(failMock).toHaveBeenCalledTimes(1))
       await vi.runAllTimersAsync()
       await expect(p2).resolves.toBeUndefined()
@@ -397,13 +393,13 @@ describe("HubChatPusher", () => {
 
   it("does not retry on 4xx but retries on 5xx", async () => {
     const mock401 = vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 }))
-    await makePusher(mock401, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+    await makePusher(mock401, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
     expect(mock401).toHaveBeenCalledTimes(1)
 
     vi.useFakeTimers()
     try {
       const mock500 = vi.fn().mockResolvedValue(new Response("oops", { status: 500 }))
-      const p = makePusher(mock500, seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
+      const p = makePusher(mock500, () => seededPusherManager()).pushSession({ sessionId: PUSHER_SESSION, agentId: "a", model: "m", identity: {} })
       await vi.waitFor(() => expect(mock500).toHaveBeenCalledTimes(1))
       await vi.runAllTimersAsync()
       await p

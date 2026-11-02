@@ -61,10 +61,12 @@ export function createApp(
 
   // enabled 但缺字段时 resolveHubConfig 会 throw，启动 fail-fast（有意为之）
   const hubConfig = resolveHubConfig(config.hub)
-  // SDK v4 (issue #131)：pusher 经 registry 的 SessionManagerV2 读 transcript
-  // （register()-only 宿主无 manager → buildSessionPayload 返回 null → 跳过推送）
+  // SDK v4 (issue #131)：pusher 经 registry 的 SessionManagerV2 读 transcript。
+  // 惰性 getter（每请求解析）——reload 重锚 store 后新 run 走新 manager，
+  // 不会与 createApp 时捕获的旧实例读写分家。register()-only 宿主恒
+  // undefined → pushSession 早退跳过。
   const hubPusher = hubConfig
-    ? new HubChatPusher(hubConfig, fetch, registry.getSessionManager())
+    ? new HubChatPusher(hubConfig, fetch, () => registry.getSessionManager())
     : undefined
 
   // Use injected RunRegistry if provided (orchestrator-managed lifecycle);
@@ -74,7 +76,7 @@ export function createApp(
   app.route("/v1/runs", createRunsRouter(runsRegistry))
   // SDK v4 (issue #131): the session router reads through the registry's
   // file-backed SessionManagerV2 (undefined for register()-only hosts).
-  app.route("/v1/sessions", createSessionRouter(registry.getSessionManager()))
+  app.route("/v1/sessions", createSessionRouter(() => registry.getSessionManager()))
   app.route("/v1/files", createFilesRouter())
   app.route(
     "/v1/cron",
