@@ -9,6 +9,7 @@ import { AgentRegistry } from "../registry.js"
 import { RunRegistry } from "../runs.js"
 import { MetricsCollector } from "../metrics.js"
 import { createAgentRouter } from "../router/agent.js"
+import { rmRetryAsync } from "./helpers/fs.js"
 
 /**
  * Issue #80 regression — "visible ⇒ executable" for materialized skills,
@@ -27,10 +28,12 @@ import { createAgentRouter } from "../router/agent.js"
  * shape, never an actual invocation, so they could not catch the split.
  *
  * No vi.mock in this file: SDK, AgentRegistry, RunRegistry and the agent
- * router are all real. HOME is pointed at a temp dir so both session
- * transcripts (~/.agents/sessions) and the user skill tree
- * (~/.agents/skills) stay hermetic. The deterministic LLM is a local stub
- * OpenAI-compatible server (127.0.0.1, ephemeral port) — no public network.
+ * router are all real. HOME is pointed at a temp dir so the user skill tree
+ * (~/.agents/skills) and the SDK SnapshotEngine's writes (~/.agents/snapshot)
+ * stay hermetic; session transcripts persist through the registry's
+ * FileSessionStore under the test's own temp configDir (SDK v4, issue #131).
+ * The deterministic LLM is a local stub OpenAI-compatible server
+ * (127.0.0.1, ephemeral port) — no public network.
  */
 
 const SKILL_NAME = "regression-skill"
@@ -174,22 +177,6 @@ function startStubProvider(): Promise<{ server: Server; baseUrl: string }> {
       resolve({ server, baseUrl: `http://127.0.0.1:${port}/v1` })
     })
   })
-}
-
-/** rmSync with retry: the SDK session store flushes transcripts asynchronously
- * (same race as hub-push #30), so files can land between readdir and unlink. */
-async function rmRetryAsync(dir: string, attempts = 5, delayMs = 50): Promise<void> {
-  let lastErr: unknown
-  for (let i = 0; i < attempts; i++) {
-    try {
-      rmSync(dir, { recursive: true, force: true })
-      return
-    } catch (err) {
-      lastErr = err
-      await new Promise((r) => setTimeout(r, delayMs))
-    }
-  }
-  throw lastErr
 }
 
 describe("materialized skill execution through the run router (issue #80, real SDK integration)", () => {

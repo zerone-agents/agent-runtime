@@ -9,6 +9,7 @@ import { AgentRegistry } from "../registry.js"
 import { RunRegistry } from "../runs.js"
 import { MetricsCollector } from "../metrics.js"
 import { createAgentRouter } from "../router/agent.js"
+import { rmRetryAsync } from "./helpers/fs.js"
 
 /**
  * Issue #65 behavior-level integration test against the REAL SDK (4.1.0+),
@@ -124,21 +125,9 @@ describe("SDK session compaction through the run router (issue #65, real SDK int
   afterAll(async () => {
     if (homeBackup === undefined) delete process.env.HOME
     else process.env.HOME = homeBackup
-    // 带重试的清理：SDK 的 SnapshotEngine 会把工作区快照异步写进
-    // ~/.agents/snapshot/，run 结束后仍可能落盘——与 rmSync 的
-    // readdir→unlink 竞态（同类于 hub-push #30 的 transcript 竞态）。
-    let lastErr: unknown
-    for (let i = 0; i < 5; i++) {
-      try {
-        rmSync(homeDir, { recursive: true, force: true })
-        lastErr = undefined
-        break
-      } catch (err) {
-        lastErr = err
-        await new Promise((r) => setTimeout(r, 50))
-      }
-    }
-    if (lastErr) throw lastErr
+    // SDK 的 SnapshotEngine 会把工作区快照异步写进 ~/.agents/snapshot/，
+    // run 结束后仍可能落盘——与 rmSync 的 readdir→unlink 竞态，重试清理。
+    await rmRetryAsync(homeDir)
     await new Promise<void>((resolve) => stubServer.close(() => resolve()))
   })
 
@@ -215,7 +204,7 @@ describe("SDK session compaction through the run router (issue #65, real SDK int
         expect(text4).toContain("event: result")
         expect(text4).toContain("event: done")
       } finally {
-        rmSync(configDir, { recursive: true, force: true })
+        await rmRetryAsync(configDir)
       }
     },
     30_000,

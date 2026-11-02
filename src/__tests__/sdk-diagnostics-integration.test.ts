@@ -128,7 +128,10 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
   let homeDir: string
 
   beforeAll(() => {
-    // Isolate SDK session storage (~/.agents/sessions).
+    // Isolate the SDK's HOME-anchored writes (SnapshotEngine's
+    // ~/.agents/snapshot). Session transcripts go through the explicit
+    // in-memory store buildAgent passes — SDK v4 persists nothing to HOME
+    // unless configured to (issue #131).
     homeDir = mkdtempSync(join(tmpdir(), "diag-sub-home-"))
     homeBackup = process.env.HOME
     process.env.HOME = homeDir
