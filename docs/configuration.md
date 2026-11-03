@@ -151,9 +151,18 @@ construction).
   `loadFromConfig`): no store, no persistence — agents are ephemeral and the
   session endpoints report an empty list / 404.
 - **v3 → v4 migration**: sessions previously written to
-  `~/.agents/sessions/<id>/transcript.json` are **not** migrated. Resuming an
-  old session id now fails with `SessionNotFoundError` (v3 silently started a
-  new session) — clients must treat an unknown `sessionId` as a fresh run.
+  `~/.agents/sessions/<id>/transcript.json` are **not** migrated
+  automatically. Resuming an old session id fails with `SessionNotFoundError`
+  (v3 silently started a new session) — clients must treat an unknown
+  `sessionId` as a fresh run. To carry pre-upgrade sessions over
+  (bare-metal deployments with a persistent HOME — container-local v3
+  archives die with the old container), run the opt-in one-time import:
+  `zerone-agent import-legacy-sessions --from <dir> [--config <dir>] [--json]`
+  (`<dir>` is the v3 sessions base directory, e.g. `~/.agents/sessions` —
+  given explicitly, no HOME guessing). Idempotent — already-imported sessions
+  are skipped; per-session failures (missing/corrupt archive, unreadable
+  todos) are reported and commit nothing, so fixing the archive and re-running
+  is safe. Imported sessions keep their v3 metadata (`cwd`, `model`, ...).
 - **`GET /v1/sessions`** lists user (self-root) sessions only. The store also
   persists a row per subagent spawn (Task/MultiTask transcripts) and an
   engine pseudo-session; both are hidden from the list **and** from
