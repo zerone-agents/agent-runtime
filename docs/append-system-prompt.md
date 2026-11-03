@@ -1,5 +1,7 @@
 # Context Injection (`appendSystemPrompt`)
 
+## What it is
+
 `appendSystemPrompt` appends extra context to the very end of the system
 prompt. It has two entry points that stack:
 
@@ -96,8 +98,8 @@ Config-level field in `agents.yaml`:
 
 ## See also
 
-- [`docs/api/runs.md`](api/runs.md) — request-body field contract
-  (`appendSystemPrompt`)
+- [`docs/api/runs.md`](api/runs.md#appendsystemprompt-optional) —
+  request-body field contract (`appendSystemPrompt`)
 - [`examples/append-system-prompt/`](../examples/append-system-prompt/) —
   runnable three-step demo (config-level, request-level stacking,
   per-run-only lifecycle)
