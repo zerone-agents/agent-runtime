@@ -112,12 +112,16 @@ Extra context appended to the very end of the system prompt for THIS run only
 `appendSystemPrompt` in `agents.yaml`, the two are joined with a blank line —
 config first, then this value.
 
-- Must be a string when present; any non-string type returns HTTP 400.
+- Must be a string when present. Any non-string type returns HTTP 400 with
+  `{"error": "Invalid request: appendSystemPrompt must be a string"}`.
 - An empty string (`""`) or `null` is treated as absent.
 - Never persisted with the session: the next run on the same `sessionId`
   without this field runs without it — resend it on every run that needs it.
 - Subagents spawned via `Task`/`MultiTask` do not inherit the request-level
   append; they only carry their own config-level value, if any.
+
+For full semantics (prompt assembly order, lifecycle, trust model, version
+floor), see [docs/append-system-prompt.md](../append-system-prompt.md).
 
 ### `attachments` (optional, issue #43)
 
