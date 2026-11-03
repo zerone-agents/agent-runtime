@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
+import { stat } from "node:fs/promises"
 import { discoverConfig, findConfigDir, type RuntimeConfig } from "./config.js"
 import { createRuntime, resolveCronDataRoot } from "./runtime.js"
 import { pathIdentity } from "./cron-identity.js"
 import type { CronStatusPayload } from "./cron-identity.js"
+import { runLegacyImport } from "./legacy-import.js"
 
 export const CLI_EXIT = {
   OK: 0,
@@ -19,6 +21,8 @@ export const CLI_EXIT = {
 const USAGE = `Usage:
   zerone-agent [serve] [--config <dir>] [--port <port>]   start the HTTP runtime
   zerone-agent cron <command> [options]                   manage cron tasks online
+  zerone-agent import-legacy-sessions --from <dir>        one-time v3 session archive import
+                                                          [--config <dir>] [--json]
 
 Cron commands:
   list [--agent <id>] [--json]           list tasks
@@ -380,6 +384,69 @@ async function cronCommand(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * 一次性 v3 会话档案导入（issue #88，opt-in）：扫描 `--from` 下的 v3 会话目录，
+ * 写入当前配置的 v4 store（与 serve 同一落点）。退出码契约（docs 已载，
+ * 脚本化迁移依赖）：OK = 全部 imported / already-exists（幂等重跑安全）；
+ * ERROR = 存在 not-imported 项（档案缺失/畸形/todos 阻断——未提交任何操作，
+ * 修复后重跑）或命令执行失败；USAGE = `--from` 缺失或指向不存在/非目录路径。
+ */
+async function importLegacySessionsCommand(argv: string[]): Promise<number> {
+  const { values } = parseArgs({
+    options: {
+      config: { type: "string", short: "c" },
+      from: { type: "string" },
+      json: { type: "boolean" },
+    },
+    strict: false,
+    args: argv,
+  })
+  const json = Boolean(values.json)
+  const from = values.from as string | undefined
+  if (!from) {
+    return fail(
+      "import-legacy-sessions requires --from <dir> (the v3 sessions base directory, e.g. ~/.agents/sessions)",
+      CLI_EXIT.USAGE,
+      json,
+    )
+  }
+  // 源预检（评审阻塞 1）：写错路径/指向文件/无权限 → USAGE——SDK 编排对
+  // readdir 失败静默返回全零报告，与真实空目录不可区分，必须前置拦截。
+  const sourceStat = await stat(from).catch(() => null)
+  if (!sourceStat?.isDirectory()) {
+    return fail(`--from must be an existing directory: ${from}`, CLI_EXIT.USAGE, json)
+  }
+
+  try {
+    const configDir = findConfigDir(values.config as string | undefined)
+    const config = await discoverConfig(configDir)
+    const { targetDir, report } = await runLegacyImport({ from, config, configDir })
+
+    if (json) {
+      // prepared 为 SDK 内部恢复句柄（already-exists-unknown 携带）——对 CLI
+      // 消费者是冗长噪声，序列化前剥除。
+      const slim = report.reports.map((r) =>
+        r.status === "already-exists-unknown" ? { ...r, prepared: undefined } : r,
+      )
+      console.log(JSON.stringify({ ok: true, from, targetDir, ...report, reports: slim }, null, 2))
+    } else {
+      console.log(`Legacy session import: ${from} -> ${targetDir}`)
+      console.log(
+        `imported: ${report.imported}, already-exists (skipped): ${report.alreadyExistsUnknown}, not-imported: ${report.notImported}`,
+      )
+      // 失败明细进 stderr——stdout 保持可管道的汇总行。
+      for (const r of report.reports) {
+        if (r.status === "not-imported") console.error(`  not-imported ${r.sessionId}: ${r.reason}`)
+      }
+    }
+    return report.notImported > 0 ? CLI_EXIT.ERROR : CLI_EXIT.OK
+  } catch (err) {
+    // 命令内收敛失败面（评审重要 3）：config 发现失败、目标 store 损坏等
+    // 不再冒泡到入口的 "Failed to start:"。
+    return fail(`import-legacy-sessions failed: ${(err as Error).message}`, CLI_EXIT.ERROR, json)
+  }
+}
+
 export async function runCli(argv: string[]): Promise<number> {
   const [cmd] = argv
   // Help must be checked before the serve flag fallback: "--help"/"-h" also
@@ -393,6 +460,9 @@ export async function runCli(argv: string[]): Promise<number> {
   }
   if (cmd === "cron") {
     return cronCommand(argv.slice(1))
+  }
+  if (cmd === "import-legacy-sessions") {
+    return importLegacySessionsCommand(argv.slice(1))
   }
   return fail(`Unknown command: ${cmd}\n${USAGE}`, CLI_EXIT.USAGE, argv.includes("--json"))
 }
