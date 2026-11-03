@@ -163,6 +163,9 @@ construction).
   are skipped; per-session failures (missing/corrupt archive, unreadable
   todos) are reported and commit nothing, so fixing the archive and re-running
   is safe. Imported sessions keep their v3 metadata (`cwd`, `model`, ...).
+  Exit codes (scriptable migrations): `0` = all imported / already-exists;
+  `1` = any not-imported or command failure; `2` = missing `--from` or
+  `--from` not an existing directory.
 - **`GET /v1/sessions`** lists user (self-root) sessions only. The store also
   persists a row per subagent spawn (Task/MultiTask transcripts) and an
   engine pseudo-session; both are hidden from the list **and** from

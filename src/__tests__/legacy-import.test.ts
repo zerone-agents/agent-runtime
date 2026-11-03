@@ -2,21 +2,26 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Hono } from "hono"
 import { runLegacyImport, legacyTranscriptReader, legacyTodosReader } from "../legacy-import.js"
 import { createSessionInfrastructure } from "../session-store.js"
+import { createSessionRouter } from "../router/session.js"
+import { rmRetryAsync } from "./helpers/fs.js"
 import { runCli, CLI_EXIT } from "../cli.js"
 import type { RuntimeConfig } from "../config.js"
 
 /**
  * issue #88：一次性 v3 会话档案导入（opt-in CLI）的行为钉用例。
  *
- * 覆盖：正常导入（含 metadata 保真与消息 id 补写）、幂等重跑（目标已有
- * transcript → already-exists 跳过）、损坏档案降级（畸形 JSON / metadata.id
- * 不匹配 → not-imported 且不影响其他会话）、todos 语义（合法随导入落库、
- * 畸形阻止该项提交且零副作用）、空源目录、CLI 表面（退出码与 --json 输出）。
+ * 覆盖：正常导入（metadata 保真 + 消息 id 补写）、幂等重跑、源目录预检
+ * （不存在/非目录显式失败——不与真实空目录混淆）、杂项条目跳过
+ * （`.DS_Store` 等不翻转退出码）、损坏档案降级（零副作用）、todos 语义、
+ * 导入会话对 GET /v1/sessions 可见（hub#227 兼容——自根 ownership）、
+ * CLI 表面（USAGE/ERROR/OK 退出码、人类可读输出、--json 报告形状）。
  *
- * 三态语义来自 SDK importLegacyArchive 编排（issue #131 P3 T7）——本文件钉
- * 的是 runtime 侧的接线：读取器绑定 --from、目标为当前配置的 v4 store。
+ * 三态编排语义来自 SDK importLegacySession（issue #131 P3 T7）——本文件钉
+ * runtime 侧接线：读取器绑定 --from、目录过滤、源预检、目标为当前配置的
+ * v4 store。
  */
 
 function makeConfig(): RuntimeConfig {
@@ -24,6 +29,13 @@ function makeConfig(): RuntimeConfig {
     server: { host: "127.0.0.1", port: 3000 },
     agents: [{ id: "a", description: "test agent", model: "m", maxTurns: 5 }],
   }
+}
+
+const AGENTS_YAML = "agents:\n  - id: assistant\n    description: Fixture agent for CLI tests\n"
+
+/** CLI 走 findConfigDir + discoverConfig——目标目录须有可发现的 agents.yaml。 */
+function seedConfigDir(dir: string) {
+  writeFileSync(join(dir, "agents.yaml"), AGENTS_YAML, "utf8")
 }
 
 /** v3 档案 fixture：<from>/<sid>/transcript.json（+ 可选 todos.json）。 */
@@ -74,21 +86,8 @@ describe("runLegacyImport (issue #88, opt-in one-time v3 migration)", () => {
   })
 
   afterAll(async () => {
-    // FileSessionStore 异步落盘与 rmSync 的竞态——重试清理（helpers/fs 同款语义）。
-    for (const dir of [from, configDir]) {
-      let lastErr: unknown
-      for (let i = 0; i < 5; i++) {
-        try {
-          rmSync(dir, { recursive: true, force: true })
-          lastErr = undefined
-          break
-        } catch (err) {
-          lastErr = err
-          await new Promise((r) => setTimeout(r, 50))
-        }
-      }
-      if (lastErr) throw lastErr
-    }
+    await rmRetryAsync(from)
+    await rmRetryAsync(configDir)
   })
 
   it("imports a v3 archive into the config's v4 store with metadata fidelity", async () => {
@@ -181,7 +180,7 @@ describe("runLegacyImport (issue #88, opt-in one-time v3 migration)", () => {
     expect(await readerManager(configDir).get("sess-bad-todos")).toBeNull()
   })
 
-  it("tolerates an empty source directory (zero reports)", async () => {
+  it("tolerates an empty source directory (zero reports — nothing to import)", async () => {
     const emptyFrom = mkdtempSync(join(tmpdir(), "legacy-empty-"))
     try {
       const { report } = await runLegacyImport({ from: emptyFrom, config: makeConfig(), configDir })
@@ -189,6 +188,56 @@ describe("runLegacyImport (issue #88, opt-in one-time v3 migration)", () => {
       expect(report.imported).toBe(0)
     } finally {
       rmSync(emptyFrom, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects a nonexistent source directory explicitly (no silent zero report)", async () => {
+    // 评审阻塞 1：SDK importLegacyArchive 对 readdir 失败静默返回全零报告——
+    // runtime 侧循环必须显式失败，与真实空目录区分。
+    const missing = join(tmpdir(), "legacy-missing-does-not-exist")
+    await expect(
+      runLegacyImport({ from: missing, config: makeConfig(), configDir }),
+    ).rejects.toThrow(/ENOENT|no such file/)
+  })
+
+  it("skips non-directory entries (e.g. .DS_Store) — they must not flip the exit code", async () => {
+    const miscFrom = mkdtempSync(join(tmpdir(), "legacy-misc-"))
+    const miscCfg = mkdtempSync(join(tmpdir(), "legacy-misc-cfg-"))
+    try {
+      seedLegacySession(miscFrom, "sess-real")
+      // 杂项条目：文件而非目录——v3 目录里的 .DS_Store / README 之类
+      writeFileSync(join(miscFrom, ".DS_Store"), "garbage", "utf8")
+      writeFileSync(join(miscFrom, "README.md"), "# notes", "utf8")
+
+      const { report } = await runLegacyImport({ from: miscFrom, config: makeConfig(), configDir: miscCfg })
+      expect(report.imported).toBe(1)
+      expect(report.notImported).toBe(0) // 杂项未进入报告——不翻转退出码
+      expect(report.reports.map((r) => r.sessionId)).toEqual(["sess-real"])
+      expect(await readerManager(miscCfg).get("sess-real")).not.toBeNull()
+    } finally {
+      await rmRetryAsync(miscFrom)
+      await rmRetryAsync(miscCfg)
+    }
+  })
+
+  it("imported sessions are visible through GET /v1/sessions (hub#227 compatibility)", async () => {
+    // 导入行 ownership 为自根——经 session router 的 isUserSession 过滤后
+    // 出现在用户会话列表（存量视图兼容，hub#227 的部署前提）。
+    const routeFrom = mkdtempSync(join(tmpdir(), "legacy-route-from-"))
+    const routeCfg = mkdtempSync(join(tmpdir(), "legacy-route-cfg-"))
+    try {
+      seedLegacySession(routeFrom, "sess-visible")
+      await runLegacyImport({ from: routeFrom, config: makeConfig(), configDir: routeCfg })
+
+      const app = new Hono()
+      app.route("/v1/sessions", createSessionRouter(() => readerManager(routeCfg)))
+      const res = await app.request("http://localhost/v1/sessions")
+      expect(res.status).toBe(200)
+      const listed = (await res.json()) as Array<{ id: string }>
+      expect(listed.map((s) => s.id)).toEqual(["sess-visible"])
+    } finally {
+      await rmRetryAsync(routeFrom)
+      await rmRetryAsync(routeCfg)
     }
   })
 })
@@ -199,7 +248,7 @@ describe("legacyTranscriptReader / legacyTodosReader (bound to --from)", () => {
     try {
       seedLegacySession(from, "sid-x")
       const read = legacyTranscriptReader(from)
-      const data = (await read("sid-x")) as { metadata: { id: string }; messages: Array<{ id?: string }> } | null
+      const data = await read("sid-x")
       expect(data).not.toBeNull()
       expect(data!.metadata.id).toBe("sid-x")
       expect(data!.messages.every((m) => m.id)).toBe(true)
@@ -221,10 +270,7 @@ describe("CLI surface: import-legacy-sessions", () => {
   const originalCwd = process.cwd()
 
   beforeAll(() => {
-    writeFileSync(
-      join(fixtureDir, "agents.yaml"),
-      "agents:\n  - id: assistant\n    description: Fixture agent for import CLI tests\n",
-    )
+    seedConfigDir(fixtureDir)
     process.chdir(fixtureDir)
   })
 
@@ -244,14 +290,21 @@ describe("CLI surface: import-legacy-sessions", () => {
     }
   })
 
+  it("nonexistent --from is a usage error (pre-check, no silent zero report)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const code = await runCli(["import-legacy-sessions", "--from", join(tmpdir(), "cli-import-missing-dir")])
+      expect(code).toBe(CLI_EXIT.USAGE)
+      expect(errSpy.mock.calls[0]![0]).toContain("--from must be an existing directory")
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
   it("exit OK on all-imported, ERROR when not-imported > 0; --json carries the report", async () => {
     const from = mkdtempSync(join(tmpdir(), "cli-import-from-"))
     const cfgDir = mkdtempSync(join(tmpdir(), "cli-import-cfg-"))
-    // CLI 走 findConfigDir + discoverConfig——目标目录须有可发现的 agents.yaml
-    writeFileSync(
-      join(cfgDir, "agents.yaml"),
-      "agents:\n  - id: assistant\n    description: Fixture agent for import CLI tests\n",
-    )
+    seedConfigDir(cfgDir)
     try {
       seedLegacySession(from, "cli-sess-good")
       seedLegacySession(from, "cli-sess-bad", { raw: "nope" })
@@ -264,18 +317,18 @@ describe("CLI surface: import-legacy-sessions", () => {
         ])
         expect(code).toBe(CLI_EXIT.ERROR) // 存在 not-imported 项
         const payload = JSON.parse(logSpy.mock.calls[0]![0] as string)
+        expect(payload.ok).toBe(true) // 命令执行成功（not-imported 是数据面结果）
         expect(payload.from).toBe(from)
         expect(payload.targetDir).toBe(join(cfgDir, ".zerone", "sessions"))
         expect(payload.imported).toBe(1)
         expect(payload.notImported).toBe(1)
         expect(payload.reports).toHaveLength(2)
+        // prepared（SDK 内部恢复句柄）已从 JSON 报告剥除
+        for (const r of payload.reports) expect(r.prepared).toBeUndefined()
 
-        // 全部成功的场景 → OK（复用干净 cfg 重建目标）
+        // 全部成功的场景 → OK（干净 cfg + 干净 from）
         const cfg2 = mkdtempSync(join(tmpdir(), "cli-import-cfg2-"))
-        writeFileSync(
-          join(cfg2, "agents.yaml"),
-          "agents:\n  - id: assistant\n    description: Fixture agent for import CLI tests\n",
-        )
+        seedConfigDir(cfg2)
         try {
           const from2 = mkdtempSync(join(tmpdir(), "cli-import-from2-"))
           try {
@@ -297,6 +350,56 @@ describe("CLI surface: import-legacy-sessions", () => {
     } finally {
       rmSync(from, { recursive: true, force: true })
       rmSync(cfgDir, { recursive: true, force: true })
+    }
+  })
+
+  it("human-readable output: summary on stdout, failure details on stderr", async () => {
+    const from = mkdtempSync(join(tmpdir(), "cli-import-hr-"))
+    const cfgDir = mkdtempSync(join(tmpdir(), "cli-import-hr-cfg-"))
+    seedConfigDir(cfgDir)
+    try {
+      seedLegacySession(from, "hr-good")
+      seedLegacySession(from, "hr-bad", { raw: "nope" })
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      try {
+        const code = await runCli([
+          "import-legacy-sessions", "--from", from, "--config", cfgDir,
+        ])
+        expect(code).toBe(CLI_EXIT.ERROR)
+        const stdout = logSpy.mock.calls.map((c) => c[0]).join("\n")
+        expect(stdout).toContain(`Legacy session import: ${from} -> ${join(cfgDir, ".zerone", "sessions")}`)
+        expect(stdout).toContain("imported: 1, already-exists (skipped): 0, not-imported: 1")
+        // 失败明细走 stderr（stdout 保持可管道）
+        const stderr = errSpy.mock.calls.map((c) => c[0]).join("\n")
+        expect(stderr).toContain("not-imported hr-bad:")
+      } finally {
+        logSpy.mockRestore()
+        errSpy.mockRestore()
+      }
+    } finally {
+      rmSync(from, { recursive: true, force: true })
+      rmSync(cfgDir, { recursive: true, force: true })
+    }
+  })
+
+  it("config discovery failure surfaces as a clean ERROR (not an unhandled crash)", async () => {
+    const from = mkdtempSync(join(tmpdir(), "cli-import-cfgerr-"))
+    try {
+      seedLegacySession(from, "sess-any")
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+      try {
+        // --config 指向无 agents.yaml 的目录 → discoverConfig 抛错——命令内收敛
+        const code = await runCli([
+          "import-legacy-sessions", "--from", from, "--config", mkdtempSync(join(tmpdir(), "cli-import-nocfg-")),
+        ])
+        expect(code).toBe(CLI_EXIT.ERROR)
+        expect(errSpy.mock.calls[0]![0]).toContain("import-legacy-sessions failed:")
+      } finally {
+        errSpy.mockRestore()
+      }
+    } finally {
+      rmSync(from, { recursive: true, force: true })
     }
   })
 })
