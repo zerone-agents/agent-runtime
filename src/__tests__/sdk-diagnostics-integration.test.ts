@@ -6,8 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createDefaultCronService } from "@zerone-agent/agent-sdk/cron/node"
 import { createAgent, type DiagnosticsSink } from "@zerone-agent/agent-sdk"
-import { InMemorySessionStore } from "@zerone-agent/agent-sdk/store"
-import { OwnershipRootPreRegisteringCoordinator } from "../session-store.js"
+import { InMemorySessionStore, WriteCoordinator } from "@zerone-agent/agent-sdk/store"
 
 /**
  * Issue #63 BEHAVIORAL acceptance tests (review follow-up): real SDK, no
@@ -309,14 +308,12 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       // SDK v4 (issue #131 P3): the Task tool refuses to spawn without a
       // store + coordinator in its context ("no silent fallback") — the
       // root Agent's store flows into every subagent spawn. The runtime
-      // injects its FileSessionStore + wrapped coordinator at
+      // injects its FileSessionStore + plain WriteCoordinator at
       // registry.create(); this direct-createAgent test carries an
       // in-memory pair (diagnostics inheritance is under test here, not
-      // persistence). The coordinator wrapper is the agent-sdk#158
-      // workaround: mid-query spawns assert the ownership root is
-      // registered before the Agent's own post-loop self-register.
+      // persistence).
       store,
-      coordinator: new OwnershipRootPreRegisteringCoordinator({ store }),
+      coordinator: new WriteCoordinator({ store }),
       agent: { description: "root", prompt: "Run the task." },
       subAgents: {
         "child-r": {
