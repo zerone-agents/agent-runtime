@@ -311,9 +311,7 @@ describe("subagent diagnostics inheritance + query-logger scoping (real SDK, iss
       // injects its FileSessionStore + plain WriteCoordinator at
       // registry.create(); this direct-createAgent test carries an
       // in-memory pair (diagnostics inheritance is under test here, not
-      // persistence). Fresh-session spawn registration is the SDK's own
-      // since 4.1.2 (agent-sdk#161) — the runtime-side #158 workaround was
-      // removed in agent-runtime#87.
+      // persistence).
       store,
       coordinator: new WriteCoordinator({ store }),
       agent: { description: "root", prompt: "Run the task." },

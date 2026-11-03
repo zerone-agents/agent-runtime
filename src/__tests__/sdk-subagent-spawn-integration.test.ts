@@ -18,10 +18,9 @@ import { rmRetryAsync } from "./helpers/fs.js"
  * REAL Task/MultiTask spawn end-to-end, and the session surface must behave:
  *
  *  1. subagent events flow (spawn succeeded through the production path —
- *     without the store+coordinator injection, 4.x refuses the spawn; the
- *     fresh-session register timing itself is the SDK's since 4.1.2,
- *     agent-sdk#161 — this test is the pin for that fixed behavior, the
- *     runtime-side #158 workaround having been removed per #87)
+ *     without the store+coordinator injection, 4.x refuses the spawn;
+ *     fresh-session spawn registration is the SDK's own since 4.1.2 —
+ *     see the history note in src/session-store.ts)
  *  2. the registry's SessionManagerV2 anchors at
  *     <configDir>/.zerone/sessions (sessions.json exists there)
  *  3. the spawn's persisted rows (child transcript + 'main' pseudo-session)
