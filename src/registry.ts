@@ -434,10 +434,10 @@ export class AgentRegistry {
     // SDK v4 (issue #131): the store is passed on EVERY create, not just
     // resume — new sessions must persist too (session router + hub-push
     // read them back through the same store). The coordinator rides along:
-    // it carries the ownership-root pre-registration that mid-query
-    // subagent spawns require (agent-sdk#158). Omitted entirely when no
-    // infrastructure is configured (register()-only embedders/tests stay
-    // ephemeral).
+    // the Task tool refuses to spawn without one in its context, and
+    // fresh-session spawn registration is the SDK's own since 4.1.2
+    // (agent-sdk#161). Omitted entirely when no infrastructure is
+    // configured (register()-only embedders/tests stay ephemeral).
     return this.sessions
       ? createAgent({ ...withSession, store: this.sessions.store, coordinator: this.sessions.coordinator })
       : createAgent(withSession)
@@ -464,8 +464,7 @@ export class AgentRegistry {
     const base = cronService ? { ...opts, cronService } : { ...opts }
     // Same store contract as create(): cron-fired Agents persist their
     // sessions through the registry's file store (v4 semantics; v3's SDK
-    // default also persisted them), with the ownership-root
-    // pre-registration coordinator (agent-sdk#158).
+    // default also persisted them) with the plain coordinator.
     return this.sessions
       ? { ...base, store: this.sessions.store, coordinator: this.sessions.coordinator }
       : base

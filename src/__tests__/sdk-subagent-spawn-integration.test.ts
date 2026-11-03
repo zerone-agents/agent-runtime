@@ -13,13 +13,15 @@ import { createSessionRouter } from "../router/session.js"
 import { rmRetryAsync } from "./helpers/fs.js"
 
 /**
- * Production spawn-path regression (issue #80 acceptance #3 + review items):
- * the registry's create() path — FileSessionStore + ownership-root
- * pre-registering coordinator (agent-sdk#158 workaround) — must carry a REAL
- * Task/MultiTask spawn end-to-end, and the session surface must behave:
+ * Production spawn-path regression (issue #80 acceptance #3): the registry's
+ * create() path — FileSessionStore + plain WriteCoordinator — must carry a
+ * REAL Task/MultiTask spawn end-to-end, and the session surface must behave:
  *
  *  1. subagent events flow (spawn succeeded through the production path —
- *     without the store+coordinator injection, 4.x refuses the spawn)
+ *     without the store+coordinator injection, 4.x refuses the spawn; the
+ *     fresh-session register timing itself is the SDK's since 4.1.2,
+ *     agent-sdk#161 — this test is the pin for that fixed behavior, the
+ *     runtime-side #158 workaround having been removed per #87)
  *  2. the registry's SessionManagerV2 anchors at
  *     <configDir>/.zerone/sessions (sessions.json exists there)
  *  3. the spawn's persisted rows (child transcript + 'main' pseudo-session)
@@ -209,8 +211,9 @@ describe("subagent spawn through the production registry path (issue #80 accepta
       const text = await res.text()
 
       // 1. Spawn succeeded through the production path: subagent events flow
-      // and the Task tool result is not an error (pre-workaround: the tool
-      // result carried the ownership-target WriteNotAuthorizedError).
+      // and the Task tool result is not an error. (On SDK <4.1.2 the tool
+      // result carried the ownership-target WriteNotAuthorizedError — fixed
+      // upstream in agent-sdk#161; this test now pins the fixed behavior.)
       expect(text).toContain("event: subagent")
       expect(text).toContain('"tool_name":"Task","is_error":false')
       expect(text).not.toContain("ownership target")
