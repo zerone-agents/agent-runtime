@@ -12,7 +12,7 @@ import {
   type RuntimeSessionInfrastructure,
 } from "./session-store.js"
 import { resolveSessionsDir } from "./data-root.js"
-import { SessionIdentityStore } from "./run-identity.js"
+import { SessionIdentityStore, identityHeaderProvider } from "./run-identity.js"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -130,7 +130,7 @@ export class AgentRegistry {
    */
   constructor(diagnostics?: DiagnosticsSink) {
     this.diagnostics = diagnostics
-    this.mcp = new McpConnectionManager(diagnostics)
+    this.mcp = new McpConnectionManager(diagnostics, { identityHeaderProvider })
   }
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
@@ -155,7 +155,7 @@ export class AgentRegistry {
     // failure the partial new state is discarded and the previous registry
     // stays intact.
     // ------------------------------------------------------------------
-    const mcp = new McpConnectionManager(this.diagnostics)
+    const mcp = new McpConnectionManager(this.diagnostics, { identityHeaderProvider })
     const defs = new Map<string, AgentDefinition>()
     const statuses = new Map<string, "ready" | "unavailable">()
     const unavailableReasons = new Map<string, string>()

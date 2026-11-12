@@ -37,6 +37,9 @@ function makeApp(tmpRoot: string, agent: ReturnType<typeof makeAgent>) {
     create: vi.fn().mockReturnValue(agent),
     getStatus: vi.fn().mockReturnValue("ready"),
     getModel: vi.fn().mockReturnValue("test-model"),
+    // issue #95：run handler 经 registry 取会话身份 store——mock 无 store。
+    // 本文件在 macOS 上 skip（describeProcfs），CI（Linux /proc）才运行。
+    getSessionIdentityStore: vi.fn(() => undefined),
   }
   const app = new Hono({ strict: false })
   app.route("/v1/agents", createAgentRouter(registry, new RunRegistry(), metrics, { cwd: tmpRoot }))

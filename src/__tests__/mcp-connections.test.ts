@@ -10,7 +10,7 @@ import {
   McpConnectionError,
   canonicalMcpConfig,
 } from "../mcp-connections.js"
-import { runWithIdentity, USER_ID_HEADER, RUN_ID_HEADER } from "../run-identity.js"
+import { runWithIdentity, identityHeaderProvider, USER_ID_HEADER, RUN_ID_HEADER } from "../run-identity.js"
 import { capturedOutput } from "./helpers/deep-log.js"
 
 const mockConnect = vi.mocked(connectMCPServer)
@@ -254,7 +254,9 @@ describe("McpConnectionManager", () => {
 describe("identity passthrough wiring (issue #95)", () => {
   it("identityPassthrough: true replaces headers with a dynamic provider (flag stripped for SDK)", async () => {
     mockConnect.mockResolvedValueOnce(okConn("hub") as never)
-    const m = new McpConnectionManager()
+    // 工厂经构造器注入（registry 组合路径同款）——mcp-connections 不相对导入
+    // run-identity（Node 原生 type stripping 契约，见 McpConnectionError NOTE）。
+    const m = new McpConnectionManager(undefined, { identityHeaderProvider })
     await m.acquire("a", "hub", {
       transport: "http",
       url: "http://hub.example/mcp",
