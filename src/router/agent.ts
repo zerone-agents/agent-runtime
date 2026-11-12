@@ -15,6 +15,7 @@ import {
   validateAttachments,
 } from "../attachments.js"
 import { EXPECTED_CONTAINER_ID_HEADER, GenerationError, assertExpectedGeneration, generationErrorPayload } from "../container-id.js"
+import { USER_ID_HEADER, runWithIdentity, generatorWithIdentity, type RunIdentityContext } from "../run-identity.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
@@ -171,6 +172,35 @@ export function createAgentRouter(
     }
     c.header("X-Run-ID", runId)
 
+    // 会话级身份透传（issue #95）：X-User-Id 首次随 run 到达即绑定会话
+    //（重绑更新），随会话生命周期存续；run 作用域身份 = 本次头携带 ||
+    // 会话既有绑定。绑定持久化失败仅告警降级（本次 run 的注入不受影响，
+    // 只丢重启后的存续）——身份是 opt-in 透传面，不因 sidecar 写失败中断
+    // 对话。register()-only 宿主无 identityStore → 降级为仅本次 run 内透传。
+    const inboundUserId = c.req.header(USER_ID_HEADER)
+    const identitySid = agent.getSessionId?.() ?? ""
+    let effectiveUserId: string | undefined
+    const identityStore = registry.getSessionIdentityStore()
+    try {
+      if (inboundUserId !== undefined) {
+        if (identityStore) await identityStore.bind(identitySid, inboundUserId)
+        effectiveUserId = inboundUserId
+      } else if (identityStore) {
+        effectiveUserId = (await identityStore.get(identitySid))?.userId
+      }
+    } catch (err) {
+      console.warn("[identity] session identity bind failed; degrading to in-run identity only", {
+        sessionId: identitySid,
+        error: (err as Error).message,
+      })
+      effectiveUserId = inboundUserId
+    }
+    const runIdentity: RunIdentityContext = {
+      runId,
+      sessionId: identitySid,
+      ...(effectiveUserId !== undefined ? { userId: effectiveUserId } : {}),
+    }
+
     const aigcLabel = options.aigc
       ? buildAigcLabel(options.aigc, registry.getModel(agentId))
       : undefined
@@ -248,7 +278,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-block") {
-      const agentStream = agent.query(agentInput, queryOverrides)
+      const agentStream = generatorWithIdentity(runIdentity, agent.query(agentInput, queryOverrides))
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
         explicitHint,
@@ -259,7 +289,7 @@ export function createAgentRouter(
     }
 
     if (responseMode === "sse-raw") {
-      const agentStream = agent.query(agentInput, { includePartialMessages: true, ...queryOverrides })
+      const agentStream = generatorWithIdentity(runIdentity, agent.query(agentInput, { includePartialMessages: true, ...queryOverrides }))
       recordAudit() // SSE: text unknown at stream start
       return streamAgentResponse(c, agentStream, undefined, {
         aigc: aigcLabel,
@@ -272,7 +302,7 @@ export function createAgentRouter(
 
     // JSON blocking response
     try {
-      const result = await agent.prompt(agentInput, queryOverrides)
+      const result = await runWithIdentity(runIdentity, () => agent.prompt(agentInput, queryOverrides))
       recordAudit(result.text)
 
       const runInfo = runsRegistry.get(runId)

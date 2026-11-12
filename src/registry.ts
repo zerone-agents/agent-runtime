@@ -12,6 +12,7 @@ import {
   type RuntimeSessionInfrastructure,
 } from "./session-store.js"
 import { resolveSessionsDir } from "./data-root.js"
+import { SessionIdentityStore } from "./run-identity.js"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -110,6 +111,13 @@ export class AgentRegistry {
    */
   private sessions?: RuntimeSessionInfrastructure
   private sessionsDir?: string
+  /**
+   * 会话级身份绑定（issue #95）：`<sessionsDir>/session-identity.json`
+   * 文件侧 store——run 携带 X-User-Id 即绑定，随会话生命周期存续（跨
+   * run/跨重启）。与 sessions 同目录、同重锚定语义；undefined 语义同
+   * sessions（register()-only 宿主无身份持久化，仅 run 内透传）。
+   */
+  private identityStore?: SessionIdentityStore
 
   /**
    * Issue #63: the runtime-owned diagnostics sink from the composition
@@ -267,6 +275,7 @@ export class AgentRegistry {
     if (this.sessions && this.sessionsDir === dir) return
     this.sessions = createSessionInfrastructure(dir)
     this.sessionsDir = dir
+    this.identityStore = new SessionIdentityStore(dir)
   }
 
   /**
@@ -276,6 +285,15 @@ export class AgentRegistry {
    */
   getSessionManager(): SessionManagerV2 | undefined {
     return this.sessions?.manager
+  }
+
+  /**
+   * 会话身份绑定 store（issue #95）。Undefined until loadFromConfig has
+   * run — register()-only hosts degrade to in-run identity only（无跨
+   * run 存续）。session DELETE 经 router 级联清除对应条目。
+   */
+  getSessionIdentityStore(): SessionIdentityStore | undefined {
+    return this.identityStore
   }
 
   /**

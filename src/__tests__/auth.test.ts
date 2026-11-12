@@ -18,6 +18,9 @@ const mockRegistry = {
   // SDK v4 (issue #131): session router/pusher read through the registry's
   // SessionManagerV2; this mock never ran loadFromConfig → no manager.
   getSessionManager: vi.fn(() => undefined),
+  // issue #95：session DELETE 的身份级联经 registry 的 identityStore；
+  // 同上，register-only mock 无 store。
+  getSessionIdentityStore: vi.fn(() => undefined),
 }
 
 const mockMetrics = {

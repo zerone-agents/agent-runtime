@@ -19,17 +19,25 @@
  */
 
 import { connectMCPServer, type DiagnosticsSink, type MCPConnection } from "@zerone-agent/agent-sdk"
+import { identityHeaderProvider } from "./run-identity.js"
 
 /**
  * Canonicalize the transport selector spelling: the SDK accepts both `type`
  * and `transport`, we normalize to the canonical `type` form so that both
  * spellings of the same config dedupe to one connection.
+ *
+ * identityPassthrough（issue #95）归一：显式 false / 缺省同义（off）——
+ * 归一后去重键只在 true 与 off 间区分（不同策略 = 不同连接），同 off 的
+ * 等价配置仍共享一条连接。
  */
 export function canonicalMcpConfig(
   cfg: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { transport, ...rest } = cfg
-  return transport !== undefined ? { ...rest, type: transport } : rest
+  const { transport, identityPassthrough, ...rest } = cfg
+  const normalized = transport !== undefined ? { ...rest, type: transport } : rest
+  return identityPassthrough === true
+    ? { ...normalized, identityPassthrough: true }
+    : normalized
 }
 
 /** Deterministic stringify: sorted keys so field order never splits a shared connection. */
@@ -76,6 +84,26 @@ function withStrictStdioStderr(config: Record<string, unknown>): Record<string, 
   return { ...config, stderr: "ignore" }
 }
 
+/**
+ * 会话级身份透传（issue #95，SDK ≥4.2.0 McpHeaderProvider / agent-sdk#163）：
+ * identityPassthrough 开启的连接，headers 从静态 Record 换为**按请求解析**
+ * 的 provider——静态部署头（如 X-Agent-Capability）之上叠加当前 run 的
+ * X-User-Id / X-Run-Id（读取 AsyncLocalStorage，见 run-identity.ts）。
+ * off 配置仅剥除 runtime 级旗标，headers 原样（静态路径零行为变化）。
+ * 与 withStrictStdioStderr 同位：key 计算之后注入，SDK 不见 runtime 旗标。
+ */
+function withIdentityHeaders(config: Record<string, unknown>): Record<string, unknown> {
+  const { identityPassthrough, headers, ...rest } = config
+  if (identityPassthrough !== true) {
+    // off：仅剥旗标，headers 原样（undefined 不回填，保持配置形状不变）
+    return headers !== undefined ? { ...rest, headers } : rest
+  }
+  return {
+    ...rest,
+    headers: identityHeaderProvider(headers as Record<string, string> | undefined),
+  }
+}
+
 interface ManagedConnection {
   conn: MCPConnection
   refs: Set<string>
@@ -119,7 +147,7 @@ export class McpConnectionManager {
     // canonical (user-authored) config, never from runtime-injected policy.
     const conn = await connectMCPServer(
       name,
-      withStrictStdioStderr(config) as never,
+      withIdentityHeaders(withStrictStdioStderr(config)) as never,
       undefined,
       this.diagnostics,
     )

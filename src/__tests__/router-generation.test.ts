@@ -77,6 +77,8 @@ function makeAgentApp(tmpRoot: string) {
     create: vi.fn().mockReturnValue(agent),
     getStatus: vi.fn().mockReturnValue("ready"),
     getModel: vi.fn().mockReturnValue("test-model"),
+    // issue #95：run handler 经 registry 取会话身份 store——mock 无 store。
+    getSessionIdentityStore: vi.fn(() => undefined),
   }
   const metrics: any = { recordRun: vi.fn() }
   const app = new Hono({ strict: false })

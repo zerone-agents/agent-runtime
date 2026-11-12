@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import type { SessionMetadata } from "@zerone-agent/agent-sdk"
 import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
+import type { SessionIdentityStore } from "../run-identity.js"
 
 /**
  * Session REST surface over the SDK v4 SessionManagerV2 (issue #131).
@@ -23,7 +24,11 @@ import type { SessionManagerV2 } from "@zerone-agent/agent-sdk/store"
  *   GET    /v1/sessions/:sessionId → { metadata, messages } | 404
  *   DELETE /v1/sessions/:sessionId → { ok: true } | 404
  */
-export function createSessionRouter(getSessions: () => SessionManagerV2 | undefined) {
+export function createSessionRouter(
+  getSessions: () => SessionManagerV2 | undefined,
+  /** 会话身份绑定（issue #95）：DELETE 级联清除；lazy getter，语义同 getSessions。 */
+  getIdentityStore?: () => SessionIdentityStore | undefined,
+) {
   const router = new Hono()
 
   /** 自根判定：v4 store 为每次 subagent spawn 落持久行（spawn 预登记 +
@@ -78,6 +83,17 @@ export function createSessionRouter(getSessions: () => SessionManagerV2 | undefi
     // cascadeOwned: the session's subagent rows (Task/MultiTask spawns) are
     // internal — deleting the conversation removes them too, no orphans.
     await sessions.delete(sessionId, true)
+    // 会话身份级联清除（issue #95 验收 3：会话结束后身份不残留）。
+    // best-effort：清除失败不翻转 DELETE 结果——会话本体已删，孤儿身份
+    // 条目惰性无害（sessionId 为 UUID 不复用）。
+    try {
+      await getIdentityStore?.()?.clear(sessionId)
+    } catch (err) {
+      console.warn("[identity] failed to clear session identity on delete", {
+        sessionId,
+        error: (err as Error).message,
+      })
+    }
     return c.json({ ok: true })
   })
 

@@ -51,8 +51,9 @@ export const CronConfigSchema = z.object({
 
 const McpServerConfigSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
-  z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional() }),
-  z.object({ transport: z.literal("http"), url: z.string(), headers: z.record(z.string()).optional() }),
+  // identityPassthrough（issue #95）：按会话注入 X-User-Id/X-Run-Id 身份头——仅 HTTP 传输有此语义（stdio 无请求头）
+  z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional(), identityPassthrough: z.boolean().optional() }),
+  z.object({ transport: z.literal("http"), url: z.string(), headers: z.record(z.string()).optional(), identityPassthrough: z.boolean().optional() }),
 ])
 
 const ThinkingConfigSchema = z.object({

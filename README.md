@@ -206,6 +206,10 @@ agents:
 
 Optional top-level `aigc` config: when enabled, every response carries an implicit-label `aigc` field per the China national standard, plus a per-run audit record. Supports env overrides (`ZERONE_AGENT_AIGC_*`). See [`docs/compliance.md`](docs/compliance.md) for full config, design rationale, and a compliance checklist.
 
+### Session-level identity passthrough (optional)
+
+Per-server opt-in (`mcpServers.<name>.identityPassthrough: true`, HTTP transports only): runs may carry an `X-User-Id` request header — bound to the session (persisted under the data root, survives restarts, cleared on session delete) and injected, together with `X-Run-Id`, into every MCP request to the opted-in server over its static headers (hub memory MCP contract, issue #95). Both headers are optional; without `X-User-Id` behavior is unchanged. See the [identity passthrough section in docs/configuration.md](docs/configuration.md#mcp-会话身份透传可选).
+
 ### Hub chat push (optional)
 
 Optional top-level `hub` config: when enabled, every successfully completed run asynchronously pushes the full session snapshot to agent-hub (idempotent upsert on the hub side). The `X-User-Name` request header maps to session ownership and is required — when absent, the push is skipped for that run. Tenant ownership comes from the deployment-level `hub.org` config (delivered via agent-hub/agent-deployer); the `X-Org` request header is no longer read. When `hub.org` is not configured, the `org` field is omitted and the hub resolves its default tenant by deployment mode. The push never blocks a run — network errors and 5xx are retried twice with 1s→2s backoff, 4xx is not retried. See the [`hub` section in `docs/configuration.md`](docs/configuration.md#hub-聊天记录回传可选) for full config.
