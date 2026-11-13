@@ -15,7 +15,7 @@ import {
   validateAttachments,
 } from "../attachments.js"
 import { EXPECTED_CONTAINER_ID_HEADER, GenerationError, assertExpectedGeneration, generationErrorPayload } from "../container-id.js"
-import { USER_ID_HEADER, runWithIdentity, generatorWithIdentity, type RunIdentityContext } from "../run-identity.js"
+import { USER_ID_HEADER, invalidUserIdReason, runWithIdentity, generatorWithIdentity, type RunIdentityContext } from "../run-identity.js"
 
 export interface AgentRouterOptions {
   aigc?: AigcConfig
@@ -65,6 +65,14 @@ export function createAgentRouter(
         { error: "maxSessionTurns was renamed to maxSessionQueries — use the new field name" },
         400,
       )
+    }
+
+    // issue #95 评审建议 1：入站身份头 fail-fast 校验（空串/空白/超长/
+    // 控制字符的垃圾身份不落库出站）。400 早于 agent 创建——无需清理路径。
+    const inboundUserId = c.req.header(USER_ID_HEADER)
+    if (inboundUserId !== undefined) {
+      const invalidReason = invalidUserIdReason(inboundUserId)
+      if (invalidReason) return c.json({ error: invalidReason }, 400)
     }
 
     const { message, sessionId, stream, maxSessionQueries, runId: callerRunId, appendSystemPrompt } = body
@@ -177,8 +185,12 @@ export function createAgentRouter(
     // 会话既有绑定。绑定持久化失败仅告警降级（本次 run 的注入不受影响，
     // 只丢重启后的存续）——身份是 opt-in 透传面，不因 sidecar 写失败中断
     // 对话。register()-only 宿主无 identityStore → 降级为仅本次 run 内透传。
-    const inboundUserId = c.req.header(USER_ID_HEADER)
-    const identitySid = agent.getSessionId?.() ?? ""
+    //（inboundUserId 已在 handler 顶部读取并校验。）
+    //
+    // sid 取值：resume run 用请求体的 sessionId——SDK Agent 的 sid 要到
+    // 异步 setup 完成才被 resume 值覆盖（构造期是随机 UUID，此刻先读会
+    // 拿到错值）；新会话用 agent 构造期生成的 sid（即真实会话 id）。
+    const identitySid = sessionId ?? agent.getSessionId?.() ?? ""
     let effectiveUserId: string | undefined
     const identityStore = registry.getSessionIdentityStore()
     try {

@@ -49,12 +49,39 @@ export const CronConfigSchema = z.object({
   drainMs: z.number().int().positive().optional(),
 })
 
-const McpServerConfigSchema = z.discriminatedUnion("transport", [
+/**
+ * Core union：stdio / sse / http 三变体。identityPassthrough（issue #95）
+ * 仅 sse/http 变体声明——按会话注入 X-User-Id/X-Run-Id 身份头（stdio 无
+ * 请求头语义）。
+ */
+const McpServerConfigCoreSchema = z.discriminatedUnion("transport", [
   z.object({ transport: z.literal("stdio"), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string()).optional() }),
-  // identityPassthrough（issue #95）：按会话注入 X-User-Id/X-Run-Id 身份头——仅 HTTP 传输有此语义（stdio 无请求头）
   z.object({ transport: z.literal("sse"), url: z.string(), headers: z.record(z.string()).optional(), identityPassthrough: z.boolean().optional() }),
   z.object({ transport: z.literal("http"), url: z.string(), headers: z.record(z.string()).optional(), identityPassthrough: z.boolean().optional() }),
 ])
+
+/**
+ * Input-boundary guard（评审重要 2，对齐 maxSessionTurns guard 原则）：
+ * stdio 服务器携带 identityPassthrough 显式拒绝——Zod strip 模式会静默
+ * 丢弃未声明键，操作者以为身份在流动实则无效。经标准 ZodError 路径
+ * （safeParse 返回 success: false，不 throw）。
+ */
+const McpServerConfigSchema = z.preprocess(
+  (input, ctx) => {
+    if (
+      typeof input === "object" && input !== null
+      && (input as Record<string, unknown>).transport === "stdio"
+      && "identityPassthrough" in input
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "identityPassthrough is only valid on sse/http MCP servers — stdio has no request headers (issue #95)",
+      })
+    }
+    return input
+  },
+  McpServerConfigCoreSchema,
+)
 
 const ThinkingConfigSchema = z.object({
   type: z.enum(["adaptive", "enabled", "disabled"]),

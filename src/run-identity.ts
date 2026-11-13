@@ -22,6 +22,23 @@ import { dirname, join } from "node:path"
 export const USER_ID_HEADER = "X-User-Id"
 export const RUN_ID_HEADER = "X-Run-Id"
 
+/** 入站 X-User-Id 的合法上限（评审建议 1：垃圾身份不落库出站）。 */
+export const USER_ID_MAX_LENGTH = 128
+
+/**
+ * 校验入站 X-User-Id：返回拒绝原因（undefined = 合法）。非空且无首尾空白
+ *（trim 不改变原值——HTTP 解析通常已剥离首尾空白，此规则防御非 HTTP 注入
+ * 路径）、≤128 字符、无控制字符（含 CR/LF——SDK 的 header 物化已挡换行
+ * 注入，此处在入口 fail-fast，给调用方明确的 400 而非静默透传垃圾身份）。
+ */
+export function invalidUserIdReason(userId: string): string | undefined {
+  if (userId.trim().length === 0) return `${USER_ID_HEADER} must be a non-empty identifier`
+  if (userId !== userId.trim()) return `${USER_ID_HEADER} must not have leading/trailing whitespace`
+  if (userId.length > USER_ID_MAX_LENGTH) return `${USER_ID_HEADER} exceeds ${USER_ID_MAX_LENGTH} characters`
+  if (/[\u0000-\u001f\u007f]/.test(userId)) return `${USER_ID_HEADER} contains control characters`
+  return undefined
+}
+
 /** run 作用域身份——MCP header provider 在每次请求时读取。 */
 export interface RunIdentityContext {
   runId: string
@@ -104,16 +121,31 @@ export interface SessionIdentityEntry {
 export class SessionIdentityStore {
   private readonly file: string
   private data = new Map<string, SessionIdentityEntry>()
-  private loaded = false
+  /**
+   * 首载竞态修复（评审重要 1）：共享 loadPromise——并发 get/bind/clear
+   * await 同一次加载。旧实现的 loaded 标志在读盘前置位，首载窗口内的
+   * 并发 get 读到空表（该次 MCP 请求漏注身份）、并发 bind 会被首载完成
+   * 的磁盘旧值覆盖（重绑丢失）。
+   */
+  private loadPromise: Promise<void> | undefined
   private writeChain: Promise<void> = Promise.resolve()
+  /**
+   * 本进程 bind 过的 sessionId——prune 的保护集（见 prune 注释）。
+   * e2e 实证竞态：绑定发生在 run 开始，session 行要到 run 结束（首个
+   * checkpoint）才落盘——清扫若把「行未落」当孤儿，会抹掉刚绑定的身份。
+   */
+  private boundInProcess = new Set<string>()
 
   constructor(sessionsDir: string) {
     this.file = join(sessionsDir, "session-identity.json")
   }
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return
-    this.loaded = true
+  private ensureLoaded(): Promise<void> {
+    if (!this.loadPromise) this.loadPromise = this.load()
+    return this.loadPromise
+  }
+
+  private async load(): Promise<void> {
     let raw: string
     try {
       raw = await readFile(this.file, "utf-8")
@@ -143,6 +175,7 @@ export class SessionIdentityStore {
   /** 绑定（或重绑更新）会话身份并落盘。 */
   async bind(sessionId: string, userId: string): Promise<void> {
     await this.ensureLoaded()
+    this.boundInProcess.add(sessionId)
     this.data.set(sessionId, { userId, boundAt: new Date().toISOString() })
     await this.persist()
   }
@@ -152,6 +185,31 @@ export class SessionIdentityStore {
     await this.ensureLoaded()
     if (!this.data.delete(sessionId)) return
     await this.persist()
+  }
+
+  /**
+   * 孤儿清扫（评审建议 6）：清除 liveSessionIds 之外的条目（会话已删而
+   * 绑定残留——DELETE best-effort 失败、或存量数据）。返回清除数量。
+   *
+   * **本进程 bind 过的条目受保护**：绑定发生在 run 开始，session 行要到
+   * run 结束（首个 checkpoint）才落盘——「行未落」与「会话已删」在 store
+   * 侧不可区分，无保护的热清扫会误删刚绑定的身份（e2e 实证：冷启动
+   * 清扫的 list 快照在首个 run 的 bind 与 checkpoint 之间解析为空集）。
+   * 磁盘遗留条目（上一进程）无此窗口——其 run 要么已 checkpoint（行在
+   * → live），要么从未完成（行不在 → 绑定失效，清除正确）。
+   */
+  async prune(liveSessionIds: ReadonlySet<string>): Promise<number> {
+    await this.ensureLoaded()
+    let removed = 0
+    for (const sid of [...this.data.keys()]) {
+      if (this.boundInProcess.has(sid)) continue
+      if (!liveSessionIds.has(sid)) {
+        this.data.delete(sid)
+        removed++
+      }
+    }
+    if (removed > 0) await this.persist()
+    return removed
   }
 
   /** 原子落盘：temp+rename；写操作经链串行（单进程单写者）。 */
