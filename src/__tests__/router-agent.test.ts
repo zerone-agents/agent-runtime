@@ -60,6 +60,9 @@ describe("Agent Router (per-request)", () => {
         getStatus: vi.fn(),
         getDetail: vi.fn(),
         getModel: vi.fn().mockReturnValue("glm-4.5"),
+        // issue #95：run handler 经 registry 取会话身份 store——register-only
+        // mock 无 store（身份解析降级为仅本次 run 内透传）。
+        getSessionIdentityStore: vi.fn(() => undefined),
       }
     metrics = {
       recordRun: vi.fn(),
@@ -785,6 +788,8 @@ describe("run lifecycle integration", () => {
       getStatus: vi.fn().mockReturnValue("ready"),
       getDetail: vi.fn(),
       getModel: vi.fn().mockReturnValue("glm-4.5"),
+      // issue #95：run handler 经 registry 取会话身份 store——mock 无 store。
+      getSessionIdentityStore: vi.fn(() => undefined),
     }
     runsRegistry = new RunRegistry()
     metrics = { recordRun: vi.fn() }
@@ -906,6 +911,8 @@ describe("caller-provided runId and JSON-mode cancellation race", () => {
       getStatus: vi.fn().mockReturnValue("ready"),
       getDetail: vi.fn(),
       getModel: vi.fn().mockReturnValue("glm-4.5"),
+      // issue #95：run handler 经 registry 取会话身份 store——mock 无 store。
+      getSessionIdentityStore: vi.fn(() => undefined),
     }
     runsRegistry = new RunRegistry()
     metrics = { recordRun: vi.fn() }
@@ -1140,6 +1147,8 @@ describe("hub chat push wiring", () => {
       getStatus: vi.fn().mockReturnValue("ready"),
       getDetail: vi.fn(),
       getModel: vi.fn().mockReturnValue("glm-4.5"),
+      // issue #95：run handler 经 registry 取会话身份 store——mock 无 store。
+      getSessionIdentityStore: vi.fn(() => undefined),
     }
     metrics = {
       recordRun: vi.fn(),

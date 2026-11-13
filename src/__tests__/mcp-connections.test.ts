@@ -10,6 +10,7 @@ import {
   McpConnectionError,
   canonicalMcpConfig,
 } from "../mcp-connections.js"
+import { runWithIdentity, identityHeaderProvider, USER_ID_HEADER, RUN_ID_HEADER } from "../run-identity.js"
 import { capturedOutput } from "./helpers/deep-log.js"
 
 const mockConnect = vi.mocked(connectMCPServer)
@@ -246,6 +247,72 @@ describe("McpConnectionManager", () => {
         url: "http://x",
         headers: { A: "b" },
       })
+    })
+  })
+})
+
+describe("identity passthrough wiring (issue #95)", () => {
+  it("identityPassthrough: true replaces headers with a dynamic provider (flag stripped for SDK)", async () => {
+    mockConnect.mockResolvedValueOnce(okConn("hub") as never)
+    // 工厂经构造器注入（registry 组合路径同款）——mcp-connections 不相对导入
+    // run-identity（Node 原生 type stripping 契约，见 McpConnectionError NOTE）。
+    const m = new McpConnectionManager(undefined, { identityHeaderProvider })
+    await m.acquire("a", "hub", {
+      transport: "http",
+      url: "http://hub.example/mcp",
+      headers: { "X-Agent-Capability": "cap-1" },
+      identityPassthrough: true,
+    })
+    const cfg = mockConnect.mock.calls[0]![1] as unknown as Record<string, unknown>
+    expect(cfg.identityPassthrough).toBeUndefined() // runtime 旗标不进 SDK
+    expect(typeof cfg.headers).toBe("function")
+    // SDK 传输层的按请求解析与静态头合并语义由上游钉（agent-sdk#164）；
+    // 此处钉 runtime 闭包：run 之外（cron/后台）→ 仅静态头（无身份）。
+    const provider = cfg.headers as () => Record<string, string>
+    expect(provider()).toEqual({ "X-Agent-Capability": "cap-1" })
+    // run 上下文内 → 叠加身份头（静态头保留，同值贯穿 issue #95 设计）
+    const injected = runWithIdentity(
+      { runId: "r-9", sessionId: "s-9", userId: "user-9" },
+      () => provider(),
+    )
+    expect(injected).toEqual({
+      "X-Agent-Capability": "cap-1",
+      [USER_ID_HEADER]: "user-9",
+      [RUN_ID_HEADER]: "r-9",
+    })
+  })
+
+  it("flag absent: headers stay a static record (zero behavior change pin)", async () => {
+    mockConnect.mockResolvedValueOnce(okConn("hub") as never)
+    const m = new McpConnectionManager()
+    await m.acquire("a", "hub", {
+      transport: "sse",
+      url: "http://hub.example/sse",
+      headers: { "X-Agent-Capability": "cap-1" },
+    })
+    const cfg = mockConnect.mock.calls[0]![1] as unknown as Record<string, unknown>
+    expect(cfg.headers).toEqual({ "X-Agent-Capability": "cap-1" }) // 仍是 Record
+  })
+
+  it("flag false and absent normalize identically → shared connection; true gets its own", async () => {
+    mockConnect.mockResolvedValueOnce(okConn("hub") as never)
+    mockConnect.mockResolvedValueOnce(okConn("hub") as never)
+    const m = new McpConnectionManager()
+    await m.acquire("a", "hub", { transport: "http", url: "http://hub", identityPassthrough: false })
+    await m.acquire("b", "hub", { transport: "http", url: "http://hub" }) // off 两种写法同键 → 共享
+    await m.acquire("c", "hub", { transport: "http", url: "http://hub", identityPassthrough: true }) // 不同策略 → 独立连接
+    expect(mockConnect).toHaveBeenCalledTimes(2)
+  })
+
+  it("canonicalMcpConfig keeps identityPassthrough only when true", () => {
+    expect(canonicalMcpConfig({ transport: "http", url: "u", identityPassthrough: true })).toEqual({
+      type: "http",
+      url: "u",
+      identityPassthrough: true,
+    })
+    expect(canonicalMcpConfig({ transport: "http", url: "u", identityPassthrough: false })).toEqual({
+      type: "http",
+      url: "u",
     })
   })
 })

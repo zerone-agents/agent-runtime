@@ -75,8 +75,13 @@ export function createApp(
   app.route("/v1/agents", createAgentRouter(registry, runsRegistry, metrics, { aigc, auditLog, hubPusher }))
   app.route("/v1/runs", createRunsRouter(runsRegistry))
   // SDK v4 (issue #131): the session router reads through the registry's
-  // file-backed SessionManagerV2 (undefined for register()-only hosts).
-  app.route("/v1/sessions", createSessionRouter(() => registry.getSessionManager()))
+  // file-backed SessionManagerV2 (undefined for register()-only hosts);
+  // session DELETE 的身份级联清除走 registry 的 SessionIdentityStore
+  //（issue #95，register()-only 宿主 undefined → 无级联）。
+  app.route("/v1/sessions", createSessionRouter(
+    () => registry.getSessionManager(),
+    () => registry.getSessionIdentityStore(),
+  ))
   app.route("/v1/files", createFilesRouter())
   app.route(
     "/v1/cron",

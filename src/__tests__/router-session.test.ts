@@ -193,5 +193,37 @@ describe("Session Router", () => {
       expect(res.status).toBe(404)
       expect((await res.json()).error).toBe("Session not found")
     })
+
+    it("cascades identity clearing (issue #95 acceptance 3: 会话结束身份不残留)", async () => {
+      const manager = stubManager()
+      const identityStore = { bind: vi.fn(), get: vi.fn(), clear: vi.fn(async () => {}) }
+      const app = new Hono()
+      app.route("/v1/sessions", createSessionRouter(() => manager, () => identityStore as never))
+
+      const res = await app.request("http://localhost/v1/sessions/s1", { method: "DELETE" })
+      expect(res.status).toBe(200)
+      expect(manager.delete).toHaveBeenCalledWith("s1", true)
+      expect(identityStore.clear).toHaveBeenCalledWith("s1")
+    })
+
+    it("identity clear failure is best-effort: DELETE result unchanged", async () => {
+      const manager = stubManager()
+      const identityStore = { clear: vi.fn(async () => { throw new Error("io") }) }
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+      try {
+        const app = new Hono()
+        app.route("/v1/sessions", createSessionRouter(() => manager, () => identityStore as never))
+
+        const res = await app.request("http://localhost/v1/sessions/s1", { method: "DELETE" })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true })
+        expect(warnSpy).toHaveBeenCalledWith(
+          "[identity] failed to clear session identity on delete",
+          expect.anything(),
+        )
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
   })
 })

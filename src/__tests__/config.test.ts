@@ -315,6 +315,65 @@ describe("RuntimeConfigSchema", () => {
     })
   })
 
+  describe("mcpServers identityPassthrough guard (issue #95, 评审重要 2)", () => {
+    it("rejects identityPassthrough on stdio servers loudly (no silent strip)", () => {
+      expect(() =>
+        RuntimeConfigSchema.parse({
+          agents: [
+            {
+              id: "assistant",
+              description: "assistant",
+              mcpServers: {
+                broken: { transport: "stdio", command: "x", identityPassthrough: true },
+              },
+            },
+          ],
+        }),
+      ).toThrow(/identityPassthrough is only valid on sse\/http MCP servers/)
+    })
+
+    it("safeParse returns { success: false } with only the guard issue (no spurious noise)", () => {
+      const result = RuntimeConfigSchema.safeParse({
+        agents: [
+          {
+            id: "assistant",
+            description: "assistant",
+            mcpServers: {
+              broken: { transport: "stdio", command: "x", identityPassthrough: true },
+            },
+          },
+        ],
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues).toHaveLength(1)
+        expect(result.error.issues[0]!.message).toBe(
+          "identityPassthrough is only valid on sse/http MCP servers — stdio has no request headers (issue #95)",
+        )
+      }
+    })
+
+    it("accepts identityPassthrough on sse/http servers (true and false)", () => {
+      const result = RuntimeConfigSchema.parse({
+        agents: [
+          {
+            id: "assistant",
+            description: "assistant",
+            mcpServers: {
+              hub: { transport: "http", url: "http://x", identityPassthrough: true },
+              legacy: { transport: "sse", url: "http://y", identityPassthrough: false },
+              plain: { transport: "http", url: "http://z" },
+            },
+          },
+        ],
+      })
+      const servers = result.agents[0].mcpServers! as Record<string, { identityPassthrough?: boolean }>
+      expect(servers.hub!.identityPassthrough).toBe(true)
+      expect(servers.legacy!.identityPassthrough).toBe(false)
+      expect(servers.plain!.identityPassthrough).toBeUndefined()
+    })
+  })
+
   describe("effort", () => {
     it("parses effort when provided", () => {
       const result = RuntimeConfigSchema.parse({

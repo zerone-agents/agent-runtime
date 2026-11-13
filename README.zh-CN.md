@@ -202,6 +202,10 @@ agents:
 
 可选的顶层 `aigc` 配置：启用后，每个响应都携带符合国标的隐式标识 `aigc` 字段，并生成逐次运行的审计记录。支持环境变量覆盖（`ZERONE_AGENT_AIGC_*`）。完整配置、设计依据与合规材料清单见 [`docs/compliance.md`](docs/compliance.md)。
 
+### 会话级身份透传（可选）
+
+按服务显式开启（`mcpServers.<name>.identityPassthrough: true`，仅 sse/http 传输）：run 请求头可携带 `X-User-Id`——绑定会话（持久化于 data root、跨重启存续、会话删除级联清除），并连同 `X-Run-Id` 注入该服务每次 MCP 请求的静态 headers 之上（hub 记忆 MCP 契约，issue #95）。两个头均可选；不带 `X-User-Id` 时行为不变。详见 [`docs/configuration.md` 的身份透传章节](docs/configuration.md#mcp-会话身份透传可选)。
+
 ### Hub 聊天记录回传（可选）
 
 可选的顶层 `hub` 配置：启用后，每次成功完成的 run 会异步把该 session 的全量快照推送到 agent-hub（hub 侧幂等 upsert）。请求头 `X-User-Name` 映射为 session 用户归属且必传——缺失时 runtime 跳过该次推送；租户归属只来自部署级配置 `hub.org`（经 agent-hub/agent-deployer 下发），**请求头 `X-Org` 已删除、不再读取**，未配置 `hub.org` 时省略 org 字段、由 hub 按部署模式解析默认租户。推送永不阻塞 run —— 网络错误/5xx 以 1s→2s 退避重试 2 次，4xx 不重试。完整配置见 [`docs/configuration.md` 的 `hub` 章节](docs/configuration.md#hub-聊天记录回传可选)。

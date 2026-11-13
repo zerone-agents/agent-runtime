@@ -12,6 +12,7 @@ import {
   type RuntimeSessionInfrastructure,
 } from "./session-store.js"
 import { resolveSessionsDir } from "./data-root.js"
+import { SessionIdentityStore, identityHeaderProvider } from "./run-identity.js"
 import { resolve } from "node:path"
 import type { AgentDefinition, RuntimeConfig } from "./config.js"
 import { resolveSystemPrompt } from "./config.js"
@@ -110,6 +111,15 @@ export class AgentRegistry {
    */
   private sessions?: RuntimeSessionInfrastructure
   private sessionsDir?: string
+  /**
+   * 会话级身份绑定（issue #95）：`<sessionsDir>/session-identity.json`
+   * 文件侧 store——run 携带 X-User-Id 即绑定，随会话生命周期存续（跨
+   * run/跨重启）。与 sessions 同目录、同重锚定语义；undefined 语义同
+   * sessions（register()-only 宿主无身份持久化，仅 run 内透传）。
+   */
+  private identityStore?: SessionIdentityStore
+  /** 冷启动孤儿清扫是否已调度（仅首次 load——见 loadFromConfig 注释）。 */
+  private identityPruneScheduled = false
 
   /**
    * Issue #63: the runtime-owned diagnostics sink from the composition
@@ -122,7 +132,7 @@ export class AgentRegistry {
    */
   constructor(diagnostics?: DiagnosticsSink) {
     this.diagnostics = diagnostics
-    this.mcp = new McpConnectionManager(diagnostics)
+    this.mcp = new McpConnectionManager(diagnostics, { identityHeaderProvider })
   }
 
   register(id: string, def: AgentDefinition, opts: CreateOpts): void {
@@ -139,6 +149,15 @@ export class AgentRegistry {
     // resolved dir is unchanged; a changed dataRoot re-anchors it.
     this.ensureSessionInfrastructure(config, configDir)
 
+    // 冷启动孤儿清扫（issue #95 评审建议 6）：sidecar 中已无对应会话的
+    // **磁盘遗留**条目清理（DELETE best-effort 失败残留/存量数据）。仅首
+    // 次 load 调度；本进程 bind 的条目受 prune 保护（session 行未落窗口
+    // ——见 run-identity.ts 的 prune 注释），磁盘遗留条目才是清扫对象。
+    if (!this.identityPruneScheduled) {
+      this.identityPruneScheduled = true
+      void this.pruneOrphanIdentities()
+    }
+
     // ------------------------------------------------------------------
     // Transactional load (review finding): a reload must atomically replace
     // the previous state — agents deleted from the config and their
@@ -147,7 +166,7 @@ export class AgentRegistry {
     // failure the partial new state is discarded and the previous registry
     // stays intact.
     // ------------------------------------------------------------------
-    const mcp = new McpConnectionManager(this.diagnostics)
+    const mcp = new McpConnectionManager(this.diagnostics, { identityHeaderProvider })
     const defs = new Map<string, AgentDefinition>()
     const statuses = new Map<string, "ready" | "unavailable">()
     const unavailableReasons = new Map<string, string>()
@@ -267,6 +286,7 @@ export class AgentRegistry {
     if (this.sessions && this.sessionsDir === dir) return
     this.sessions = createSessionInfrastructure(dir)
     this.sessionsDir = dir
+    this.identityStore = new SessionIdentityStore(dir)
   }
 
   /**
@@ -276,6 +296,38 @@ export class AgentRegistry {
    */
   getSessionManager(): SessionManagerV2 | undefined {
     return this.sessions?.manager
+  }
+
+  /**
+   * 会话身份绑定 store（issue #95）。Undefined until loadFromConfig has
+   * run — register()-only hosts degrade to in-run identity only（无跨
+   * run 存续）。session DELETE 经 router 级联清除对应条目。
+   */
+  getSessionIdentityStore(): SessionIdentityStore | undefined {
+    return this.identityStore
+  }
+
+  /**
+   * 冷启动清扫 sidecar 中无对应会话的身份条目（issue #95 评审建议 6）。
+   * best-effort：失败仅告警（孤儿条目惰性无害——UUID 不复用），永不抛错、
+   * 永不阻断 load。直接可调（测试用）；loadFromConfig 首次 load 时已
+   * fire-and-forget 调度。
+   */
+  async pruneOrphanIdentities(): Promise<void> {
+    const manager = this.sessions?.manager
+    const identityStore = this.identityStore
+    if (!manager || !identityStore) return
+    try {
+      const live = new Set((await manager.list()).map((m) => m.id))
+      const removed = await identityStore.prune(live)
+      if (removed > 0) {
+        console.info(`[identity] pruned ${removed} orphaned session identity entries`)
+      }
+    } catch (err) {
+      console.warn("[identity] orphan prune failed (entries stay inert)", {
+        error: (err as Error).message,
+      })
+    }
   }
 
   /**

@@ -21,15 +21,31 @@
 import { connectMCPServer, type DiagnosticsSink, type MCPConnection } from "@zerone-agent/agent-sdk"
 
 /**
+ * run-identity.identityHeaderProvider 的形状。经 McpConnectionManager
+ * 构造器注入（registry 组合时传入）而非相对导入——本模块必须保持
+ * 「仅包导入」，见 McpConnectionError 的 NOTE。
+ */
+export type IdentityHeaderProviderFactory = (
+  staticHeaders: Record<string, string> | undefined,
+) => () => Record<string, string>
+
+/**
  * Canonicalize the transport selector spelling: the SDK accepts both `type`
  * and `transport`, we normalize to the canonical `type` form so that both
  * spellings of the same config dedupe to one connection.
+ *
+ * identityPassthrough（issue #95）归一：显式 false / 缺省同义（off）——
+ * 归一后去重键只在 true 与 off 间区分（不同策略 = 不同连接），同 off 的
+ * 等价配置仍共享一条连接。
  */
 export function canonicalMcpConfig(
   cfg: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { transport, ...rest } = cfg
-  return transport !== undefined ? { ...rest, type: transport } : rest
+  const { transport, identityPassthrough, ...rest } = cfg
+  const normalized = transport !== undefined ? { ...rest, type: transport } : rest
+  return identityPassthrough === true
+    ? { ...normalized, identityPassthrough: true }
+    : normalized
 }
 
 /** Deterministic stringify: sorted keys so field order never splits a shared connection. */
@@ -49,9 +65,12 @@ function sortKeys(value: unknown): unknown {
  * Sanitized failure: NEVER carries the SDK/raw error text (it may embed
  * command lines, URLs, or credentials). Only the server name is echoed.
  *
- * NOTE: no constructor parameter properties — this module is imported by
- * test/fixtures/mcp-fd2-runner.mjs via Node's native type stripping,
- * which supports erasable syntax only.
+ * NOTE: no constructor parameter properties AND no relative `.js` imports —
+ * this module is imported by test/fixtures/mcp-fd2-runner.mjs via Node's
+ * native type stripping, which supports erasable syntax only and does NOT
+ * resolve `.js` specifiers to `.ts` files (tsc/vitest do; a bare `node`
+ * child does not). Cross-module dependencies (e.g. the identity header
+ * provider factory) must therefore be constructor-injected.
  */
 export class McpConnectionError extends Error {
   readonly serverName: string
@@ -76,6 +95,30 @@ function withStrictStdioStderr(config: Record<string, unknown>): Record<string, 
   return { ...config, stderr: "ignore" }
 }
 
+/**
+ * 会话级身份透传（issue #95，SDK ≥4.2.0 McpHeaderProvider / agent-sdk#163）：
+ * identityPassthrough 开启的连接，headers 从静态 Record 换为**按请求解析**
+ * 的 provider——静态部署头（如 X-Agent-Capability）之上叠加当前 run 的
+ * X-User-Id / X-Run-Id（读取 AsyncLocalStorage，见 run-identity.ts）。
+ * 工厂经构造器注入（本模块不相对导入，见 McpConnectionError NOTE）；
+ * 未注入或 off 配置仅剥除 runtime 级旗标，headers 原样（静态路径零行为
+ * 变化；undefined 不回填，保持配置形状不变）。
+ * 与 withStrictStdioStderr 同位：key 计算之后注入，SDK 不见 runtime 旗标。
+ */
+function withIdentityHeaders(
+  config: Record<string, unknown>,
+  providerFactory?: IdentityHeaderProviderFactory,
+): Record<string, unknown> {
+  const { identityPassthrough, headers, ...rest } = config
+  if (identityPassthrough !== true || providerFactory === undefined) {
+    return headers !== undefined ? { ...rest, headers } : rest
+  }
+  return {
+    ...rest,
+    headers: providerFactory(headers as Record<string, string> | undefined),
+  }
+}
+
 interface ManagedConnection {
   conn: MCPConnection
   refs: Set<string>
@@ -84,6 +127,8 @@ interface ManagedConnection {
 export class McpConnectionManager {
   private byKey = new Map<string, ManagedConnection>()
   private readonly diagnostics: DiagnosticsSink | undefined
+  /** issue #95：identityPassthrough 服务器的 headers provider 工厂（组合根注入）。 */
+  private readonly identityHeaderProviderFactory?: IdentityHeaderProviderFactory
 
   /**
    * Issue #63: the runtime-owned diagnostics sink injected at the
@@ -91,9 +136,17 @@ export class McpConnectionManager {
    * connection/retry diagnostics flow into the runtime's channel instead of
    * the SDK's default console sink. No parameter properties here (erasable
    * syntax only — see the McpConnectionError note above).
+   *
+   * Issue #95: identityHeaderProvider 工厂经 opts 注入而非相对导入——本
+   * 模块须保持「仅包导入」（McpConnectionError NOTE：Node 原生 type
+   * stripping 不做 .js→.ts 解析）。
    */
-  constructor(diagnostics?: DiagnosticsSink) {
+  constructor(
+    diagnostics?: DiagnosticsSink,
+    opts?: { identityHeaderProvider?: IdentityHeaderProviderFactory },
+  ) {
     this.diagnostics = diagnostics
+    this.identityHeaderProviderFactory = opts?.identityHeaderProvider
   }
 
   /**
@@ -119,7 +172,7 @@ export class McpConnectionManager {
     // canonical (user-authored) config, never from runtime-injected policy.
     const conn = await connectMCPServer(
       name,
-      withStrictStdioStderr(config) as never,
+      withIdentityHeaders(withStrictStdioStderr(config), this.identityHeaderProviderFactory) as never,
       undefined,
       this.diagnostics,
     )

@@ -182,6 +182,58 @@ construction).
     auto-compaction, pre-compaction messages are not listed. The hub chat
     push (`hub.chatPush`) uses the same view.
 
+## MCP 会话身份透传（可选）
+
+agent-hub「记忆 MCP」的 runtime 前置（issue #95）：把聊天用户身份带回 Hub
+内建 MCP 端点，Hub 侧验签后钉死记忆 `Scope.UserID`。
+
+### 配置
+
+agents.yaml 里对 sse/http 类型的 MCP server 显式开启（stdio 无请求头语义）：
+
+```yaml
+mcpServers:
+  hub-memory:
+    transport: "http"
+    url: "https://hub.example.com/api/v1/mcp"
+    headers:
+      X-Agent-Capability: "<部署时签发的静态凭据>"
+    identityPassthrough: true
+```
+
+### 语义
+
+- **入站**：run 请求头携带 `X-User-Id`（稳定唯一 ID）——与既有
+  `X-User-Name`（显示名，仅用于聊天记录回传）正交；两者均可选，不带时
+  行为与现状完全一致。畸形值 fail-fast 400：空串/纯空白、首尾空白、
+  >128 字符、含控制字符（垃圾身份不落库出站）
+- **会话绑定**：首次随 run 到达即绑定会话（重带即重绑更新），存于
+  `<dataRoot>/sessions/session-identity.json`（与 sessions.json 同目录、
+  同单写者模型）——跨 run / 跨重启存续；`DELETE /v1/sessions/:id` 级联
+  清除，会话结束后身份不残留。冷启动时清扫磁盘遗留的孤儿条目（会话已
+  删而绑定残留——DELETE best-effort 失败/存量数据）；**本进程 bind 的
+  条目受保护**（绑定发生在 run 开始，session 行要到 run 结束才落盘）
+- **语义读法（issue #95 验收 2 的明确化）**：「只带 X-User-Name 的
+  run → hub MCP 调用不带身份头」适用于**未绑定过的会话**；已绑定的
+  会话，后续不带 `X-User-Id` 的 run 会**恢复既有绑定**并继续注入
+  （需求 2「随会话生命周期存续」优先于逐 run 显式读法）。两种行为均
+  有端到端测试钉住（未绑定无注入 / 已绑定恢复注入）
+- **出站注入**：开启 `identityPassthrough` 的连接，每次 MCP 请求在静态
+  headers 之上注入 `X-User-Id`（会话绑定值，与入站同名同值贯穿）+
+  `X-Run-Id`（本次 run 的 runId——caller 传入或 runtime 自生成）。同一
+  agent 的并发会话经 AsyncLocalStorage 上下文隔离，互不串号
+- **传递语义**：run 入口建立 AsyncLocalStorage 上下文，engine → 工具
+  执行 → MCP transport 的整条进程内异步链（含 Task/MultiTask 子代理
+  spawn——子引擎同样在父 run 的异步链上）都可读身份；cron 触发的 run
+  无 HTTP 请求上下文，不注入身份头（Hub 侧按 agent 模式降级）
+- **信任模型**：`X-User-Id` 为调用方断言（hub 原生路径 = JWT 平台用户，
+  业务路径 = 业务方断言自己的用户 ID）；Hub 记忆 MCP 只认 runtime 注入
+  的 `X-User-Id`，永不将 `X-User-Name` 用作身份
+- **兼容**：旗标默认关——不配置 `identityPassthrough` 的连接行为零变化
+  （headers 仍为静态 Record）；同一 server 的 on/off 配置不共享连接
+  （不同策略 = 独立连接去重）。stdio 服务器携带该旗标会在配置校验期
+  被显式拒绝（stdio 无请求头语义）
+
 ## Config Discovery
 
 Search order:
